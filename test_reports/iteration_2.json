@@ -1,0 +1,48 @@
+{
+  "summary": "Iteration 2 testing PASSED. New features (PUT /api/pagos/{id}, /api/users/list, created_by filter on pagos & reportes, hydrated created_by_name / edited_by_name, BusquedaPagos edit dialog + 'Registrado por' column + user filter, Reportes user filter) all working end-to-end. 50/50 backend pytest tests pass; UI verified for admin/caja/consultas roles.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "BusquedaPagos / Reportes", "issues": ["Date inputs use native browser date picker (input type=date) instead of shadcn Calendar — consistent with rest of app, low priority"]},
+      {"screen": "Busqueda 'Registrado por' dropdown", "issues": ["Multiple users share the same display name (e.g. 'Test Caja' appears twice) because /api/users/list returns name only — consider showing role or email next to name to disambiguate"]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py is ~770 lines — consider splitting routers per resource (auth, users, estudiantes, tipospagos, pagos, reportes) for maintainability",
+    "/api/users/list returns all users including any future inactive ones — consider an is_active flag/filter when soft-delete is introduced",
+    "PUT /api/pagos/{id} returns 400 on 'no changes' which is correct, but frontend never sends an empty body (button disabled when no diff). Acceptable.",
+    "edited_by_name / created_by_name hydration adds N+1 user lookups per pago — fine for ≤1000 rows but if list size grows consider $lookup or batch fetch"
+  ],
+  "updated_files": [
+    "/app/backend/tests/backend_test.py (added TestUsersList + TestPagoEditAndCreatedByFilter — 15 new tests)"
+  ],
+  "success_rate": {"backend": "100% (50/50)", "frontend": "100% (all targeted flows verified)"},
+  "test_credentials": "admin@usfx.edu.bo/admin123; caja_ui@usfx.edu.bo/caja1234 (caja); cons_ui@usfx.edu.bo/cons1234 (consultas) — created by this iteration via POST /api/users",
+  "seed_data_creation": "Created 2 stable UI test users: 'Caja UI' (caja_ui@usfx.edu.bo) and 'Cons UI' (cons_ui@usfx.edu.bo). pytest also creates TEST_* prefixed estudiantes/tipospagos/pagos per run.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "All Iteration 2 features verified. Backend 50/50 pytest pass. Stable test users 'Caja UI' and 'Cons UI' exist for UI tests. /api/users/list returns duplicates with same name from previous test runs (TEST_caja_*, TEST_cons_*) — cosmetic only. Edit dialog flow: click [data-testid=edit-pago-btn-<id>] → fill [data-testid=edit-cantidad-input] → click [data-testid=edit-save-btn]. Role-based hiding of edit btn confirmed (caja/consultas see 0 edit buttons even though 9 non-anulado rows exist).",
+  "verified_features": [
+    "GET /api/users/list returns [{id,name,role}] sorted by name, accessible to admin/caja/consultas, 401 unauth",
+    "PUT /api/pagos/{id} admin-only (403 for caja/consultas), 400 on anulado, 400 on no-changes, 404 not found, 400 on invalid estudiante/tipopago",
+    "PUT /api/pagos/{id} recalculates total when cantidad or tipopago (monto) changes; sets edited_at + edited_by",
+    "GET /api/pagos?created_by=<uid> returns only pagos created by that user",
+    "GET /api/reportes?created_by=<uid> filters report pagos by creator",
+    "_hydrate_pago populates created_by_name and edited_by_name correctly",
+    "BusquedaPagosPage: user filter dropdown loads from /api/users/list and applies on Buscar",
+    "BusquedaPagosPage: admin sees Pencil edit button per non-anulado row; caja/consultas see none; anulados never show edit",
+    "BusquedaPagosPage: edit dialog pre-loads cantidad+fecha, allows changing tipo+cantidad, saves, updates row total in-place, shows 'editado por <name>' subtitle",
+    "BusquedaPagosPage: table renders 'Registrado por' column with name + edited subtitle",
+    "ReportesPage: 'Registrado por (opcional)' Select renders with 'Todos los usuarios' default and user options"
+  ]
+}

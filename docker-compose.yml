@@ -1,0 +1,53 @@
+version: "3.9"
+
+services:
+  mongo:
+    image: mongo:7
+    container_name: usfx_mongo
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: usfx_backend
+    restart: unless-stopped
+    depends_on:
+      mongo:
+        condition: service_healthy
+    environment:
+      MONGO_URL: "mongodb://mongo:27017"
+      DB_NAME: "comprobantes_usfx"
+      CORS_ORIGINS: "http://localhost:3000,http://localhost"
+      JWT_SECRET: "${JWT_SECRET:-change-me-in-production-please}"
+      ADMIN_EMAIL: "${ADMIN_EMAIL:-admin@usfx.edu.bo}"
+      ADMIN_PASSWORD: "${ADMIN_PASSWORD:-admin123}"
+      ADMIN_NAME: "${ADMIN_NAME:-Administrador}"
+    ports:
+      - "8001:8001"
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+      args:
+        REACT_APP_BACKEND_URL: "${REACT_APP_BACKEND_URL:-http://localhost:8001}"
+    container_name: usfx_frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "3000:80"
+
+volumes:
+  mongo_data:
+    driver: local

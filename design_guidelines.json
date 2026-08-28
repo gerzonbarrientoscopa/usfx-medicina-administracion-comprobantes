@@ -1,0 +1,107 @@
+{
+  "theme": "light",
+  "archetype": "4_swiss_institutional",
+  "mood": "Professional, formal, trustworthy, historical but efficient. Avoids generic SaaS looks.",
+  "typography": {
+    "headings": {
+      "family": "Cormorant Garamond",
+      "weights": ["600", "700"],
+      "usage": "Page titles, institutional headers on receipts, main dashboard numbers.",
+      "import_url": "https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@600;700&display=swap"
+    },
+    "body": {
+      "family": "IBM Plex Sans",
+      "weights": ["400", "500", "600"],
+      "usage": "Data tables, forms, sidebar, general UI text. Ensures high legibility for accounting.",
+      "import_url": "https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&display=swap"
+    },
+    "hierarchy": {
+      "h1": "text-4xl tracking-tight leading-none font-serif",
+      "h2": "text-2xl tracking-tight font-serif",
+      "h3": "text-xl font-serif",
+      "h4": "text-sm uppercase tracking-[0.15em] text-[#636369] font-sans font-semibold",
+      "body": "text-sm font-sans",
+      "small": "text-xs font-sans"
+    }
+  },
+  "colors": {
+    "background": "#FDFBF7",
+    "surface": "#FFFFFF",
+    "primary": "#7A2035",
+    "primary_hover": "#5C1727",
+    "secondary": "#1D3557",
+    "accent": "#B9975B",
+    "text_main": "#1C1C1E",
+    "text_muted": "#636369",
+    "border": "#E5E2DC",
+    "success": "#2D6A4F",
+    "danger": "#D00000",
+    "warning": "#F59E0B"
+  },
+  "layout_and_spacing": {
+    "philosophy": "High density for tables (accounting context), generous padding for page layouts. 'Control Room' pattern.",
+    "sidebar": "w-64 border-r border-[#E5E2DC] bg-[#FFFFFF]",
+    "page_container": "p-8",
+    "grid": {
+      "dashboard": "grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-6",
+      "forms": "grid-cols-1 md:grid-cols-2 gap-6"
+    },
+    "surface_treatment": "Flat backgrounds, sharp edges (rounded-sm maximum, 4px), 1px solid border (#E5E2DC). NO heavy soft shadows. Use shadow-sm for popovers/dropdowns only."
+  },
+  "components": {
+    "buttons": "rounded-sm px-4 py-2 font-medium transition-colors. Primary uses #7A2035 text-white hover:bg-[#5C1727].",
+    "inputs": "rounded-sm border-[#E5E2DC] bg-[#FFFFFF] text-sm focus:ring-2 focus:ring-[#7A2035]/20 focus:border-[#7A2035]",
+    "tables": "Dense. text-sm. border-collapse. border-b border-[#E5E2DC] on every row. Header row bg-[#FDFBF7] text-[#636369].",
+    "cards": "bg-[#FFFFFF] border border-[#E5E2DC] rounded-sm p-6"
+  },
+  "specific_views": {
+    "login": {
+      "layout": "Split screen. Left: Form. Right: Image background.",
+      "background_image": "login_background"
+    },
+    "receipt_printable": {
+      "layout": "A4 proportion simulation in UI (w-[800px] max-w-full). Pure white bg.",
+      "header_text": "Universidad Mayor, Real y Pontificia de San Francisco Xavier\\nFacultad de Medicina - Administración",
+      "typography": "Cormorant Garamond for header/titles, IBM Plex Sans for tabular payment data.",
+      "border": "1px dashed border around the printable area to indicate it's a receipt document."
+    }
+  },
+  "media": {
+    "images": [
+      {
+        "category": "logo",
+        "url": "https://static.prod-images.emergentagent.com/jobs/6e1c1dcf-d7e6-4eb8-a29a-54d4dfef0010/images/8340c1807a5dfae5b11b4f741b8a9779dbcb9d60c8c3264a1ce8972789ebdf19.png",
+        "description": "University heraldic crest. Use in Sidebar header and Printable Receipt top.",
+        "slug": "university_crest"
+      },
+      {
+        "category": "background",
+        "url": "https://static.prod-images.emergentagent.com/jobs/6e1c1dcf-d7e6-4eb8-a29a-54d4dfef0010/images/aa9c8b16dc7d5bd87cf8f79d2516d434934b5ded990af6ec3a9a7c17241bfb49.png",
+        "description": "Colonial university architecture. Use on the right half of the Login screen.",
+        "slug": "login_background"
+      }
+    ],
+    "icons": {
+      "library": "@phosphor-icons/react",
+      "style": "Regular weight, 20px for sidebar, 16px for inline actions."
+    }
+  },
+  "interactions": {
+    "hover": "Background darkens slightly, text color remains high contrast.",
+    "focus": "2px ring using primary color at 20% opacity.",
+    "animation": "Minimal. Fade in for dialogs/popovers."
+  },
+  "accessibility": {
+    "contrast": "Ensure minimum 4.5:1 ratio for text. Test text over primary background.",
+    "testing_attributes": "Add data-testid to ALL interactive elements (buttons, inputs, links, table rows, tabs, dialog triggers)."
+  },
+  "tech_stack_instructions": {
+    "libraries": [
+      "@phosphor-icons/react",
+      "date-fns",
+      "react-day-picker",
+      "lucide-react"
+    ],
+    "shadcn_customizations": "Override rounded-md/rounded-lg to rounded-sm. Strip complex shadows. Use sharp, institutional aesthetics."
+  }
+}
