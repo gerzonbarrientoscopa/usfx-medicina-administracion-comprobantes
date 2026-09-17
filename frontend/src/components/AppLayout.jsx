@@ -1,6 +1,6 @@
 import React from "react";
 import { Link, NavLink, useNavigate } from "react-router-dom";
-import { useAuth } from "@/context/AuthContext";
+import { useAuth } from "@/contexts/AuthContext";
 import {
     LayoutDashboard,
     Users,
@@ -15,24 +15,24 @@ import {
 } from "lucide-react";
 
 const NAV_BY_ROLE = {
-    admin: [
+    Administrador: [
         { to: "/", icon: LayoutDashboard, label: "Panel General" },
         { section: "Gestión" },
         { to: "/estudiantes", icon: GraduationCap, label: "Estudiantes" },
-        { to: "/tipospagos", icon: Tags, label: "Tipos de Pago" },
+        { to: "/tipos-pagos", icon: Tags, label: "Tipos de Pago" },
         { to: "/usuarios", icon: UserCog, label: "Usuarios" },
         { section: "Operaciones" },
         { to: "/anular", icon: FileX, label: "Anular Pago" },
         { to: "/reportes", icon: FileBarChart, label: "Reportes" },
         { to: "/buscar", icon: Search, label: "Búsqueda Pagos" },
     ],
-    caja: [
+    Caja: [
         { to: "/", icon: LayoutDashboard, label: "Panel General" },
         { section: "Caja" },
         { to: "/registro", icon: Receipt, label: "Registro de Pago" },
         { to: "/buscar", icon: Search, label: "Búsqueda Pagos" },
     ],
-    consultas: [
+    Consultas: [
         { to: "/", icon: LayoutDashboard, label: "Panel General" },
         { section: "Consultas" },
         { to: "/buscar", icon: Search, label: "Búsqueda Pagos" },
@@ -40,15 +40,15 @@ const NAV_BY_ROLE = {
 };
 
 const ROLE_LABEL = {
-    admin: "Administrador",
-    caja: "Caja",
-    consultas: "Consultas",
+    Administrador: "Administrador",
+    Caja: "Caja",
+    Consultas: "Consultas",
 };
 
 export function AppLayout({ children }) {
     const { user, logout } = useAuth();
     const navigate = useNavigate();
-    const items = NAV_BY_ROLE[user?.role] || [];
+    const items = NAV_BY_ROLE[user?.rol] || [];
 
     return (
         <div className="min-h-screen bg-paper flex">

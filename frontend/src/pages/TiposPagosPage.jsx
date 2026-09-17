@@ -6,247 +6,351 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import {
-    Dialog,
-    DialogContent,
-    DialogHeader,
-    DialogTitle,
-    DialogTrigger,
-    DialogFooter,
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+  DialogFooter,
 } from "@/components/ui/dialog";
 import {
-    Table,
-    TableBody,
-    TableCell,
-    TableHead,
-    TableHeader,
-    TableRow,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
 } from "@/components/ui/table";
-import { Plus, Pencil, Trash2 } from "lucide-react";
+import { Plus, Pencil, Trash2, ChevronLeft, ChevronRight } from "lucide-react";
 
-const EMPTY = { codigo: "", nombre: "", monto: "", descripcion: "", inicio: "", fin: "" };
+const EMPTY = {
+  nombre: "",
+  monto: "",
+  descripcion: "",
+  inicio: "",
+  fin: "",
+};
 
 export default function TiposPagosPage() {
-    const [list, setList] = useState([]);
-    const [open, setOpen] = useState(false);
-    const [editing, setEditing] = useState(null);
-    const [form, setForm] = useState(EMPTY);
-    const [loading, setLoading] = useState(false);
+  const [tiposPagos, setTiposPagos] = useState([]);
+  const [open, setOpen] = useState(false);
+  const [editingTipo, setEditingTipo] = useState(null);
+  const [formData, setFormData] = useState(EMPTY);
+  const [loading, setLoading] = useState(false);
+  const [pagina, setPagina] = useState(1);
+  const [totalPaginas, setTotalPaginas] = useState(1);
+  const FILAS_POR_PAGINA = 20; 
 
-    const load = async () => {
-        const { data } = await apiClient.get("/tipospagos");
-        setList(data);
-    };
+  const fetchTiposPago = async () => {
+    try {
+      const response = await apiClient.get("/tipos-pagos", {
+        params: {
+          pag: pagina,
+          tam: FILAS_POR_PAGINA,
+        },
+      });
+      setTiposPagos(response.data.items);
+      if (response.data.pages) {
+        setTotalPaginas(response.data.pages);
+      }
+    } catch (error) {
+      toast.error("Error al cargar tipos de pagos.");
+    }
+  };
 
-    useEffect(() => {
-        load();
-    }, []);
+  useEffect(() => {
+    fetchTiposPago();
+  }, [pagina]);
 
-    const onOpenNew = () => {
-        setEditing(null);
-        setForm(EMPTY);
-        setOpen(true);
-    };
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+    try {
+      const payloadFormData = {
+        ...formData,
+        monto: Number(formData.monto),
+        fin: formData.fin || null,
+      };
+      if (editingTipo) {
+        await apiClient.put(`/tipos-pagos/${editingTipo.id}`, payloadFormData);
+        toast.success("Tipo de pago actualizado.");
+      } else {
+        await apiClient.post("/tipos-pagos", payloadFormData);
+        toast.success("Tipo de pago creado.");
+      }
+      setOpen(false);
+      fetchTiposPago();
+    } catch (error) {
+      const serverDetail = error.response?.data?.detail;
+      if (Array.isArray(serverDetail)) {
+        const primerError = serverDetail[0];
+        const campo = primerError.loc
+          ? primerError.loc[primerError.loc.length - 1]
+          : "campo";
+        toast.error(`Error en '${campo}': ${primerError.msg}`);
+      } else if (typeof serverDetail === "string") {
+        toast.error(serverDetail);
+      } else {
+        toast.error("Error al guardar los cambios.");
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
 
-    const onEdit = (t) => {
-        setEditing(t);
-        setForm({
-            codigo: t.codigo,
-            nombre: t.nombre,
-            monto: t.monto,
-            descripcion: t.descripcion || "",
-            inicio: t.inicio,
-            fin: t.fin || "",
-        });
-        setOpen(true);
-    };
+  const handleDelete = async (tipo) => {
+    if (!window.confirm(`¿Eliminar "${tipo.nombre}"?`)) return;
+    try {
+      await apiClient.delete(`/tipos-pagos/${tipo.id}`);
+      toast.success("Tipo de pago eliminado.");
+      fetchTiposPago();
+    } catch (err) {
+      toast.error(formatApiError(err));
+    }
+  };
 
-    const onSubmit = async (e) => {
-        e.preventDefault();
-        setLoading(true);
-        try {
-            const payload = {
-                ...form,
-                monto: Number(form.monto),
-                fin: form.fin || null,
-            };
-            if (editing) {
-                await apiClient.put(`/tipospagos/${editing.id}`, payload);
-                toast.success("Tipo de pago actualizado");
-            } else {
-                await apiClient.post("/tipospagos", payload);
-                toast.success("Tipo de pago creado");
-            }
-            setOpen(false);
-            load();
-        } catch (err) {
-            toast.error(formatApiError(err));
-        } finally {
-            setLoading(false);
-        }
-    };
+  const handleEdit = (tipo) => {
+    setEditingTipo(tipo);
+    setFormData({
+      nombre: tipo.nombre,
+      monto: tipo.monto,
+      descripcion: tipo.descripcion || "",
+      inicio: tipo.inicio,
+      fin: tipo.fin || "",
+    });
+    setOpen(true);
+  };
 
-    const onDelete = async (t) => {
-        if (!window.confirm(`¿Eliminar "${t.nombre}"?`)) return;
-        try {
-            await apiClient.delete(`/tipospagos/${t.id}`);
-            toast.success("Tipo de pago eliminado");
-            load();
-        } catch (err) {
-            toast.error(formatApiError(err));
-        }
-    };
+  const handleOpenChange = (isOpen) => {
+    setOpen(isOpen);
+    // Si la ventana se está abriendo, reseteamos los campos
+    if (isOpen && !editingTipo) {
+      setEditingTipo(null);
+      setFormData(EMPTY);
+    }
+  }; 
 
-    return (
-        <div className="space-y-6" data-testid="tipospagos-page">
-            <div className="flex items-end justify-between">
-                <div>
-                    <div className="section-eyebrow">Catálogo</div>
-                    <h1 className="font-serif-display text-4xl mt-1">Tipos de Pago</h1>
-                    <p className="text-sm text-[color:var(--institution-muted)] mt-1">
-                        Conceptos por los cuales se pueden emitir comprobantes.
-                    </p>
-                </div>
-                <Dialog open={open} onOpenChange={setOpen}>
-                    <DialogTrigger asChild>
-                        <Button
-                            onClick={onOpenNew}
-                            data-testid="new-tipopago-btn"
-                            className="rounded-sm text-white"
-                            style={{ backgroundColor: "var(--institution-burgundy)" }}
-                        >
-                            <Plus size={16} className="mr-1" /> Nuevo tipo de pago
-                        </Button>
-                    </DialogTrigger>
-                    <DialogContent className="rounded-sm">
-                        <DialogHeader>
-                            <DialogTitle className="font-serif-display text-2xl">
-                                {editing ? "Editar tipo de pago" : "Nuevo tipo de pago"}
-                            </DialogTitle>
-                        </DialogHeader>
-                        <form onSubmit={onSubmit} className="grid grid-cols-2 gap-4">
-                            <div className="space-y-1.5">
-                                <Label className="text-xs uppercase tracking-widest text-[color:var(--institution-muted)]">Código</Label>
-                                <Input
-                                    value={form.codigo}
-                                    onChange={(e) => setForm({ ...form, codigo: e.target.value })}
-                                    required
-                                    data-testid="tp-codigo-input"
-                                    className="rounded-sm"
-                                />
-                            </div>
-                            <div className="space-y-1.5">
-                                <Label className="text-xs uppercase tracking-widest text-[color:var(--institution-muted)]">Monto (Bs.)</Label>
-                                <Input
-                                    type="number"
-                                    step="0.01"
-                                    value={form.monto}
-                                    onChange={(e) => setForm({ ...form, monto: e.target.value })}
-                                    required
-                                    data-testid="tp-monto-input"
-                                    className="rounded-sm"
-                                />
-                            </div>
-                            <div className="space-y-1.5 col-span-2">
-                                <Label className="text-xs uppercase tracking-widest text-[color:var(--institution-muted)]">Nombre</Label>
-                                <Input
-                                    value={form.nombre}
-                                    onChange={(e) => setForm({ ...form, nombre: e.target.value })}
-                                    required
-                                    data-testid="tp-nombre-input"
-                                    className="rounded-sm"
-                                />
-                            </div>
-                            <div className="space-y-1.5 col-span-2">
-                                <Label className="text-xs uppercase tracking-widest text-[color:var(--institution-muted)]">Descripción</Label>
-                                <Textarea
-                                    value={form.descripcion}
-                                    onChange={(e) => setForm({ ...form, descripcion: e.target.value })}
-                                    rows={2}
-                                    data-testid="tp-desc-input"
-                                    className="rounded-sm"
-                                />
-                            </div>
-                            <div className="space-y-1.5">
-                                <Label className="text-xs uppercase tracking-widest text-[color:var(--institution-muted)]">Inicio</Label>
-                                <Input
-                                    type="date"
-                                    value={form.inicio}
-                                    onChange={(e) => setForm({ ...form, inicio: e.target.value })}
-                                    required
-                                    data-testid="tp-inicio-input"
-                                    className="rounded-sm"
-                                />
-                            </div>
-                            <div className="space-y-1.5">
-                                <Label className="text-xs uppercase tracking-widest text-[color:var(--institution-muted)]">Fin (opcional)</Label>
-                                <Input
-                                    type="date"
-                                    value={form.fin}
-                                    onChange={(e) => setForm({ ...form, fin: e.target.value })}
-                                    data-testid="tp-fin-input"
-                                    className="rounded-sm"
-                                />
-                            </div>
-                            <DialogFooter className="col-span-2">
-                                <Button
-                                    type="submit"
-                                    disabled={loading}
-                                    data-testid="tp-save-btn"
-                                    className="rounded-sm text-white"
-                                    style={{ backgroundColor: "var(--institution-burgundy)" }}
-                                >
-                                    {editing ? "Guardar cambios" : "Crear"}
-                                </Button>
-                            </DialogFooter>
-                        </form>
-                    </DialogContent>
-                </Dialog>
-            </div>
-
-            <div className="bg-white border rounded-sm" style={{ borderColor: "var(--institution-border)" }}>
-                <Table>
-                    <TableHeader>
-                        <TableRow style={{ backgroundColor: "var(--institution-cream)" }}>
-                            <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Código</TableHead>
-                            <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Nombre</TableHead>
-                            <TableHead className="text-right uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Monto (Bs.)</TableHead>
-                            <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Vigencia</TableHead>
-                            <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Descripción</TableHead>
-                            <TableHead className="text-right uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Acciones</TableHead>
-                        </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                        {list.map((t) => (
-                            <TableRow key={t.id} data-testid={`tp-row-${t.id}`}>
-                                <TableCell className="font-mono-num">{t.codigo}</TableCell>
-                                <TableCell className="font-medium">{t.nombre}</TableCell>
-                                <TableCell className="text-right font-mono-num">{formatMoney(t.monto)}</TableCell>
-                                <TableCell className="text-xs">
-                                    {t.inicio} → {t.fin || "—"}
-                                </TableCell>
-                                <TableCell className="text-xs text-[color:var(--institution-muted)] max-w-xs truncate">
-                                    {t.descripcion || "—"}
-                                </TableCell>
-                                <TableCell className="text-right">
-                                    <Button variant="ghost" size="sm" onClick={() => onEdit(t)} data-testid={`tp-edit-${t.id}`} className="rounded-sm">
-                                        <Pencil size={14} />
-                                    </Button>
-                                    <Button variant="ghost" size="sm" onClick={() => onDelete(t)} data-testid={`tp-delete-${t.id}`} className="rounded-sm text-[color:var(--institution-danger)]">
-                                        <Trash2 size={14} />
-                                    </Button>
-                                </TableCell>
-                            </TableRow>
-                        ))}
-                        {list.length === 0 && (
-                            <TableRow>
-                                <TableCell colSpan={6} className="text-center py-12 text-sm text-[color:var(--institution-muted)]">
-                                    Sin tipos de pago registrados.
-                                </TableCell>
-                            </TableRow>
-                        )}
-                    </TableBody>
-                </Table>
-            </div>
+  return (
+    <div className="space-y-6" data-testid="tipospagos-page">
+      <div className="flex items-end justify-between">
+        <div>
+          <div className="section-eyebrow">Catálogo Tipos de Pagos</div>
+          <h1 className="font-serif-display text-4xl mt-1">Tipos de Pago</h1>
+          <p className="text-sm text-[color:var(--institution-muted)] mt-1">
+            Conceptos por los cuales se pueden emitir comprobantes.
+          </p>
         </div>
-    );
+        <Dialog open={open} onOpenChange={handleOpenChange}>
+          <DialogTrigger asChild>
+            <Button
+              data-testid="new-tipopago-btn"
+              className="rounded-sm text-white"
+              style={{ backgroundColor: "var(--institution-burgundy)" }}
+            >
+              <Plus size={16} className="mr-1" /> Nuevo tipo de pago
+            </Button>
+          </DialogTrigger>
+          <DialogContent className="rounded-sm">
+            <DialogHeader>
+              <DialogTitle className="font-serif-display text-2xl">
+                {editingTipo ? "Editar Tipo de Pago" : "Nuevo Tipo de Pago"}
+              </DialogTitle>
+            </DialogHeader>
+            <form onSubmit={handleSubmit} className="grid grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <Label className="text-xs uppercase tracking-widest text-[color:var(--institution-muted)]">
+                  Monto (Bs.)
+                </Label>
+                <Input
+                  type="number"
+                  step="0.01"
+                  value={formData.monto}
+                  onChange={(e) =>
+                    setFormData({ ...formData, monto: e.target.value })
+                  }
+                  required
+                  data-testid="tp-monto-input"
+                  className="rounded-sm"
+                />
+              </div>
+              <div className="space-y-1.5 col-span-2">
+                <Label className="text-xs uppercase tracking-widest text-[color:var(--institution-muted)]">
+                  Nombre
+                </Label>
+                <Input
+                  value={formData.nombre}
+                  onChange={(e) =>
+                    setFormData({ ...formData, nombre: e.target.value })
+                  }
+                  required
+                  data-testid="tp-nombre-input"
+                  className="rounded-sm"
+                />
+              </div>
+              <div className="space-y-1.5 col-span-2">
+                <Label className="text-xs uppercase tracking-widest text-[color:var(--institution-muted)]">
+                  Descripción
+                </Label>
+                <Textarea
+                  value={formData.descripcion}
+                  onChange={(e) =>
+                    setFormData({ ...formData, descripcion: e.target.value })
+                  }
+                  rows={2}
+                  data-testid="tp-desc-input"
+                  className="rounded-sm"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs uppercase tracking-widest text-[color:var(--institution-muted)]">
+                  Inicio
+                </Label>
+                <Input
+                  type="date"
+                  value={formData.inicio}
+                  onChange={(e) =>
+                    setFormData({ ...formData, inicio: e.target.value })
+                  }
+                  required
+                  data-testid="tp-inicio-input"
+                  className="rounded-sm"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs uppercase tracking-widest text-[color:var(--institution-muted)]">
+                  Fin (opcional)
+                </Label>
+                <Input
+                  type="date"
+                  value={formData.fin}
+                  onChange={(e) =>
+                    setFormData({ ...formData, fin: e.target.value })
+                  }
+                  data-testid="tp-fin-input"
+                  className="rounded-sm"
+                />
+              </div>
+              <DialogFooter className="col-span-2">
+                <Button
+                  type="submit"
+                  disabled={loading}
+                  data-testid="tp-save-btn"
+                  className="rounded-sm text-white"
+                  style={{ backgroundColor: "var(--institution-burgundy)" }}
+                >
+                  {editingTipo ? "Actualizar" : "Crear"}
+                </Button>
+              </DialogFooter>
+            </form>
+          </DialogContent>
+        </Dialog>
+      </div>
+
+      <div
+        className="bg-white border rounded-sm"
+        style={{ borderColor: "var(--institution-border)" }}
+      >
+        <Table>
+          <TableHeader>
+            <TableRow style={{ backgroundColor: "var(--institution-cream)" }}>
+              <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">
+                Código
+              </TableHead>
+              <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">
+                Nombre
+              </TableHead>
+              <TableHead className="text-right uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">
+                Monto (Bs.)
+              </TableHead>
+              <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">
+                Vigencia
+              </TableHead>
+              <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">
+                Descripción
+              </TableHead>
+              <TableHead className="text-right uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">
+                Acciones
+              </TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {tiposPagos.map((tipo) => (
+              <TableRow key={tipo.id} data-testid={`tp-row-${tipo.id}`}>
+                <TableCell className="font-mono-num">{tipo.id}</TableCell>
+                <TableCell className="font-medium">{tipo.nombre}</TableCell>
+                <TableCell className="text-right font-mono-num">
+                  {formatMoney(tipo.monto)}
+                </TableCell>
+                <TableCell className="text-xs">
+                  {tipo.inicio} → {tipo.fin || "—"}
+                </TableCell>
+                <TableCell className="text-xs text-[color:var(--institution-muted)] max-w-xs truncate">
+                  {tipo.descripcion || "—"}
+                </TableCell>
+                <TableCell className="text-right">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => handleEdit(tipo)}
+                    data-testid={`tp-edit-${tipo.id}`}
+                    className="rounded-sm"
+                  >
+                    <Pencil size={14} />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => handleDelete(tipo)}
+                    data-testid={`tp-delete-${tipo.id}`}
+                    className="rounded-sm text-[color:var(--institution-danger)]"
+                  >
+                    <Trash2 size={14} />
+                  </Button>
+                </TableCell>
+              </TableRow>
+            ))}
+            {tiposPagos.length === 0 && (
+              <TableRow>
+                <TableCell
+                  colSpan={6}
+                  className="text-center py-12 text-sm text-[color:var(--institution-muted)]"
+                >
+                  Sin tipos de pago registrados.
+                </TableCell>
+              </TableRow>
+            )}
+          </TableBody>
+        </Table>
+      </div>
+      <div className="flex items-center justify-between px-2 text-xs text-[color:var(--institution-muted)]">
+        <div>
+          Página <b>{pagina}</b> de <b>{totalPaginas}</b>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            className="rounded-sm gap-1 h-8 px-3"
+            style={{ borderColor: "var(--institution-border)" }}
+            onClick={() => setPagina((p) => Math.max(p - 1, 1))}
+            disabled={pagina === 1}
+          >
+            <ChevronLeft size={14} />
+            Anterior
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className="rounded-sm gap-1 h-8 px-3"
+            style={{ borderColor: "var(--institution-border)" }}
+            onClick={() => setPagina((p) => Math.min(p + 1, totalPaginas))}
+            disabled={pagina === totalPaginas}
+          >
+            Siguiente
+            <ChevronRight size={14} />
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
 }

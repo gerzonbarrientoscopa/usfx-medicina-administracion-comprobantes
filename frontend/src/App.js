@@ -1,7 +1,7 @@
 import React from "react";
 import "@/App.css";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
-import { AuthProvider } from "@/context/AuthContext";
+import { AuthProvider } from "@/contexts/AuthContext";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { AppLayout } from "@/components/AppLayout";
 import { Toaster } from "@/components/ui/sonner";
@@ -36,7 +36,7 @@ function App() {
                     <Route
                         path="/estudiantes"
                         element={
-                            <ProtectedRoute roles={["admin"]}>
+                            <ProtectedRoute roles={["Administrador"]}>
                                 <AppLayout>
                                     <EstudiantesPage />
                                 </AppLayout>
@@ -44,9 +44,9 @@ function App() {
                         }
                     />
                     <Route
-                        path="/tipospagos"
+                        path="/tipos-pagos"
                         element={
-                            <ProtectedRoute roles={["admin"]}>
+                            <ProtectedRoute roles={["Administrador"]}>
                                 <AppLayout>
                                     <TiposPagosPage />
                                 </AppLayout>
@@ -56,7 +56,7 @@ function App() {
                     <Route
                         path="/usuarios"
                         element={
-                            <ProtectedRoute roles={["admin"]}>
+                            <ProtectedRoute roles={["Administrador"]}>
                                 <AppLayout>
                                     <UsuariosPage />
                                 </AppLayout>
@@ -66,7 +66,7 @@ function App() {
                     <Route
                         path="/anular"
                         element={
-                            <ProtectedRoute roles={["admin"]}>
+                            <ProtectedRoute roles={["Administrador"]}>
                                 <AppLayout>
                                     <AnularPagoPage />
                                 </AppLayout>
@@ -76,7 +76,7 @@ function App() {
                     <Route
                         path="/reportes"
                         element={
-                            <ProtectedRoute roles={["admin"]}>
+                            <ProtectedRoute roles={["Administrador"]}>
                                 <AppLayout>
                                     <ReportesPage />
                                 </AppLayout>
@@ -86,7 +86,7 @@ function App() {
                     <Route
                         path="/registro"
                         element={
-                            <ProtectedRoute roles={["admin", "caja"]}>
+                            <ProtectedRoute roles={["Administrador", "Caja"]}>
                                 <AppLayout>
                                     <RegistroPagoPage />
                                 </AppLayout>
@@ -96,7 +96,7 @@ function App() {
                     <Route
                         path="/buscar"
                         element={
-                            <ProtectedRoute roles={["admin", "caja", "consultas"]}>
+                            <ProtectedRoute roles={["Administrador", "Caja", "Consultas"]}>
                                 <AppLayout>
                                     <BusquedaPagosPage />
                                 </AppLayout>

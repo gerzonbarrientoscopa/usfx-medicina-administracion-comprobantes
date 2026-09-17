@@ -27,29 +27,29 @@ import {
 } from "@/components/ui/alert-dialog";
 
 export default function AnularPagoPage() {
-    const [q, setQ] = useState("");
+    const [textoBuscar, setTextoBuscar] = useState("");
     const [pagos, setPagos] = useState([]);
 
     const buscar = async () => {
-        if (!q.trim()) {
+        if (!textoBuscar.trim()) {
             toast.error("Ingrese código de comprobante o nombre del estudiante");
             return;
         }
         try {
-            const { data } = await apiClient.get("/pagos", { params: { q } });
+            const { data } = await apiClient.get("/pagos", { params: { textoBuscar } });
             setPagos(data);
-            if (data.length === 0) toast.message("Sin resultados");
+            if (data.length === 0) 
+                toast.message("Sin resultados.");
         } catch (e) {
             toast.error(formatApiError(e));
         }
     };
 
-    const anular = async (p) => {
+    const anular = async (pago) => {
         try {
-            await apiClient.post(`/pagos/${p.id}/anular`);
-            toast.success(`Comprobante ${p.codcomprobante}/${p.gestion} anulado`);
-            // refresh local list
-            setPagos((prev) => prev.map((x) => (x.id === p.id ? { ...x, anulado: true } : x)));
+            await apiClient.post(`/pagos/${pago.id}/anular`);
+            toast.success(`Comprobante ${pago.codcomprobante}/${pago.gestion} anulado.`);            
+            setPagos((prev) => prev.map((x) => (x.id === pago.id ? { ...x, anulado: true } : x)));
         } catch (e) {
             toast.error(formatApiError(e));
         }
@@ -73,8 +73,8 @@ export default function AnularPagoPage() {
                         </Label>
                         <Input
                             placeholder="Ej. 00001/2026 ó Juan Pérez"
-                            value={q}
-                            onChange={(e) => setQ(e.target.value)}
+                            value={textoBuscar}
+                            onChange={(e) => setTextoBuscar(e.target.value)}
                             onKeyDown={(e) => e.key === "Enter" && buscar()}
                             className="rounded-sm"
                             data-testid="anular-q-input"
@@ -105,17 +105,17 @@ export default function AnularPagoPage() {
                         </TableRow>
                     </TableHeader>
                     <TableBody>
-                        {pagos.map((p) => (
-                            <TableRow key={p.id}>
+                        {pagos.map((pago) => (
+                            <TableRow key={pago.id}>
                                 <TableCell className="font-mono-num font-medium">
-                                    {p.codcomprobante}/{p.gestion}
+                                    {pago.codcomprobante}/{pago.gestion}
                                 </TableCell>
-                                <TableCell>{p.estudiante_nombre || "—"}</TableCell>
-                                <TableCell>{p.tipopago_nombre || "—"}</TableCell>
-                                <TableCell className="text-right font-mono-num">{formatMoney(p.total)}</TableCell>
-                                <TableCell className="font-mono-num">{p.fecha_pago}</TableCell>
+                                <TableCell>{pago.estudiante_nombre || "—"}</TableCell>
+                                <TableCell>{pago.tipopago_nombre || "—"}</TableCell>
+                                <TableCell className="text-right font-mono-num">{formatMoney(pago.total)}</TableCell>
+                                <TableCell className="font-mono-num">{pago.fecha_pago}</TableCell>
                                 <TableCell>
-                                    {p.anulado ? (
+                                    {pago.anulado ? (
                                         <span className="pill pill-void">Anulado</span>
                                     ) : (
                                         <span className="pill pill-valid">Válido</span>
@@ -127,13 +127,13 @@ export default function AnularPagoPage() {
                                             <Button
                                                 size="sm"
                                                 variant="outline"
-                                                disabled={p.anulado}
+                                                disabled={pago.anulado}
                                                 className="rounded-sm"
-                                                data-testid={`anular-btn-${p.id}`}
-                                                style={!p.anulado ? { color: "var(--institution-danger)", borderColor: "var(--institution-danger)" } : {}}
+                                                data-testid={`anular-btn-${pago.id}`}
+                                                style={!pago.anulado ? { color: "var(--institution-danger)", borderColor: "var(--institution-danger)" } : {}}
                                             >
                                                 <Ban size={12} className="mr-1" />
-                                                {p.anulado ? "Anulado" : "Anular"}
+                                                {pago.anulado ? "Anulado" : "Anular"}
                                             </Button>
                                         </AlertDialogTrigger>
                                         <AlertDialogContent className="rounded-sm">
@@ -142,17 +142,17 @@ export default function AnularPagoPage() {
                                                     Confirmar anulación
                                                 </AlertDialogTitle>
                                                 <AlertDialogDescription>
-                                                    El comprobante <strong>{p.codcomprobante}/{p.gestion}</strong> de{" "}
-                                                    <strong>{p.estudiante_nombre}</strong> por <strong>Bs. {formatMoney(p.total)}</strong> quedará anulado y no podrá revertirse.
+                                                    El comprobante <strong>{pago.codcomprobante}/{pago.gestion}</strong> de{" "}
+                                                    <strong>{pago.estudiante_nombre}</strong> por <strong>Bs. {formatMoney(pago.total)}</strong> quedará anulado y no podrá revertirse.
                                                 </AlertDialogDescription>
                                             </AlertDialogHeader>
                                             <AlertDialogFooter>
                                                 <AlertDialogCancel className="rounded-sm">Cancelar</AlertDialogCancel>
                                                 <AlertDialogAction
-                                                    onClick={() => anular(p)}
+                                                    onClick={() => anular(pago)}
                                                     className="rounded-sm text-white"
                                                     style={{ backgroundColor: "var(--institution-danger)" }}
-                                                    data-testid={`confirm-anular-${p.id}`}
+                                                    data-testid={`confirm-anular-${pago.id}`}
                                                 >
                                                     Sí, anular
                                                 </AlertDialogAction>

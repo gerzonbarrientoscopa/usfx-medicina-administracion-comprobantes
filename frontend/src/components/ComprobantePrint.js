@@ -6,8 +6,8 @@ const INSTITUTION = {
     linea3: "Administración",
 };
 
-export function buildComprobanteHTML(p) {
-    const fecha = (p.fecha_pago || "").substring(0, 10);
+export function buildComprobanteHTML(pago) {
+    const fecha = (pago.fecha_pago || "").substring(0, 10);
     const moneyFmt = (n) =>
         Number(n || 0).toLocaleString("es-BO", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     const generadoEn = new Date().toLocaleString("es-BO");
@@ -16,7 +16,7 @@ export function buildComprobanteHTML(p) {
 <html lang="es">
 <head>
 <meta charset="UTF-8" />
-<title>Comprobante ${p.codcomprobante}/${p.gestion}</title>
+<title>Comprobante ${pago.cod_comprobante}/${pago.gestion}</title>
 <style>
   @import url("https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap");
   * { box-sizing: border-box; }
@@ -61,7 +61,7 @@ export function buildComprobanteHTML(p) {
     <button onclick="window.close()">Cerrar</button>
   </div>
   <div class="receipt-wrap">
-    ${p.anulado ? '<div class="void-stamp">ANULADO</div>' : ""}
+    ${pago.anulado ? '<div class="void-stamp">ANULADO</div>' : ""}
     <div class="receipt">
       <div class="header">
         <div class="header-text">
@@ -71,15 +71,15 @@ export function buildComprobanteHTML(p) {
         </div>
         <div class="cod-box">
           <div class="cod-label">Comprobante N°</div>
-          <div class="cod-num">${p.codcomprobante}/${p.gestion}</div>
+          <div class="cod-num">${pago.cod_comprobante}/${pago.gestion}</div>
         </div>
       </div>
 
       <div class="title-bar">Comprobante de Pago</div>
 
-      <div class="row"><span class="label">Estudiante</span><span class="value">${p.estudiante_nombre || ""}</span></div>
-      <div class="row"><span class="label">C.I.</span><span class="value">${p.estudiante_ci || ""}</span></div>
-      <div class="row"><span class="label">C.U.</span><span class="value">${p.estudiante_cu || "-"}</span></div>
+      <div class="row"><span class="label">Estudiante</span><span class="value">${pago.estudiante_nombre || ""}</span></div>
+      <div class="row"><span class="label">C.I.</span><span class="value">${pago.estudiante_ci || ""}</span></div>
+      <div class="row"><span class="label">C.U.</span><span class="value">${pago.estudiante_cu || "-"}</span></div>
       <div class="row"><span class="label">Fecha de Pago</span><span class="value">${fecha}</span></div>
 
       <table>
@@ -88,17 +88,17 @@ export function buildComprobanteHTML(p) {
         </thead>
         <tbody>
           <tr>
-            <td>${p.tipopago_nombre || ""}</td>
-            <td style="text-align:right">${p.cantidad}</td>
-            <td style="text-align:right">Bs. ${moneyFmt(p.monto)}</td>
-            <td style="text-align:right">Bs. ${moneyFmt(p.total)}</td>
+            <td>${pago.tipopago_nombre || ""}</td>
+            <td style="text-align:right">${pago.cantidad}</td>
+            <td style="text-align:right">Bs. ${moneyFmt(pago.monto)}</td>
+            <td style="text-align:right">Bs. ${moneyFmt(pago.total)}</td>
           </tr>
         </tbody>
       </table>
 
       <div class="totals">
         <div class="totals-box">
-          <div class="row"><span class="label">Total a Pagar</span><span class="value grand">Bs. ${moneyFmt(p.total)}</span></div>
+          <div class="row"><span class="label">Total a Pagar</span><span class="value grand">Bs. ${moneyFmt(pago.total)}</span></div>
         </div>
       </div>
 

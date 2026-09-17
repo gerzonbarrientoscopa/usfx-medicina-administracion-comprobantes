@@ -5,7 +5,8 @@ import jwt
 import uuid
 from jwt.exceptions import InvalidTokenError
 from dotenv import load_dotenv
-from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, Response, status
+from fastapi import FastAPI, APIRouter, HTTPException, Query, Depends, Request, Response, status
+from fastapi.responses import JSONResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from starlette.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, EmailStr, ConfigDict
@@ -13,6 +14,7 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from pathlib import Path
 from datetime import datetime, date, timezone, timedelta
 from typing import List, Optional, Literal
+
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
@@ -41,8 +43,7 @@ api = APIRouter(prefix="/api")
 security = HTTPBearer()
 
 ROLES = ("Administrador", "Caja", "Consultas")
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
-logger = logging.getLogger("comprobantes")
+
 
 # ----------------------------- MODELS -----------------------------
 class UserPublic(BaseModel):
@@ -53,154 +54,196 @@ class UserPublic(BaseModel):
     rol: Literal["Administrador", "Caja", "Consultas"]
     created_at: Optional[str] = None
 
+
 class UserCreate(BaseModel):
     email: EmailStr
     nombre: str
-    password_hash: str = Field(min_length=4)
+    password: str = Field(min_length=4)
     rol: Literal["Administrador", "Caja", "Consultas"]
+
 
 class UserUpdate(BaseModel):
     nombre: Optional[str] = None
     rol: Optional[Literal["Administrador", "Caja", "Consultas"]] = None
-    password_hash: Optional[str] = Field(default=None, min_length=4)
+    password: Optional[str] = Field(default=None, min_length=4)
+
+class UserPaginationResponse(BaseModel):
+    items: List[UserPublic]
+    total: int
+    page: int
+    size: int
+    pages: int
 
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str
 
+
 class LoginResponse(BaseModel):
     token: str
     usuario: UserPublic
 
-class Estudiante(BaseModel):    
+
+class EstudianteBase(BaseModel):
     ci: str
     cu: Optional[str] = ""
     nombre: str
     gestion: int
 
-class EstudianteCreate(Estudiante):
+
+class EstudianteCreate(EstudianteBase):
     pass
 
-class EstudianteOut(Estudiante):
-    id: str
-    created_at: Optional[str] = None
 
-class TipoPago(BaseModel):    
+class Estudiante(EstudianteBase):
+    id: str    
+
+
+class PaginacionEstudiantes(BaseModel):
+    items: List[Estudiante]
+    total: int
+    page: int
+    size: int
+    pages: int
+
+
+class TipoPagoBase(BaseModel):
     nombre: str
     monto: float
     descripcion: Optional[str] = ""
     inicio: str  # ISO date YYYY-MM-DD
     fin: Optional[str] = None
 
-class TipoPagoCreate(TipoPago):
+
+class TipoPagoCreate(TipoPagoBase):
     pass
 
-class TipoPagoOut(TipoPago):
-    id: str
-    created_at: Optional[str] = None
 
-class PagoCreate(BaseModel):
+class TipoPago(TipoPagoBase):
+    id: str    
+
+
+class PaginacionTiposPagos(BaseModel):
+    items: List[TipoPago]
+    total: int
+    page: int
+    size: int
+    pages: int
+
+class PagoBase(BaseModel):
     id_estudiante: str
-    id_tipopago: str
+    id_tipo_pago: str
     cantidad: float = Field(gt=0)
     fecha_pago: str  # YYYY-MM-DD
 
-class PagoOut(BaseModel):
+class PagoCreate(PagoBase):
+    pass
+
+
+class Pago(PagoBase):
     id: str
-    codcomprobante: str
-    gestion: int
-    cantidad: float
+    cod_comprobante: str
+    gestion: int    
     monto: float
-    total: float
-    fecha_pago: str
-    id_estudiante: str
-    id_tipopago: str
+    total: float    
     estudiante_nombre: Optional[str] = None
     estudiante_ci: Optional[str] = None
     estudiante_cu: Optional[str] = ""
-    tipopago_nombre: Optional[str] = None
+    tipo_pago_nombre: Optional[str] = None
     anulado: bool = False
     anulado_at: Optional[str] = None
     anulado_by: Optional[str] = None
-    created_at: Optional[str] = None
+    creado_at: Optional[str] = None
     created_by: Optional[str] = None
     created_by_name: Optional[str] = None
     edited_at: Optional[str] = None
     edited_by: Optional[str] = None
     edited_by_name: Optional[str] = None
 
-class PagoUpdate(BaseModel):
-    id_estudiante: Optional[str] = None
-    id_tipopago: Optional[str] = None
-    cantidad: Optional[float] = Field(default=None, gt=0)
-    fecha_pago: Optional[str] = None
+class PaginacionPagos(BaseModel):
+    items: List[Pago]
+    total: int
+    page: int
+    size: int
+    pages: int
+
 
 # ----------------------------- HELPERS -----------------------------
 def iso(dt: datetime) -> str:
     return dt.astimezone(timezone.utc).isoformat()
 
+
 def hash_password(password: str) -> str:
     return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
+
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     try:
-        return bcrypt.checkpw(plain_password.encode("utf-8"), hashed_password.encode("utf-8"))
+        return bcrypt.checkpw(
+            plain_password.encode("utf-8"), hashed_password.encode("utf-8")
+        )
     except Exception:
         return False
 
-def create_access_token(user_id: str, email: str, role: str) -> str:
+
+def create_access_token(user_id: str, email: str, rol: str) -> str:
     payload = {
         "sub": user_id,
         "email": email,
-        "role": role,
+        "rol": rol,
         "exp": datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRES_MIN),
         "type": "access",
     }
-    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+    return jwt.encode(payload, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
 
-async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)) -> dict:
+
+async def get_current_user(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+) -> dict:
     token = credentials.credentials
     try:
         payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
-        user_id = payload.get("sub")        
-        email = payload.get("email")        
+        user_id = payload.get("sub")
+        email = payload.get("email")
         if user_id is None:
             raise HTTPException(status_code=401, detail="Token inválido.")
     except InvalidTokenError:
         raise HTTPException(status_code=401, detail="Token inválido.")
-    
+
     user = await db.usuarios.find_one({"email": email}, {"_id": 0})
     if user is None:
         raise HTTPException(status_code=401, detail="Usuario no encontrado.")
     return user
 
+
 def require_roles(*allowed: str):
     async def _dep(user: dict = Depends(get_current_user)) -> dict:
-        if user.get("role") not in allowed:
-            raise HTTPException(status_code=403, detail="Sin permisos para esta acción.")
+        if user.get("rol") not in allowed:
+            raise HTTPException(
+                status_code=403, detail="Sin permisos para esta acción."
+            )
         return user
 
     return _dep
+
 
 # ----------------------------- AUTH ENDPOINTS -----------------------------
 @api.post("/auth/login", response_model=LoginResponse, status_code=status.HTTP_200_OK)
 async def login(body: LoginRequest, response: Response):
     email = body.email.lower().strip()
-    user = await db.users.find_one({"email": email},{"_id": 0})
+    user = await db.usuarios.find_one({"email": email}, {"_id": 0})
     # Evitar revelar si el usuario existe o no
     if not user:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Credenciales inválidas."
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Credenciales inválidas."
         )
 
     # Verificar contraseña
     if not verify_password(body.password, user["password_hash"]):
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Credenciales inválidas."
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Credenciales inválidas."
         )
-    
+
     # Crear JWT
     token = create_access_token(user["id"], user["email"], user["rol"])
     response.set_cookie(
@@ -214,7 +257,7 @@ async def login(body: LoginRequest, response: Response):
     )
     return {
         "token": token,
-        "user": {
+        "usuario": {
             "id": user["id"],
             "email": user["email"],
             "nombre": user["nombre"],
@@ -222,122 +265,245 @@ async def login(body: LoginRequest, response: Response):
         },
     }
 
+
 @api.post("/auth/logout")
 async def logout(response: Response):
     response.delete_cookie("access_token", path="/")
     return {"ok": True}
 
+
 @api.get("/auth/me", response_model=UserPublic)
 async def me(user: dict = Depends(get_current_user)):
     return UserPublic(**user)
 
-# ----------------------------- Users CRUD (admin) -----------------------------
-@api.get("/users", response_model=List[UserPublic])
-async def list_users(_: dict = Depends(require_roles("Administrador"))):
-    cursor = db.users.find({}, {"_id": 0, "password_hash": 0}).sort("created_at", -1)
-    return [UserPublic(**u) async for u in cursor]
 
-@api.get("/users/list")
-async def list_users_minimal(_: dict = Depends(get_current_user)):
+# ----------------------------- Users CRUD (admin) -----------------------------
+@api.get("/usuarios", response_model=UserPaginationResponse)
+async def get_users(
+    pag: int = Query(1, ge=1, description="Número de página"),
+    tam: int = Query(10, ge=1, le=100, description="Elementos por página"),
+    _: dict = Depends(require_roles("Administrador"))
+):
+    # 1. Calcular el salto (offset)
+    salto = (pag - 1) * tam
+    
+    # 2. Contar de manera eficiente el total de documentos en la colección
+    total_usuarios = await db.usuarios.count_documents({})
+    
+    # 3. Consultar solo el bloque/lote de datos requerido
+    cursor = db.usuarios.find({}, {"_id": 0, "password_hash": 0}) \
+                        .sort([("nombre", 1), ("email", 1)]) \
+                        .skip(salto) \
+                        .limit(tam)
+    
+    # 4. Traer el lote a memoria de manera veloz con to_list()
+    usuarios_dict = await cursor.to_list(length=tam)
+    
+    # 5. Mapear los diccionarios al modelo UserPublic de forma síncrona
+    usuarios_validados = [UserPublic(**u) for u in usuarios_dict]
+    
+    # 6. Calcular el número total de páginas (redondeo hacia arriba)
+    total_paginas = (total_usuarios + tam - 1) // tam if total_usuarios > 0 else 1
+    
+    # 7. Retornar la estructura exacta que pide UserPaginationResponse
+    return {
+        "items": usuarios_validados,
+        "total": total_usuarios,
+        "page": pag,
+        "size": tam,
+        "pages": total_paginas
+    }    
+
+@api.get("/usuarios/list")
+async def get_users_minimal(_: dict = Depends(get_current_user)):
     """Lista mínima de usuarios (id, name, role) — disponible a todos los autenticados
     para alimentar el filtro 'Registrado por' en búsqueda y reportes."""
-    cursor = db.users.find({}, {"_id": 0, "id": 1, "name": 1, "role": 1}).sort("name", 1)
+    cursor = db.usuarios.find({}, {"_id": 0, "id": 1, "nombre": 1, "rol": 1}).sort(
+        "nombre", 1
+    )
+    
     return [u async for u in cursor]
 
-@api.post("/users", response_model=UserPublic, status_code=201)
-async def create_user(body: UserCreate, _: dict = Depends(require_roles("admin"))):
-    email = body.email.lower().strip()
+
+@api.post("/usuarios", response_model=UserPublic, status_code=201)
+async def create_user(usuario: UserCreate, _: dict = Depends(require_roles("Administrador"))):
+    email = usuario.email.lower().strip()
     existing = await db.users.find_one({"email": email})
     if existing:
-        raise HTTPException(status_code=400, detail="El email ya está registrado")
+        raise HTTPException(status_code=400, detail="El email ya está registrado.")    
     doc = {
         "id": str(uuid.uuid4()),
         "email": email,
-        "nombre": body.nombre,
-        "rol": body.rol,
-        "password_hash": hash_password(body.password),
+        "nombre": usuario.nombre,
+        "rol": usuario.rol,
+        "password_hash": hash_password(usuario.password),
         "created_at": iso(datetime.now(timezone.utc)),
     }
-    await db.users.insert_one(doc)
-    return UserPublic(id=doc["id"], email=doc["email"], name=doc["nombre"], role=doc["rol"], created_at=doc["created_at"])
+    await db.usuarios.insert_one(doc)
+    return UserPublic(
+        id=doc["id"],
+        email=doc["email"],
+        nombre=doc["nombre"],
+        rol=doc["rol"],
+        created_at=doc["created_at"],
+    )
 
-@api.put("/users/{user_id}", response_model=UserPublic)
-async def update_user(user_id: str, body: UserUpdate, _: dict = Depends(require_roles("Administrador"))):
+
+@api.put("/usuarios/{user_id}", response_model=UserPublic)
+async def update_user(
+    user_id: str, usuario: UserUpdate, _: dict = Depends(require_roles("Administrador"))
+):
     update = {}
-    if body.name is not None:
-        update["name"] = body.name
-    if body.role is not None:
-        update["role"] = body.role
-    if body.password:
-        update["password_hash"] = hash_password(body.password)
+    if usuario.nombre is not None:
+        update["nombre"] = usuario.nombre
+    if usuario.rol is not None:
+        update["rol"] = usuario.rol
+    if usuario.password:
+        update["password_hash"] = hash_password(usuario.password)
     if not update:
-        raise HTTPException(status_code=400, detail="Sin cambios")
-    res = await db.users.update_one({"id": user_id}, {"$set": update})
+        raise HTTPException(status_code=400, detail="Sin cambios.")
+    res = await db.usuarios.update_one({"id": user_id}, {"$set": update})
     if res.matched_count == 0:
-        raise HTTPException(status_code=404, detail="Usuario no encontrado")
-    u = await db.users.find_one({"id": user_id}, {"_id": 0, "password_hash": 0})
-    return UserPublic(**u)
+        raise HTTPException(status_code=404, detail="Usuario no encontrado.")
+    userUpdate = await db.usuarios.find_one(
+        {"id": user_id}, {"_id": 0, "password_hash": 0}
+    )
+    return UserPublic(**userUpdate)
 
-@api.delete("/users/{user_id}")
-async def delete_user(user_id: str, current: dict = Depends(require_roles("Administrador"))):
+
+@api.delete("/usuarios/{user_id}")
+async def delete_user(
+    user_id: str, current: dict = Depends(require_roles("Administrador"))
+):
     if user_id == current["id"]:
-        raise HTTPException(status_code=400, detail="No puedes eliminar tu propio usuario")
-    target = await db.users.find_one({"id": user_id})
+        raise HTTPException(
+            status_code=400, detail="No puedes eliminar tu propio usuario."
+        )
+    target = await db.usuarios.find_one({"id": user_id}, {"_id": 0})
     if not target:
-        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+        raise HTTPException(status_code=404, detail="Usuario no encontrado.")
     if target.get("email") == ADMIN_EMAIL:
-        raise HTTPException(status_code=400, detail="No puedes eliminar el admin principal")
-    await db.users.delete_one({"id": user_id})
+        raise HTTPException(
+            status_code=400, detail="No puedes eliminar el admin principal."
+        )
+    await db.usuarios.delete_one({"id": user_id})
     return {"ok": True}
+    # return {"message": "Usuario eliminado."}
+
 
 # ----------------------------- CRUD Estudiantes -----------------------------
-@api.get("/estudiantes", response_model=List[EstudianteOut])
-async def list_estudiantes(q: Optional[str] = None, _: dict = Depends(get_current_user)):    
+@api.get("/estudiantes", response_model=PaginacionEstudiantes)
+async def get_estudiantes(
+    pag: int = Query(1, ge=1, description="Número de página"),
+    tam: int = Query(10, ge=1, le=100, description="Elementos por página"),
+    textoBuscar: Optional[str] = None, _: dict = Depends(get_current_user)
+):    
     filt = {}
-    if q:
+    if textoBuscar:
         filt = {
-            "$or": [                
-                {"ci": {"$regex": q, "$options": "i"}},
-                {"cu": {"$regex": q, "$options": "i"}},
-                {"nombre": {"$regex": q, "$options": "i"}},
+            "$or": [
+                {"ci": {"$regex": textoBuscar, "$options": "i"}},
+                {"cu": {"$regex": textoBuscar, "$options": "i"}},
+                {"nombre": {"$regex": textoBuscar, "$options": "i"}},
             ]
         }
-    cursor = db.estudiantes.find(filt, {"_id": 0}).sort("nombre", 1).limit(500)
-    return [EstudianteOut(**e) async for e in cursor]
 
-@api.post("/estudiantes", response_model=EstudianteOut, status_code=201)
-async def create_estudiante(estudiante: EstudianteCreate, _: dict = Depends(require_roles("Administrador", "Caja"))):    
-    if await db.estudiantes.find_one({"cu": estudiante.cu}):
-        raise HTTPException(status_code=400, detail="El CU ya existe")
-    doc = estudiante.model_dump()
-    doc["id"] = str(uuid.uuid4())
-    doc["created_at"] = iso(datetime.now(timezone.utc))
-    await db.estudiantes.insert_one(doc)
-    return EstudianteOut(**{k: v for k, v in doc.items() if k != "_id"})
+    # 1. Calcular el salto (offset)
+    salto = (pag - 1) * tam
+    
+    # 2. Contar de manera eficiente el total de documentos en la colección
+    total_estudiantes = await db.estudiantes.count_documents(filt)
+    
+    # 3. Consultar solo el bloque/lote de datos requerido
+    cursor = db.estudiantes.find(filt, {"_id": 0}) \
+                        .sort([("nombre", 1), ("cu", 1)]) \
+                        .skip(salto) \
+                        .limit(tam)
+    
+    # 4. Traer el lote a memoria de manera veloz con to_list()
+    estudiantes_dict = await cursor.to_list(length=tam)
+    
+    # 5. Mapear los diccionarios al modelo UserPublic de forma síncrona
+    estudiantes_validados = [Estudiante(**u) for u in estudiantes_dict]
+    
+    # 6. Calcular el número total de páginas (redondeo hacia arriba)
+    total_paginas = (total_estudiantes + tam - 1) // tam if total_estudiantes > 0 else 1
+    
+    # 7. Retornar la estructura exacta que pide UserPaginationResponse
+    return {
+        "items": estudiantes_validados,
+        "total": total_estudiantes,
+        "page": pag,
+        "size": tam,
+        "pages": total_paginas
+    }    
+    estudiantes = await db.estudiantes.find(filt, {"_id": 0}).sort("nombre", 1).to_list(500)        
+    return estudiantes
 
-@api.put("/estudiantes/{est_id}", response_model=EstudianteOut)
-async def update_estudiante(est_id: str, estudiante: EstudianteCreate, _: dict = Depends(require_roles("Administrador"))):    
-    otro = await db.estudiantes.find_one({"cu": estudiante.cu, "id": {"$ne": est_id}})
-    if otro:
-        raise HTTPException(status_code=400, detail="El estudiante ya existe")
-    res = await db.estudiantes.update_one({"id": est_id}, {"$set": estudiante.model_dump()})
+
+@api.post("/estudiantes", response_model=Estudiante, status_code=201)
+async def create_estudiante(
+    estudiante: EstudianteCreate,
+    _: dict = Depends(require_roles("Administrador", "Caja")),
+):
+    existing = await db.estudiantes.find_one({"cu": estudiante.cu})
+    if existing:
+        raise HTTPException(status_code=400, detail="El estudiante ya existe.")    
+    estudiante_dict = estudiante.model_dump()
+    estudiante_dict["id"] = str(uuid.uuid4())    
+    await db.estudiantes.insert_one(estudiante_dict)
+    return Estudiante(**estudiante_dict)            
+
+
+@api.put("/estudiantes/{est_id}", response_model=Estudiante)
+async def update_estudiante(
+    est_id: str,
+    estudiante: EstudianteCreate,
+    _: dict = Depends(require_roles("Administrador")),
+):
+    otroEstudiante = await db.estudiantes.find_one({"cu": estudiante.cu, "id": {"$ne": est_id}})
+    if otroEstudiante:
+        raise HTTPException(status_code=400, detail="El estudiante ya existe.")
+    update = {}
+    if estudiante.ci is not None:
+        update["ci"] = estudiante.ci
+    if estudiante.cu is not None:
+        update["cu"] = estudiante.cu
+    if estudiante.nombre is not None:
+        update["nombre"] = estudiante.nombre
+    if estudiante.gestion is not None:
+        update["gestion"] = estudiante.gestion    
+    if not update:
+        raise HTTPException(status_code=400, detail="Sin cambios.")   
+    res = await db.estudiantes.update_one({"id": est_id}, {"$set": update})
     if res.matched_count == 0:
-        raise HTTPException(status_code=404, detail="Estudiante no encontrado")
-    e = await db.estudiantes.find_one({"id": est_id}, {"_id": 0})
-    return EstudianteOut(**e)
+        raise HTTPException(status_code=404, detail="Estudiante no encontrado.")
+    estudianteUpdate = await db.estudiantes.find_one({"id": est_id}, {"_id": 0})
+    return Estudiante(**estudianteUpdate)    
+
 
 @api.delete("/estudiantes/{est_id}")
-async def delete_estudiante(est_id: str, _: dict = Depends(require_roles("Administrador"))):    
+async def delete_estudiante(
+    est_id: str, _: dict = Depends(require_roles("Administrador"))
+):
+    target = await db.estudiantes.find_one({"id": est_id}, {"_id": 0})
+    if not target:
+        raise HTTPException(status_code=404, detail="Estudiante no encontrado.")    
     if await db.pagos.find_one({"id_estudiante": est_id}):
-        raise HTTPException(status_code=400, detail="No se puede eliminar: tiene pagos registrados")
-    res = await db.estudiantes.delete_one({"id": est_id})
-    if res.deleted_count == 0:
-        raise HTTPException(status_code=404, detail="Estudiante no encontrado")
-    return {"ok": True}
+        raise HTTPException(
+            status_code=400, detail="No se puede eliminar: tiene pagos registrados."
+        )
+    await db.estudiantes.delete_one({"id": est_id})
+    return {"ok": True}        
+
 
 # ----------------------------- CRUD TiposPagos -----------------------------
-@api.get("/tipos-pagos", response_model=List[TipoPagoOut])
-async def list_tipospagos(activos: Optional[bool] = False, _: dict = Depends(get_current_user)):
+@api.get("/tipos-pagos", response_model=PaginacionTiposPagos)
+async def get_tipos_pagos(
+    pag: int = Query(1, ge=1, description="Número de página"),
+    tam: int = Query(10, ge=1, le=100, description="Elementos por página"),
+    activos: Optional[bool] = False, _: dict = Depends(get_current_user)
+):
     filt = {}
     if activos:
         today = date.today().isoformat()
@@ -345,57 +511,109 @@ async def list_tipospagos(activos: Optional[bool] = False, _: dict = Depends(get
             "inicio": {"$lte": today},
             "$or": [{"fin": None}, {"fin": {"$gte": today}}, {"fin": ""}],
         }
-    cursor = db.tipospagos.find(filt, {"_id": 0}).sort("nombre", 1)
-    return [TipoPagoOut(**t) async for t in cursor]
 
-@api.post("/tipos-pagos", response_model=TipoPagoOut, status_code=201)
-async def create_tipopago(tipo: TipoPagoCreate, _: dict = Depends(require_roles("Administrador"))):
-    if await db.tipospagos.find_one({"nombre": tipo.nombre}):
-        raise HTTPException(status_code=400, detail="El tipo de pago ya existe")
-    doc = tipo.model_dump()
-    doc["id"] = str(uuid.uuid4())
-    doc["created_at"] = iso(datetime.now(timezone.utc))
-    await db.tipospagos.insert_one(doc)
-    return TipoPagoOut(**{k: v for k, v in doc.items() if k != "_id"})
+    # 1. Calcular el salto (offset)
+    salto = (pag - 1) * tam
+    
+    # 2. Contar de manera eficiente el total de documentos en la colección
+    total_tipos = await db.usuarios.count_documents({})
+    
+    # 3. Consultar solo el bloque/lote de datos requerido
+    cursor = db.tipos_pagos.find({}, {"_id": 0}) \
+                        .sort([("nombre", 1), ("inicio", -1)]) \
+                        .skip(salto) \
+                        .limit(tam)
+    
+    # 4. Traer el lote a memoria de manera veloz con to_list()
+    tipos_dict = await cursor.to_list(length=tam)
+    
+    # 5. Mapear los diccionarios al modelo UserPublic de forma síncrona
+    tipos_validados = [TipoPago(**t) for t in tipos_dict]
+    
+    # 6. Calcular el número total de páginas (redondeo hacia arriba)
+    total_paginas = (total_tipos + tam - 1) // tam if total_tipos > 0 else 1
+    
+    # 7. Retornar la estructura exacta que pide UserPaginationResponse
+    return {
+        "items": tipos_validados,
+        "total": total_tipos,
+        "page": pag,
+        "size": tam,
+        "pages": total_paginas
+    }    
+    tipos = await db.tipos_pagos.find(filt, {"_id": 0}).sort("nombre", 1).to_list(1000)
+    return tipos    
 
-@api.put("/tipos-pagos/{tip_id}", response_model=TipoPagoOut)
-async def update_tipopago(tip_id: str, tipo: TipoPagoCreate, _: dict = Depends(require_roles("Administrador"))):
-    otro = await db.tipospagos.find_one({"nombre": tipo.nombre, "id": {"$ne": tip_id}})
-    if otro:
-        raise HTTPException(status_code=400, detail="El tipo de pago ya existe")
-    res = await db.tipospagos.update_one({"id": tip_id}, {"$set": tipo.model_dump()})
+
+@api.post("/tipos-pagos", response_model=TipoPago, status_code=201)
+async def create_tipo_pago(
+    tipo: TipoPagoCreate, _: dict = Depends(require_roles("Administrador"))
+):
+    existing = await db.tipos_pagos.find_one({"nombre": tipo.nombre})
+    if existing:
+        raise HTTPException(status_code=400, detail="El tipo de pago ya existe.")    
+    tipo_dict = tipo.model_dump()
+    tipo_dict["id"] = str(uuid.uuid4())    
+    await db.tipos_pagos.insert_one(tipo_dict)
+    return TipoPago(**tipo_dict)    
+
+
+@api.put("/tipos-pagos/{tipo_id}", response_model=TipoPago)
+async def update_tipopago(
+    tipo_id: str, tipo: TipoPagoCreate, _: dict = Depends(require_roles("Administrador"))
+):
+    otroTipoPago = await db.tipos_pagos.find_one({"nombre": tipo.nombre, "id": {"$ne": tipo_id}})
+    if otroTipoPago:
+        raise HTTPException(status_code=400, detail="El tipo de pago ya existe.")
+    update = {}
+    if tipo.nombre is not None:
+        update["nombre"] = tipo.nombre
+    if tipo.monto is not None:
+        update["monto"] = tipo.monto
+    if tipo.descripcion is not None:
+        update["descripcion"] = tipo.descripcion
+    if tipo.inicio is not None:
+        update["inicio"] = tipo.inicio
+    if tipo.fin is not None:
+        update["fin"] = tipo.fin
+    if not update:
+        raise HTTPException(status_code=400, detail="Sin cambios.")   
+    res = await db.tipos_pagos.update_one({"id": tipo_id}, {"$set": update})
     if res.matched_count == 0:
-        raise HTTPException(status_code=404, detail="Tipo de pago no encontrado")
-    t = await db.tipospagos.find_one({"id": tip_id}, {"_id": 0})
-    return TipoPagoOut(**t)
+        raise HTTPException(status_code=404, detail="Tipo de pago no encontrado.")
+    tipoUpdate = await db.tipos_pagos.find_one({"id": tipo_id}, {"_id": 0})
+    return TipoPago(**tipoUpdate)
 
-@api.delete("/tipos-pagos/{tip_id}")
-async def delete_tipopago(tip_id: str, _: dict = Depends(require_roles("Administrador"))):
-    if await db.tipospagos.find_one({"id_tipopago": tip_id}):
-        raise HTTPException(status_code=400, detail="No se puede eliminar: tiene pagos asociados")
-    res = await db.tipospagos.delete_one({"id": tip_id})
-    if res.deleted_count == 0:
-        raise HTTPException(status_code=404, detail="Tipo de pago no encontrado")
+
+@api.delete("/tipos-pagos/{tipo_id}")
+async def delete_tipo_pago(
+    tipo_id: str, _: dict = Depends(require_roles("Administrador"))
+):
+    target = await db.tipos_pagos.find_one({"id": tipo_id}, {"_id": 0})
+    if not target:
+        raise HTTPException(status_code=404, detail="Tipo de pago no encontrado.")    
+    await db.tipos_pagos.delete_one({"id": tipo_id})
     return {"ok": True}
+
 
 # ----------------------------- Pagos: comprobante preview -----------------------------
 @api.get("/pagos/preview-comprobante")
-async def preview_comprobante(_: dict = Depends(require_roles("admin", "caja"))):
+async def preview_comprobante(_: dict = Depends(require_roles("Administrador", "Caja"))):
     gestion = datetime.now(timezone.utc).year
-    # Find max codcomprobante for this gestion
-    last = (
-        await db.pagos.find({"gestion": gestion}, {"_id": 0, "codcomprobante": 1})
-        .sort("codcomprobante", -1)
+    # Buscar max cod_comprobante por gestion
+    ultimoPago = (
+        await db.pagos.find({"gestion": gestion}, {"_id": 0, "cod_comprobante": 1})
+        .sort("cod_comprobante", -1)
         .to_list(1)
     )
-    next_num = 1
-    if last:
+    siguiente_num = 1
+    if ultimoPago:
         try:
-            next_num = int(last[0]["codcomprobante"]) + 1
+            siguiente_num = int(ultimoPago[0]["cod_comprobante"]) + 1
         except Exception:
-            next_num = 1
-    cod = f"{next_num:05d}"
-    return {"codcomprobante": cod, "gestion": gestion, "display": f"{cod}/{gestion}"}
+            siguiente_num = 1
+    codigo = f"{siguiente_num:05d}"
+    return {"cod_comprobante": codigo, "gestion": gestion, "display": f"{codigo}/{gestion}"}
 
 
 # ----------------------------- Pagos CRUD -----------------------------
@@ -412,8 +630,8 @@ _PAGO_HYDRATE_PIPELINE = [
     },
     {
         "$lookup": {
-            "from": "tipospagos",
-            "localField": "id_tipopago",
+            "from": "tipos_pagos",
+            "localField": "id_tipo_pago",
             "foreignField": "id",
             "as": "_tp",
         }
@@ -438,9 +656,7 @@ _PAGO_HYDRATE_PIPELINE = [
         "$addFields": {
             "estudiante_nombre": {"$arrayElemAt": ["$_est.nombre", 0]},
             "estudiante_ci": {"$arrayElemAt": ["$_est.ci", 0]},
-            "estudiante_cu": {
-                "$ifNull": [{"$arrayElemAt": ["$_est.cu", 0]}, ""]
-            },
+            "estudiante_cu": {"$ifNull": [{"$arrayElemAt": ["$_est.cu", 0]}, ""]},
             "tipopago_nombre": {"$arrayElemAt": ["$_tp.nombre", 0]},
             "created_by_name": {"$arrayElemAt": ["$_cu.name", 0]},
             "edited_by_name": {"$arrayElemAt": ["$_eu.name", 0]},
@@ -450,77 +666,78 @@ _PAGO_HYDRATE_PIPELINE = [
 ]
 
 
-async def _hydrate_pago(p: dict) -> dict:
+async def _hydrate_pago(pago: dict) -> dict:
     """Single-doc hydration — used by POST/PUT responses where only one
     pago is returned. List endpoints use the aggregation pipeline instead."""
-    est = await db.estudiantes.find_one({"id": p["id_estudiante"]}, {"_id": 0})
-    tp = await db.tipospagos.find_one({"id": p["id_tipopago"]}, {"_id": 0})
-    p["estudiante_nombre"] = est["nombre"] if est else None
-    p["estudiante_ci"] = est["ci"] if est else None
-    p["estudiante_cu"] = est.get("cu", "") if est else ""
-    p["tipopago_nombre"] = tp["nombre"] if tp else None
-    if p.get("created_by"):
-        u = await db.users.find_one({"id": p["created_by"]}, {"_id": 0, "name": 1})
-        p["created_by_name"] = u["name"] if u else None
-    if p.get("edited_by"):
-        u = await db.users.find_one({"id": p["edited_by"]}, {"_id": 0, "name": 1})
-        p["edited_by_name"] = u["name"] if u else None
-    return p
+    estudiante = await db.estudiantes.find_one({"id": pago["id_estudiante"]}, {"_id": 0})
+    tipo = await db.tipos_pagos.find_one({"id": pago["id_tipo_pago"]}, {"_id": 0})
+    pago["estudiante_nombre"] = estudiante["nombre"] if estudiante else None
+    pago["estudiante_ci"] = estudiante["ci"] if estudiante else None
+    pago["estudiante_cu"] = estudiante.get("cu", "") if estudiante else ""
+    pago["tipo_pago_nombre"] = tipo["nombre"] if tipo else None
+    if pago.get("created_by"):
+        usuario = await db.usuarios.find_one({"id": pago["created_by"]}, {"_id": 0, "name": 1})
+        pago["created_by_name"] = usuario["nombre"] if usuario else None
+    if pago.get("edited_by"):
+        usuario = await db.usuarios.find_one({"id": pago["edited_by"]}, {"_id": 0, "name": 1})
+        pago["edited_by_name"] = usuario["nombre"] if usuario else None
+    return pago
 
 
-@api.post("/pagos", response_model=PagoOut, status_code=201)
-async def create_pago(body: PagoCreate, user: dict = Depends(require_roles("admin", "caja"))):
-    est = await db.estudiantes.find_one({"id": body.id_estudiante}, {"_id": 0})
-    if not est:
-        raise HTTPException(status_code=400, detail="Estudiante no encontrado")
-    tp = await db.tipospagos.find_one({"id": body.id_tipopago}, {"_id": 0})
-    if not tp:
-        raise HTTPException(status_code=400, detail="Tipo de pago no encontrado")
+@api.post("/pagos", response_model=Pago, status_code=201)
+async def create_pago(
+    pago: PagoCreate, usuario: dict = Depends(require_roles("Administrador", "Caja"))
+):
+    estudiante = await db.estudiantes.find_one({"id": pago.id_estudiante}, {"_id": 0})
+    if not estudiante:
+        raise HTTPException(status_code=400, detail="Estudiante no encontrado.")
+    tipo = await db.tipos_pagos.find_one({"id": pago.id_tipo_pago}, {"_id": 0})
+    if not tipo:
+        raise HTTPException(status_code=400, detail="Tipo de pago no encontrado.")
 
     gestion = datetime.now(timezone.utc).year
 
     # atomic counter via counters collection
-    counter = await db.counters.find_one_and_update(
+    contador = await db.contadores.find_one_and_update(
         {"_id": f"comprobante_{gestion}"},
         {"$inc": {"seq": 1}},
         upsert=True,
         return_document=True,
     )
-    if counter is None:
-        # depending on driver version - read again
-        counter = await db.counters.find_one({"_id": f"comprobante_{gestion}"})
-    seq = counter["seq"] if counter else 1
-    cod = f"{seq:05d}"
+    if contador is None:        
+        contador = await db.contadores.find_one({"_id": f"comprobante_{gestion}"})
+    seq = contador["seq"] if contador else 1
+    codigo = f"{seq:05d}"
 
-    monto = float(tp["monto"])
-    total = monto * float(body.cantidad)
+    monto = float(tipo["monto"])
+    total = monto * float(pago.cantidad)
 
     doc = {
         "id": str(uuid.uuid4()),
-        "codcomprobante": cod,
+        "cod_comprobante": codigo,
         "gestion": gestion,
-        "cantidad": float(body.cantidad),
+        "cantidad": float(pago.cantidad),
         "monto": monto,
         "total": total,
-        "fecha_pago": body.fecha_pago,
-        "id_estudiante": body.id_estudiante,
-        "id_tipopago": body.id_tipopago,
+        "fecha_pago": pago.fecha_pago,
+        "id_estudiante": pago.id_estudiante,
+        "id_tipo_pago": pago.id_tipo_pago,
         "anulado": False,
         "anulado_at": None,
         "anulado_by": None,
         "created_at": iso(datetime.now(timezone.utc)),
-        "created_by": user["id"],
+        "created_by": usuario["id"],
     }
     await db.pagos.insert_one(doc)
     doc.pop("_id", None)
     doc = await _hydrate_pago(doc)
-    return PagoOut(**doc)
+    return Pago(**doc)
 
 
-@api.get("/pagos", response_model=List[PagoOut])
-async def list_pagos(
+@api.get("/pagos", response_model=PaginacionPagos)
+async def get_pagos(
     q: Optional[str] = None,
-    id_tipopago: Optional[str] = None,
+    id_tipo_pago: Optional[str] = None,
     fecha_desde: Optional[str] = None,
     fecha_hasta: Optional[str] = None,
     incluir_anulados: bool = True,
@@ -530,8 +747,8 @@ async def list_pagos(
     filt: dict = {}
     if not incluir_anulados:
         filt["anulado"] = False
-    if id_tipopago:
-        filt["id_tipopago"] = id_tipopago
+    if id_tipo_pago:
+        filt["id_tipo_pago"] = id_tipo_pago
     if created_by:
         filt["created_by"] = created_by
     if fecha_desde or fecha_hasta:
@@ -549,7 +766,9 @@ async def list_pagos(
         if "/" in ql:
             try:
                 cod_part, ges_part = ql.split("/", 1)
-                extra_or.append({"codcomprobante": cod_part.zfill(5), "gestion": int(ges_part)})
+                extra_or.append(
+                    {"codcomprobante": cod_part.zfill(5), "gestion": int(ges_part)}
+                )
             except Exception:
                 pass
         extra_or.append({"codcomprobante": {"$regex": ql, "$options": "i"}})
@@ -571,12 +790,12 @@ async def list_pagos(
             extra_or.append({"id_estudiante": {"$in": est_ids}})
         tp_ids = [
             t["id"]
-            async for t in db.tipospagos.find(
+            async for t in db.tipos_pagos.find(
                 {"nombre": {"$regex": ql, "$options": "i"}}, {"_id": 0, "id": 1}
             )
         ]
         if tp_ids:
-            extra_or.append({"id_tipopago": {"$in": tp_ids}})
+            extra_or.append({"id_tipo_pago": {"$in": tp_ids}})
 
         filt["$or"] = extra_or
 
@@ -588,16 +807,20 @@ async def list_pagos(
             *_PAGO_HYDRATE_PIPELINE,
         ]
     )
-    return [PagoOut(**p) async for p in cursor]
+    return [Pago(**p) async for p in cursor]
 
 
-@api.put("/pagos/{pago_id}", response_model=PagoOut)
-async def update_pago(pago_id: str, body: PagoUpdate, user: dict = Depends(require_roles("admin"))):
+@api.put("/pagos/{pago_id}", response_model=Pago)
+async def update_pago(
+    pago_id: str, body: PagoCreate, user: dict = Depends(require_roles("admin"))
+):
     pago = await db.pagos.find_one({"id": pago_id}, {"_id": 0})
     if not pago:
         raise HTTPException(status_code=404, detail="Pago no encontrado")
     if pago.get("anulado"):
-        raise HTTPException(status_code=400, detail="No se puede editar un pago anulado")
+        raise HTTPException(
+            status_code=400, detail="No se puede editar un pago anulado"
+        )
 
     update: dict = {}
 
@@ -607,11 +830,11 @@ async def update_pago(pago_id: str, body: PagoUpdate, user: dict = Depends(requi
         update["id_estudiante"] = body.id_estudiante
 
     new_monto = pago["monto"]
-    if body.id_tipopago and body.id_tipopago != pago["id_tipopago"]:
-        tp = await db.tipospagos.find_one({"id": body.id_tipopago}, {"_id": 0})
+    if body.id_tipo_pago and body.id_tipo_pago != pago["id_tipo_pago"]:
+        tp = await db.tipos_pagos.find_one({"id": body.id_tipo_pago}, {"_id": 0})
         if not tp:
             raise HTTPException(status_code=400, detail="Tipo de pago no encontrado")
-        update["id_tipopago"] = body.id_tipopago
+        update["id_tipo_pago"] = body.id_tipo_pago
         new_monto = float(tp["monto"])
         update["monto"] = new_monto
 
@@ -636,23 +859,23 @@ async def update_pago(pago_id: str, body: PagoUpdate, user: dict = Depends(requi
     await db.pagos.update_one({"id": pago_id}, {"$set": update})
     p = await db.pagos.find_one({"id": pago_id}, {"_id": 0})
     p = await _hydrate_pago(p)
-    return PagoOut(**p)
+    return Pago(**p)
 
 
 @api.post("/pagos/{pago_id}/anular")
-async def anular_pago(pago_id: str, user: dict = Depends(require_roles("admin"))):
+async def anular_pago(pago_id: str, usuario: dict = Depends(require_roles("Administrador"))):
     pago = await db.pagos.find_one({"id": pago_id})
     if not pago:
-        raise HTTPException(status_code=404, detail="Pago no encontrado")
+        raise HTTPException(status_code=404, detail="Pago no encontrado.")
     if pago.get("anulado"):
-        raise HTTPException(status_code=400, detail="El pago ya está anulado")
+        raise HTTPException(status_code=400, detail="El pago ya está anulado.")
     await db.pagos.update_one(
         {"id": pago_id},
         {
             "$set": {
                 "anulado": True,
                 "anulado_at": iso(datetime.now(timezone.utc)),
-                "anulado_by": user["id"],
+                "anulado_by": usuario["id"],
             }
         },
     )
@@ -679,7 +902,9 @@ def _periodo_to_range(periodo: str, desde: Optional[str], hasta: Optional[str]):
         return start.isoformat(), end.isoformat()
     if periodo == "rango":
         if not desde or not hasta:
-            raise HTTPException(status_code=400, detail="Se requieren fechas desde y hasta")
+            raise HTTPException(
+                status_code=400, detail="Se requieren fechas desde y hasta"
+            )
         return desde, hasta
     raise HTTPException(status_code=400, detail="Periodo inválido")
 
@@ -690,7 +915,7 @@ async def reportes(
     desde: Optional[str] = None,
     hasta: Optional[str] = None,
     created_by: Optional[str] = None,
-    _: dict = Depends(require_roles("admin")),
+    _: dict = Depends(require_roles("Administrador")),
 ):
     d, h = _periodo_to_range(periodo, desde, hasta)
     filt = {"fecha_pago": {"$gte": d, "$lte": h}}
@@ -727,8 +952,10 @@ async def reportes(
 async def dashboard_stats(user: dict = Depends(get_current_user)):
     today = date.today().isoformat()
     estudiantes_count = await db.estudiantes.count_documents({})
-    tipospagos_count = await db.tipospagos.count_documents({})
-    pagos_hoy_count = await db.pagos.count_documents({"fecha_pago": today, "anulado": False})
+    tipospagos_count = await db.tipos_pagos.count_documents({})
+    pagos_hoy_count = await db.pagos.count_documents(
+        {"fecha_pago": today, "anulado": False}
+    )
     agg = db.pagos.aggregate(
         [
             {"$match": {"fecha_pago": today, "anulado": False}},
@@ -754,20 +981,18 @@ async def dashboard_stats(user: dict = Depends(get_current_user)):
 # ----------------------------- Startup seed -----------------------------
 @app.on_event("startup")
 async def startup():
-    await db.users.create_index("email", unique=True)
+    await db.usuarios.create_index("email", unique=True)
     # `id` indexes — used by $lookup foreignField joins in /api/pagos and /api/reportes
-    await db.users.create_index("id", unique=True)
-    await db.estudiantes.create_index("id", unique=True)
-    await db.estudiantes.create_index("codigo", unique=True)
+    await db.usuarios.create_index("id", unique=True)
+    await db.estudiantes.create_index("id", unique=True)    
     await db.estudiantes.create_index("ci")
-    await db.tipospagos.create_index("id", unique=True)
-    await db.tipospagos.create_index("codigo", unique=True)
+    await db.tipos_pagos.create_index("id", unique=True)    
     await db.pagos.create_index([("gestion", 1), ("codcomprobante", 1)])
     await db.pagos.create_index("fecha_pago")
     # filter indexes used by /api/pagos
     await db.pagos.create_index("created_by")
     await db.pagos.create_index("id_estudiante")
-    await db.pagos.create_index("id_tipopago")
+    await db.pagos.create_index("id_tipo_pago")
 
     admin = await db.usuarios.find_one({"email": ADMIN_EMAIL.lower()})
     if admin is None:
@@ -775,8 +1000,8 @@ async def startup():
             {
                 "id": str(uuid.uuid4()),
                 "email": ADMIN_EMAIL.lower(),
-                "name": ADMIN_NAME,
-                "role": "admin",
+                "nombre": ADMIN_NAME,
+                "rol": "Administrador",
                 "password_hash": hash_password(ADMIN_PASSWORD),
                 "created_at": iso(datetime.now(timezone.utc)),
             }
@@ -800,16 +1025,43 @@ async def shutdown():
 async def root():
     return {"ok": True, "service": "Comprobantes USFX"}
 
+@app.middleware("http")
+async def catch_exceptions_middleware(request: Request, call_next):
+    try:
+        return await call_next(request)
+    except Exception as exc:
+        # Esto atrapará CUALQUIER error interno y obligará a enviar los headers de CORS
+        print(f"❌ ERROR CRÍTICO DETECTADO: {str(exc)}")
 
-app.include_router(api)
+        # Obtenemos el origen de la petición del frontend
+        origin = request.headers.get("origin", "*")
 
-# CORS
-origins = os.environ.get("CORS_ORIGINS", "*")
-allow_origins = [o.strip() for o in origins.split(",")] if origins != "*" else ["*"]
+        return JSONResponse(
+            status_code=500,
+            content={"detail": f"Error interno en el servidor: {str(exc)}"},
+            headers={
+                "Access-Control-Allow-Origin": origin,
+                "Access-Control-Allow-Credentials": "true",
+            },
+        )
+
+
+cors_origins_raw = os.getenv("CORS_ORIGINS", "*")
+origins = cors_origins_raw.split(",") if cors_origins_raw else []
+
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=allow_origins,
     allow_credentials=True,
+    allow_origins=origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+app.include_router(api)
+
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+)
+logger = logging.getLogger(__name__)

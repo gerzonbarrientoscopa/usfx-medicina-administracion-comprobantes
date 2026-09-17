@@ -1,10 +1,16 @@
 import React, { useState } from "react";
 import { useNavigate, useLocation, Navigate } from "react-router-dom";
-import { useAuth } from "@/context/AuthContext";
+import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle} from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { Banknote, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -12,7 +18,7 @@ export default function LoginPage() {
   const { user, login } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
-  const [correo, setCorreo] = useState("");
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -24,11 +30,13 @@ export default function LoginPage() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setLoading(true);
-    const result = await login(correo.trim(), password);
+    const result = await login(email.trim(), password);
     setLoading(false);
     if (result.ok) {
       toast.success("Inicio de sesión exitoso.");
-      navigate("/", { replace: true });
+      // Redirección inteligente al destino previo o a la raíz
+      const dest = location.state?.from?.pathname || "/";
+      navigate(dest, { replace: true });
     } else {
       toast.error(result.error || "Error al iniciar sesión.");
     }
@@ -37,17 +45,27 @@ export default function LoginPage() {
   return (
     <div className="min-h-screen flex items-center justify-center px-4 py-12 bg-paper">
       <div className="w-full max-w-md">
-        <Card className="rounded-sm border-[color:var(--institution-border)] shadow-none" data-testid="login-card">
+        <Card
+          className="rounded-sm border-[color:var(--institution-border)] shadow-none"
+          data-testid="login-card"
+        >
           <CardHeader className="text-center space-y-4 pt-10 pb-4">
             <div className="flex justify-center">
-              <div className="w-16 h-16 flex items-center justify-center text-white" style={{ backgroundColor: "var(--institution-burgundy)" }}>
+              <div
+                className="w-16 h-16 flex items-center justify-center text-white"
+                style={{ backgroundColor: "var(--institution-burgundy)" }}
+              >
                 <Banknote size={30} strokeWidth={1.5} />
               </div>
             </div>
             <div>
               <div className="section-eyebrow mb-2">Acceso Institucional</div>
-              <CardTitle className="font-serif-display text-3xl leading-tight" style={{ color: "var(--institution-text)" }}>
-                Sistema Web Comprobantes Administración de la Facultad de Medicina
+              <CardTitle
+                className="font-serif-display text-3xl leading-tight"
+                style={{ color: "var(--institution-text)" }}
+              >
+                Sistema Web Comprobantes Administración de la Facultad de
+                Medicina
               </CardTitle>
             </div>
             <CardDescription className="text-sm text-[color:var(--institution-muted)] leading-relaxed px-2">
@@ -61,7 +79,7 @@ export default function LoginPage() {
               >
                 Facultad de Medicina · Administración
               </span>
-            </CardDescription>            
+            </CardDescription>
           </CardHeader>
 
           <CardContent className="pb-8">
@@ -72,16 +90,16 @@ export default function LoginPage() {
             >
               <div className="space-y-1.5">
                 <Label
-                  htmlFor="correo"
+                  htmlFor="email"
                   className="text-xs uppercase tracking-widest text-[color:var(--institution-muted)] font-semibold"
                 >
                   Correo Electrónico
                 </Label>
                 <Input
-                  id="correo"
+                  id="email"
                   type="email"
-                  value={correo}
-                  onChange={(e) => setCorreo(e.target.value)}
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
                   required
                   autoComplete="username"
                   data-testid="login-email-input"
@@ -123,20 +141,7 @@ export default function LoginPage() {
                   "Iniciar Sesión"
                 )}
               </Button>
-            </form>
-
-            <div
-              className="mt-8 pt-5 border-t flex justify-center"
-              style={{ borderColor: "var(--institution-border)" }}
-            >
-              <img
-                src="https://customer-assets.emergentagent.com/job_edu-payment-portal-1/artifacts/1v4rfrby_Logo%20GerabDevSoft.png"
-                alt="GerabDevSoft · Desarrollo de Software · 68662738"
-                className="h-24 w-auto select-none"
-                data-testid="gerabdevsoft-logo"
-                draggable={false}
-              />
-            </div>
+            </form>            
           </CardContent>
         </Card>
 

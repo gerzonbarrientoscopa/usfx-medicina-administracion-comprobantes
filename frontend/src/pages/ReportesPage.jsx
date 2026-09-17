@@ -47,12 +47,12 @@ export default function ReportesPage() {
     const [desde, setDesde] = useState("");
     const [hasta, setHasta] = useState("");
     const [createdBy, setCreatedBy] = useState("");
-    const [users, setUsers] = useState([]);
+    const [usuarios, setUsuarios] = useState([]);
     const [data, setData] = useState(null);
     const [loading, setLoading] = useState(false);
 
     React.useEffect(() => {
-        apiClient.get("/users/list").then((r) => setUsers(r.data)).catch(() => {});
+        apiClient.get("/usuarios/list").then((r) => setUsuarios(r.data)).catch(() => {});
     }, []);
 
     const generar = async () => {
@@ -254,9 +254,9 @@ export default function ReportesPage() {
                                 </SelectTrigger>
                                 <SelectContent>
                                     <SelectItem value="all">Todos los usuarios</SelectItem>
-                                    {users.map((u) => (
-                                        <SelectItem key={u.id} value={u.id} data-testid={`rep-user-opt-${u.id}`}>
-                                            {u.name} <span className="text-xs text-[color:var(--institution-muted)] ml-1">· {u.role}</span>
+                                    {usuarios.map((usuario) => (
+                                        <SelectItem key={usuario.id} value={usuario.id} data-testid={`rep-user-opt-${usuario.id}`}>
+                                            {usuario.nombre} <span className="text-xs text-[color:var(--institution-muted)] ml-1">· {usuario.rol}</span>
                                         </SelectItem>
                                     ))}
                                 </SelectContent>

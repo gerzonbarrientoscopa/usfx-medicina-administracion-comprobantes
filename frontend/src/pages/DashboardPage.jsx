@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { apiClient, formatMoney } from "@/lib/api";
-import { useAuth } from "@/context/AuthContext";
+import { useAuth } from "@/contexts/AuthContext";
 import { Card, CardContent } from "@/components/ui/card";
 import { GraduationCap, Tags, Receipt, CircleDollarSign } from "lucide-react";
 

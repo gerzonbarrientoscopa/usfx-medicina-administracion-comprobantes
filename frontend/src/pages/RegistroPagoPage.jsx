@@ -41,7 +41,7 @@ export default function RegistroPagoPage() {
     const [estOpen, setEstOpen] = useState(false);
     const [tpOpen, setTpOpen] = useState(false);
 
-    const [comprobante, setComprobante] = useState(null); // {codcomprobante, gestion, display}
+    const [comprobante, setComprobante] = useState(null); // {cod_comprobante, gestion, display}
     const [cantidad, setCantidad] = useState("1");
     const [fechaPago, setFechaPago] = useState(new Date().toISOString().substring(0, 10));
 
@@ -51,12 +51,12 @@ export default function RegistroPagoPage() {
     const [submitting, setSubmitting] = useState(false);
 
     const loadAll = async () => {
-        const [eR, tR] = await Promise.all([
+        const [estudiantesResponse, tiposResponse] = await Promise.all([
             apiClient.get("/estudiantes"),
-            apiClient.get("/tipospagos"),
+            apiClient.get("/tipos-pagos"),
         ]);
-        setEstudiantes(eR.data);
-        setTiposPago(tR.data);
+        setEstudiantes(estudiantesResponse.data.items);
+        setTiposPago(tiposResponse.data.items);
     };
 
     useEffect(() => {
@@ -71,8 +71,8 @@ export default function RegistroPagoPage() {
     }, [monto, cantidad]);
 
     const generarComprobante = async () => {
-        if (!selectedEst) return toast.error("Seleccione un estudiante");
-        if (!selectedTipo) return toast.error("Seleccione un tipo de pago");
+        if (!selectedEst) return toast.error("Seleccione un estudiante.");
+        if (!selectedTipo) return toast.error("Seleccione un tipo de pago.");
         try {
             const { data } = await apiClient.get("/pagos/preview-comprobante");
             setComprobante(data);
@@ -83,19 +83,19 @@ export default function RegistroPagoPage() {
     };
 
     const confirmarComprobante = async () => {
-        if (!comprobante) return toast.error("Primero genere el comprobante");
+        if (!comprobante) return toast.error("Primero genere el comprobante.");
         const cant = Number(cantidad);
-        if (!cant || cant <= 0) return toast.error("La cantidad debe ser mayor a cero");
-        if (!fechaPago) return toast.error("Indique la fecha de pago");
+        if (!cant || cant <= 0) return toast.error("La cantidad debe ser mayor a cero.");
+        if (!fechaPago) return toast.error("Indique la fecha de pago.");
         setSubmitting(true);
         try {
             const { data } = await apiClient.post("/pagos", {
                 id_estudiante: selectedEst.id,
-                id_tipopago: selectedTipo.id,
+                id_tipo_pago: selectedTipo.id,
                 cantidad: cant,
                 fecha_pago: fechaPago,
             });
-            toast.success(`Pago registrado: ${data.codcomprobante}/${data.gestion}`);
+            toast.success(`Pago registrado: ${data.cod_comprobante}/${data.gestion}`);
             printComprobante(data);
             // reset
             setSelectedEst(null);
@@ -187,7 +187,7 @@ export default function RegistroPagoPage() {
                                                             <div className="flex-1">
                                                                 <div className="font-medium text-sm">{e.nombre}</div>
                                                                 <div className="text-xs text-[color:var(--institution-muted)]">
-                                                                    CI: {e.ci} · CU: {e.cu || "—"} · Cód: {e.codigo}
+                                                                    CU: {e.cu} · CI: {e.ci || "—"}
                                                                 </div>
                                                             </div>
                                                         </CommandItem>
@@ -252,7 +252,7 @@ export default function RegistroPagoPage() {
                                                         <div className="flex-1">
                                                             <div className="font-medium text-sm">{t.nombre}</div>
                                                             <div className="text-xs text-[color:var(--institution-muted)]">
-                                                                Cód: {t.codigo} · Bs. {formatMoney(t.monto)}
+                                                                Bs. {formatMoney(t.monto)}
                                                             </div>
                                                         </div>
                                                     </CommandItem>
