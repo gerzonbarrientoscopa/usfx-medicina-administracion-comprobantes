@@ -40,8 +40,8 @@ export default function RegistroPagoPage() {
 
     const [estOpen, setEstOpen] = useState(false);
     const [tpOpen, setTpOpen] = useState(false);
-
-    const [comprobante, setComprobante] = useState(null); // {cod_comprobante, gestion, display}
+    
+    const [pago, setPago] = useState(null);
     const [cantidad, setCantidad] = useState("1");
     const [fechaPago, setFechaPago] = useState(new Date().toISOString().substring(0, 10));
 
@@ -74,22 +74,29 @@ export default function RegistroPagoPage() {
         if (!selectedEst) return toast.error("Seleccione un estudiante.");
         if (!selectedTipo) return toast.error("Seleccione un tipo de pago.");
         try {
-            const { data } = await apiClient.get("/pagos/preview-comprobante");
-            setComprobante(data);
-            toast.success(`Comprobante generado: ${data.display}`);
+            // El comprobante se crea de inmediato con los valores iniciales del panel derecho.
+            setCantidad("1");
+            const { data } = await apiClient.post("/pagos", {
+                id_estudiante: selectedEst.id,
+                id_tipo_pago: selectedTipo.id,
+                cantidad: cantidad,
+                fecha_pago: fechaPago,
+            });
+            setPago(data);            
+            toast.success(`Comprobante generado: ${data.cod_comprobante}/${data.gestion}`);
         } catch (e) {
             toast.error(formatApiError(e));
         }
     };
 
     const confirmarComprobante = async () => {
-        if (!comprobante) return toast.error("Primero genere el comprobante.");
+        if (!pago) return toast.error("Primero genere el comprobante.");
         const cant = Number(cantidad);
         if (!cant || cant <= 0) return toast.error("La cantidad debe ser mayor a cero.");
         if (!fechaPago) return toast.error("Indique la fecha de pago.");
         setSubmitting(true);
         try {
-            const { data } = await apiClient.post("/pagos", {
+            const { data } = await apiClient.put(`/pagos/${pago.id}`, {
                 id_estudiante: selectedEst.id,
                 id_tipo_pago: selectedTipo.id,
                 cantidad: cant,
@@ -100,8 +107,8 @@ export default function RegistroPagoPage() {
             // reset
             setSelectedEst(null);
             setSelectedTipo(null);
-            setCantidad("1");
-            setComprobante(null);
+            setCantidad("1");            
+            setPago(null);
             setFechaPago(new Date().toISOString().substring(0, 10));
         } catch (e) {
             toast.error(formatApiError(e));
@@ -266,8 +273,8 @@ export default function RegistroPagoPage() {
 
                         <Button
                             type="button"
-                            onClick={generarComprobante}
-                            disabled={!selectedEst || !selectedTipo}
+                            onClick={generarComprobante}                            
+                            disabled={!selectedEst || !selectedTipo || pago || submitting}
                             className="rounded-sm w-full text-white h-11 uppercase text-xs tracking-widest"
                             style={{ backgroundColor: "var(--institution-navy)" }}
                             data-testid="generar-comprobante-btn"
@@ -287,8 +294,8 @@ export default function RegistroPagoPage() {
                                 className="font-serif-display text-3xl font-bold font-mono-num"
                                 style={{ color: "var(--institution-burgundy)" }}
                                 data-testid="comprobante-display"
-                            >
-                                {comprobante ? comprobante.display : "—"}
+                            >                                
+                                {pago ? `${pago.cod_comprobante}/${pago.gestion}` : "—"}
                             </div>
                         </div>
 
@@ -308,7 +315,7 @@ export default function RegistroPagoPage() {
                                     step="1"
                                     value={cantidad}
                                     onChange={(e) => setCantidad(e.target.value)}
-                                    disabled={!comprobante}
+                                    disabled={!pago}
                                     data-testid="cantidad-input"
                                     className="rounded-sm bg-white"
                                 />
@@ -319,7 +326,7 @@ export default function RegistroPagoPage() {
                                     type="date"
                                     value={fechaPago}
                                     onChange={(e) => setFechaPago(e.target.value)}
-                                    disabled={!comprobante}
+                                    disabled={!pago}
                                     data-testid="fecha-pago-input"
                                     className="rounded-sm bg-white"
                                 />
@@ -336,7 +343,7 @@ export default function RegistroPagoPage() {
                         <Button
                             type="button"
                             onClick={confirmarComprobante}
-                            disabled={!comprobante || submitting}
+                            disabled={!pago || submitting}
                             className="w-full rounded-sm text-white h-11 uppercase text-xs tracking-widest"
                             style={{ backgroundColor: "var(--institution-burgundy)" }}
                             data-testid="confirmar-comprobante-btn"

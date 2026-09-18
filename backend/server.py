@@ -812,7 +812,7 @@ async def get_pagos(
 
 @api.put("/pagos/{pago_id}", response_model=Pago)
 async def update_pago(
-    pago_id: str, body: PagoCreate, user: dict = Depends(require_roles("admin"))
+    pago_id: str, body: PagoCreate, user: dict = Depends(require_roles("Administrador", "Caja"))
 ):
     pago = await db.pagos.find_one({"id": pago_id}, {"_id": 0})
     if not pago:

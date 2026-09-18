@@ -61,7 +61,7 @@ export default function ReportesPage() {
             const params = { periodo };
             if (periodo === "rango") {
                 if (!desde || !hasta) {
-                    toast.error("Indique fechas Desde y Hasta");
+                    toast.error("Indique fechas Desde y Hasta.");
                     setLoading(false);
                     return;
                 }
@@ -104,13 +104,13 @@ export default function ReportesPage() {
 
         if (modo === "todos") {
             // Columns: Cod, Estudiante, Fecha, Tipo, Total Válido, Total Anulado
-            const rows = data.pagos.map((p) => [
-                `${p.codcomprobante}/${p.gestion}`,
-                p.estudiante_nombre || "",
-                p.fecha_pago,
-                p.tipopago_nombre || "",
-                p.anulado ? "" : formatMoney(p.total),
-                p.anulado ? formatMoney(p.total) : "",
+            const rows = data.pagos.map((pago) => [
+                `${pago.cod_comprobante}/${pago.gestion}`,
+                pago.estudiante_nombre || "",
+                pago.fecha_pago,
+                pago.tipopago_nombre || "",
+                pago.anulado ? "" : formatMoney(pago.total),
+                pago.anulado ? formatMoney(pago.total) : "",
             ]);
             autoTable(doc, {
                 startY: 120,
@@ -134,13 +134,13 @@ export default function ReportesPage() {
             });
         } else {
             const filtered = data.pagos.filter((p) => (modo === "validos" ? !p.anulado : p.anulado));
-            const rows = filtered.map((p) => [
-                `${p.codcomprobante}/${p.gestion}`,
-                p.estudiante_nombre || "",
-                p.fecha_pago,
-                p.tipopago_nombre || "",
-                p.cantidad,
-                formatMoney(p.total),
+            const rows = filtered.map((pago) => [
+                `${pago.cod_comprobante}/${pago.gestion}`,
+                pago.estudiante_nombre || "",
+                pago.fecha_pago,
+                pago.tipo_pago_nombre || "",
+                pago.cantidad,
+                formatMoney(pago.total),
             ]);
             autoTable(doc, {
                 startY: 120,
@@ -174,13 +174,13 @@ export default function ReportesPage() {
         if (!data) return;
         let rows = [];
         if (modo === "todos") {
-            rows = data.pagos.map((p) => ({
-                Comprobante: `${p.codcomprobante}/${p.gestion}`,
-                Estudiante: p.estudiante_nombre || "",
-                Fecha: p.fecha_pago,
-                Tipo: p.tipopago_nombre || "",
-                Valido: p.anulado ? 0 : p.total,
-                Anulado: p.anulado ? p.total : 0,
+            rows = data.pagos.map((pago) => ({
+                Comprobante: `${pago.cod_comprobante}/${pago.gestion}`,
+                Estudiante: pago.estudiante_nombre || "",
+                Fecha: pago.fecha_pago,
+                Tipo: pago.tipo_pago_nombre || "",
+                Valido: pago.anulado ? 0 : pago.total,
+                Anulado: pago.anulado ? pago.total : 0,
             }));
             rows.push({});
             rows.push({ Comprobante: "TOTAL VÁLIDOS", Valido: data.totales.validos });
@@ -189,7 +189,7 @@ export default function ReportesPage() {
         } else {
             const filtered = data.pagos.filter((p) => (modo === "validos" ? !p.anulado : p.anulado));
             rows = filtered.map((p) => ({
-                Comprobante: `${p.codcomprobante}/${p.gestion}`,
+                Comprobante: `${p.cod_comprobante}/${p.gestion}`,
                 Estudiante: p.estudiante_nombre || "",
                 Fecha: p.fecha_pago,
                 Tipo: p.tipopago_nombre || "",
@@ -364,14 +364,14 @@ export default function ReportesPage() {
                                         </TableRow>
                                     </TableHeader>
                                     <TableBody>
-                                        {data.pagos.map((p) => (
-                                            <TableRow key={p.id}>
-                                                <TableCell className="font-mono-num">{p.codcomprobante}/{p.gestion}</TableCell>
-                                                <TableCell>{p.estudiante_nombre}</TableCell>
-                                                <TableCell className="font-mono-num">{p.fecha_pago}</TableCell>
-                                                <TableCell>{p.tipopago_nombre}</TableCell>
-                                                <TableCell className="text-right font-mono-num">{p.anulado ? "—" : formatMoney(p.total)}</TableCell>
-                                                <TableCell className="text-right font-mono-num">{p.anulado ? formatMoney(p.total) : "—"}</TableCell>
+                                        {data.pagos.map((pago) => (
+                                            <TableRow key={pago.id}>
+                                                <TableCell className="font-mono-num">{pago.cod_comprobante}/{pago.gestion}</TableCell>
+                                                <TableCell>{pago.estudiante_nombre}</TableCell>
+                                                <TableCell className="font-mono-num">{pago.fecha_pago}</TableCell>
+                                                <TableCell>{pago.tipo_pago_nombre}</TableCell>
+                                                <TableCell className="text-right font-mono-num">{pago.anulado ? "—" : formatMoney(pago.total)}</TableCell>
+                                                <TableCell className="text-right font-mono-num">{pago.anulado ? formatMoney(pago.total) : "—"}</TableCell>
                                             </TableRow>
                                         ))}
                                         {data.pagos.length > 0 && (
