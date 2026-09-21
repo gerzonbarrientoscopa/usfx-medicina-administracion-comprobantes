@@ -29,9 +29,9 @@ services:
       DB_NAME: "comprobantes_usfx"
       CORS_ORIGINS: "http://localhost:3000,http://localhost"
       JWT_SECRET: "${JWT_SECRET:-change-me-in-production-please}"
-      ADMIN_EMAIL: "${ADMIN_EMAIL:-admin@usfx.edu.bo}"
-      ADMIN_PASSWORD: "${ADMIN_PASSWORD:-admin123}"
-      ADMIN_NAME: "${ADMIN_NAME:-Administrador}"
+      ADMIN_EMAIL: "${ADMIN_EMAIL:?Set ADMIN_EMAIL before starting}"
+      ADMIN_PASSWORD: "${ADMIN_PASSWORD:?Set ADMIN_PASSWORD before starting}"
+      ADMIN_NAME: "${ADMIN_NAME:?Set ADMIN_NAME before starting}"
     ports:
       - "8001:8001"
 

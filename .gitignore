@@ -1,3 +1,10 @@
+/.data/
+.replit
+replit.md
+replit.nix
+.config/
+start.sh
+
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
 
 # IDE and editors

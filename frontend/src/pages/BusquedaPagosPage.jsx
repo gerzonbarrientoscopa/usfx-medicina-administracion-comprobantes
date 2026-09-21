@@ -40,14 +40,14 @@ import {
     PopoverContent,
     PopoverTrigger,
 } from "@/components/ui/popover";
-import { Printer, Search, Pencil, ChevronsUpDown, Check } from "lucide-react";
+import { Printer, Search, Pencil, ChevronsUpDown, Check, ChevronLeft, ChevronRight } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { printComprobante } from "@/components/ComprobantePrint";
 
 export default function BusquedaPagosPage() {
     const { user } = useAuth();
-    const isAdmin = user?.role === "admin";
+    const canEdit = user?.rol === "Administrador";
 
     const [tipos, setTipos] = useState([]);
     const [users, setUsers] = useState([]);
@@ -61,38 +61,81 @@ export default function BusquedaPagosPage() {
 
     const [pagos, setPagos] = useState([]);
     const [loading, setLoading] = useState(false);
+    const [pagina, setPagina] = useState(1);
+    const [totalPaginas, setTotalPaginas] = useState(1);
+    const [totalResultados, setTotalResultados] = useState(0);
+    const FILAS_POR_PAGINA = 20;
 
     // Edit state
     const [editOpen, setEditOpen] = useState(false);
     const [editing, setEditing] = useState(null);
-    const [editForm, setEditForm] = useState({ id_estudiante: "", id_tipopago: "", cantidad: "", fecha_pago: "" });
+    const [editForm, setEditForm] = useState({ id_estudiante: "", id_tipo_pago: "", cantidad: "", fecha_pago: "" });
     const [editEstOpen, setEditEstOpen] = useState(false);
     const [editTpOpen, setEditTpOpen] = useState(false);
     const [savingEdit, setSavingEdit] = useState(false);
 
     useEffect(() => {
-        apiClient.get("/tipospagos").then((r) => setTipos(r.data));
-        apiClient.get("/users/list").then((r) => setUsers(r.data)).catch(() => {});
-        if (isAdmin) {
-            apiClient.get("/estudiantes").then((r) => setEstudiantes(r.data)).catch(() => {});
-        }
-        buscar();
+        const cargarCatalogos = async () => {
+            try {
+                const cargarTodasLasPaginas = async (endpoint) => {
+                    const primera = await apiClient.get(endpoint, { params: { pag: 1, tam: 100 } });
+                    const paginas = primera.data.pages || 1;
+                    if (paginas === 1) return primera.data.items;
+                    const restantes = await Promise.all(
+                        Array.from({ length: paginas - 1 }, (_, index) =>
+                            apiClient.get(endpoint, { params: { pag: index + 2, tam: 100 } }),
+                        ),
+                    );
+                    return [
+                        ...primera.data.items,
+                        ...restantes.flatMap((response) => response.data.items),
+                    ];
+                };
+                const solicitudes = [
+                    cargarTodasLasPaginas("/tipos-pagos"),
+                    apiClient.get("/usuarios/list"),
+                ];
+                if (canEdit) {
+                    solicitudes.push(cargarTodasLasPaginas("/estudiantes"));
+                }
+                const [tiposResponse, usuariosResponse, estudiantesResponse] = await Promise.all(solicitudes);
+                setTipos(tiposResponse);
+                setUsers(usuariosResponse.data);
+                if (estudiantesResponse) setEstudiantes(estudiantesResponse);
+            } catch (error) {
+                toast.error(formatApiError(error));
+            }
+        };
+        cargarCatalogos();
+        buscar(1);
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    const buscar = async () => {
+    const buscar = async (paginaSolicitada = 1) => {
+        if (desde && hasta && desde > hasta) {
+            toast.error("La fecha inicial no puede ser posterior a la fecha final.");
+            return;
+        }
         setLoading(true);
         try {
-            const params = {};
-            if (q) params.q = q;
-            if (tipo && tipo !== "all") params.id_tipopago = tipo;
+            const params = {
+                pag: paginaSolicitada,
+                tam: FILAS_POR_PAGINA,
+            };
+            if (q.trim()) params.q = q.trim();
+            if (tipo && tipo !== "all") params.id_tipo_pago = tipo;
             if (desde) params.fecha_desde = desde;
             if (hasta) params.fecha_hasta = hasta;
             if (createdBy && createdBy !== "all") params.created_by = createdBy;
             const { data } = await apiClient.get("/pagos", { params });
-            setPagos(data);
+            setPagos(data.items);
+            setPagina(data.page);
+            setTotalPaginas(data.pages || 1);
+            setTotalResultados(data.total);
+            return data;
         } catch (e) {
             toast.error(formatApiError(e));
+            return null;
         } finally {
             setLoading(false);
         }
@@ -102,9 +145,21 @@ export default function BusquedaPagosPage() {
         setEditing(p);
         setEditForm({
             id_estudiante: p.id_estudiante,
-            id_tipopago: p.id_tipopago,
+            id_tipo_pago: p.id_tipo_pago,
             cantidad: String(p.cantidad),
             fecha_pago: p.fecha_pago,
+        });
+        setEstudiantes((actuales) => {
+            if (actuales.some((e) => e.id === p.id_estudiante)) return actuales;
+            return [
+                ...actuales,
+                {
+                    id: p.id_estudiante,
+                    nombre: p.estudiante_nombre,
+                    ci: p.estudiante_ci,
+                    cu: p.estudiante_cu,
+                },
+            ];
         });
         setEditOpen(true);
     };
@@ -114,8 +169,8 @@ export default function BusquedaPagosPage() {
         [estudiantes, editForm.id_estudiante],
     );
     const selectedEditTipo = useMemo(
-        () => tipos.find((t) => t.id === editForm.id_tipopago) || null,
-        [tipos, editForm.id_tipopago],
+        () => tipos.find((t) => t.id === editForm.id_tipo_pago) || null,
+        [tipos, editForm.id_tipo_pago],
     );
     const editTotal = useMemo(() => {
         const m = selectedEditTipo ? Number(selectedEditTipo.monto) : 0;
@@ -130,14 +185,17 @@ export default function BusquedaPagosPage() {
         try {
             const payload = {
                 id_estudiante: editForm.id_estudiante,
-                id_tipopago: editForm.id_tipopago,
+                id_tipo_pago: editForm.id_tipo_pago,
                 cantidad: Number(editForm.cantidad),
                 fecha_pago: editForm.fecha_pago,
             };
             const { data } = await apiClient.put(`/pagos/${editing.id}`, payload);
-            toast.success(`Pago ${data.codcomprobante}/${data.gestion} actualizado`);
-            setPagos((prev) => prev.map((x) => (x.id === data.id ? data : x)));
+            toast.success(`Pago ${data.cod_comprobante}/${data.gestion} actualizado`);
             setEditOpen(false);
+            const resultado = await buscar(pagina);
+            if (resultado?.items.length === 0 && pagina > 1) {
+                await buscar(pagina - 1);
+            }
         } catch (e) {
             toast.error(formatApiError(e));
         } finally {
@@ -193,7 +251,7 @@ export default function BusquedaPagosPage() {
                                 <SelectItem value="all">Todos</SelectItem>
                                 {users.map((u) => (
                                     <SelectItem key={u.id} value={u.id} data-testid={`busq-user-opt-${u.id}`}>
-                                        {u.name} <span className="text-xs text-[color:var(--institution-muted)] ml-1">· {u.role}</span>
+                                        {u.nombre} <span className="text-xs text-[color:var(--institution-muted)] ml-1">· {u.rol}</span>
                                     </SelectItem>
                                 ))}
                             </SelectContent>
@@ -221,7 +279,7 @@ export default function BusquedaPagosPage() {
                     </div>
                     <div className="md:col-span-6 flex justify-end">
                         <Button
-                            onClick={buscar}
+                            onClick={() => buscar(1)}
                             disabled={loading}
                             className="rounded-sm text-white"
                             style={{ backgroundColor: "var(--institution-burgundy)" }}
@@ -253,10 +311,10 @@ export default function BusquedaPagosPage() {
                         {pagos.map((p) => (
                             <TableRow key={p.id} data-testid={`pago-row-${p.id}`}>
                                 <TableCell className="font-mono-num font-medium">
-                                    {p.codcomprobante}/{p.gestion}
+                                    {p.cod_comprobante}/{p.gestion}
                                 </TableCell>
                                 <TableCell>{p.estudiante_nombre || "—"}</TableCell>
-                                <TableCell>{p.tipopago_nombre || "—"}</TableCell>
+                                <TableCell>{p.tipo_pago_nombre || "—"}</TableCell>
                                 <TableCell className="text-right font-mono-num">{p.cantidad}</TableCell>
                                 <TableCell className="text-right font-mono-num">{formatMoney(p.monto)}</TableCell>
                                 <TableCell className="text-right font-mono-num font-semibold">{formatMoney(p.total)}</TableCell>
@@ -275,7 +333,7 @@ export default function BusquedaPagosPage() {
                                     )}
                                 </TableCell>
                                 <TableCell className="text-right whitespace-nowrap">
-                                    {isAdmin && !p.anulado && (
+                                    {canEdit && !p.anulado && (
                                         <Button
                                             size="sm"
                                             variant="ghost"
@@ -298,15 +356,51 @@ export default function BusquedaPagosPage() {
                                 </TableCell>
                             </TableRow>
                         ))}
-                        {pagos.length === 0 && (
+                        {!loading && pagos.length === 0 && (
                             <TableRow>
                                 <TableCell colSpan={10} className="text-center py-12 text-sm text-[color:var(--institution-muted)]">
                                     Sin resultados.
                                 </TableCell>
                             </TableRow>
                         )}
+                        {loading && (
+                            <TableRow>
+                                <TableCell colSpan={10} className="text-center py-12 text-sm text-[color:var(--institution-muted)]">
+                                    Buscando…
+                                </TableCell>
+                            </TableRow>
+                        )}
                     </TableBody>
                 </Table>
+            </div>
+            <div className="flex items-center justify-between px-2 text-xs text-[color:var(--institution-muted)]">
+                <div>
+                    Página <b>{pagina}</b> de <b>{totalPaginas}</b> · {totalResultados} resultado{totalResultados === 1 ? "" : "s"}
+                </div>
+                <div className="flex items-center gap-2">
+                    <Button
+                        variant="outline"
+                        size="sm"
+                        className="rounded-sm gap-1 h-8 px-3"
+                        style={{ borderColor: "var(--institution-border)" }}
+                        onClick={() => buscar(Math.max(pagina - 1, 1))}
+                        disabled={loading || pagina === 1}
+                    >
+                        <ChevronLeft size={14} />
+                        Anterior
+                    </Button>
+                    <Button
+                        variant="outline"
+                        size="sm"
+                        className="rounded-sm gap-1 h-8 px-3"
+                        style={{ borderColor: "var(--institution-border)" }}
+                        onClick={() => buscar(Math.min(pagina + 1, totalPaginas))}
+                        disabled={loading || pagina === totalPaginas}
+                    >
+                        Siguiente
+                        <ChevronRight size={14} />
+                    </Button>
+                </div>
             </div>
 
             {/* Edit dialog */}
@@ -314,7 +408,7 @@ export default function BusquedaPagosPage() {
                 <DialogContent className="rounded-sm max-w-2xl">
                     <DialogHeader>
                         <DialogTitle className="font-serif-display text-2xl">
-                            Editar pago {editing ? `${editing.codcomprobante}/${editing.gestion}` : ""}
+                            Editar pago {editing ? `${editing.cod_comprobante}/${editing.gestion}` : ""}
                         </DialogTitle>
                     </DialogHeader>
                     {editing && (
@@ -391,11 +485,11 @@ export default function BusquedaPagosPage() {
                                                             key={t.id}
                                                             value={`${t.nombre} ${t.codigo}`}
                                                             onSelect={() => {
-                                                                setEditForm({ ...editForm, id_tipopago: t.id });
+                                                                setEditForm({ ...editForm, id_tipo_pago: t.id });
                                                                 setEditTpOpen(false);
                                                             }}
                                                         >
-                                                            <Check className={cn("mr-2 h-4 w-4", editForm.id_tipopago === t.id ? "opacity-100" : "opacity-0")} />
+                                                            <Check className={cn("mr-2 h-4 w-4", editForm.id_tipo_pago === t.id ? "opacity-100" : "opacity-0")} />
                                                             <div className="flex-1">
                                                                 <div className="font-medium text-sm">{t.nombre}</div>
                                                                 <div className="text-xs text-[color:var(--institution-muted)]">Bs. {formatMoney(t.monto)}</div>

@@ -75,7 +75,6 @@ export default function RegistroPagoPage() {
         if (!selectedTipo) return toast.error("Seleccione un tipo de pago.");
         try {
             // El comprobante se crea de inmediato con los valores iniciales del panel derecho.
-            setCantidad("1");
             const { data } = await apiClient.post("/pagos", {
                 id_estudiante: selectedEst.id,
                 id_tipo_pago: selectedTipo.id,
@@ -96,12 +95,22 @@ export default function RegistroPagoPage() {
         if (!fechaPago) return toast.error("Indique la fecha de pago.");
         setSubmitting(true);
         try {
-            const { data } = await apiClient.put(`/pagos/${pago.id}`, {
-                id_estudiante: selectedEst.id,
-                id_tipo_pago: selectedTipo.id,
-                cantidad: cant,
-                fecha_pago: fechaPago,
-            });
+            const sinCambios =
+                pago.id_estudiante === selectedEst?.id &&
+                pago.id_tipo_pago === selectedTipo?.id &&
+                Number(pago.cantidad) === cant &&
+                pago.fecha_pago === fechaPago;
+
+            const data = sinCambios
+                ? pago
+                : (
+                    await apiClient.put(`/pagos/${pago.id}`, {
+                        id_estudiante: selectedEst.id,
+                        id_tipo_pago: selectedTipo.id,
+                        cantidad: cant,
+                        fecha_pago: fechaPago,
+                    })
+                ).data;
             toast.success(`Pago registrado: ${data.cod_comprobante}/${data.gestion}`);
             printComprobante(data);
             // reset

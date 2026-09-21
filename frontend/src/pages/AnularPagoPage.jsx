@@ -12,7 +12,7 @@ import {
     TableRow,
 } from "@/components/ui/table";
 import { Card, CardContent } from "@/components/ui/card";
-import { Ban, Search } from "lucide-react";
+import { Ban, Search, ChevronLeft, ChevronRight } from "lucide-react";
 import { toast } from "sonner";
 import {
     AlertDialog,
@@ -29,26 +29,43 @@ import {
 export default function AnularPagoPage() {
     const [textoBuscar, setTextoBuscar] = useState("");
     const [pagos, setPagos] = useState([]);
+    const [pagina, setPagina] = useState(1);
+    const [totalPaginas, setTotalPaginas] = useState(1);
+    const [totalResultados, setTotalResultados] = useState(0);
+    const [loading, setLoading] = useState(false);
+    const FILAS_POR_PAGINA = 20;
 
-    const buscar = async () => {
+    const buscar = async (paginaSolicitada = 1) => {
         if (!textoBuscar.trim()) {
             toast.error("Ingrese código de comprobante o nombre del estudiante");
             return;
         }
+        setLoading(true);
         try {
-            const { data } = await apiClient.get("/pagos", { params: { textoBuscar } });
-            setPagos(data);
-            if (data.length === 0) 
+            const { data } = await apiClient.get("/pagos", {
+                params: {
+                    q: textoBuscar.trim(),
+                    pag: paginaSolicitada,
+                    tam: FILAS_POR_PAGINA,
+                },
+            });
+            setPagos(data.items);
+            setPagina(data.page);
+            setTotalPaginas(data.pages || 1);
+            setTotalResultados(data.total);
+            if (data.items.length === 0)
                 toast.message("Sin resultados.");
         } catch (e) {
             toast.error(formatApiError(e));
+        } finally {
+            setLoading(false);
         }
     };
 
     const anular = async (pago) => {
         try {
             await apiClient.post(`/pagos/${pago.id}/anular`);
-            toast.success(`Comprobante ${pago.codcomprobante}/${pago.gestion} anulado.`);            
+            toast.success(`Comprobante ${pago.cod_comprobante}/${pago.gestion} anulado.`);
             setPagos((prev) => prev.map((x) => (x.id === pago.id ? { ...x, anulado: true } : x)));
         } catch (e) {
             toast.error(formatApiError(e));
@@ -75,13 +92,14 @@ export default function AnularPagoPage() {
                             placeholder="Ej. 00001/2026 ó Juan Pérez"
                             value={textoBuscar}
                             onChange={(e) => setTextoBuscar(e.target.value)}
-                            onKeyDown={(e) => e.key === "Enter" && buscar()}
+                            onKeyDown={(e) => e.key === "Enter" && buscar(1)}
                             className="rounded-sm"
                             data-testid="anular-q-input"
                         />
                     </div>
                     <Button
-                        onClick={buscar}
+                        onClick={() => buscar(1)}
+                        disabled={loading}
                         className="rounded-sm text-white"
                         style={{ backgroundColor: "var(--institution-burgundy)" }}
                         data-testid="anular-buscar-btn"
@@ -108,10 +126,10 @@ export default function AnularPagoPage() {
                         {pagos.map((pago) => (
                             <TableRow key={pago.id}>
                                 <TableCell className="font-mono-num font-medium">
-                                    {pago.codcomprobante}/{pago.gestion}
+                                    {pago.cod_comprobante}/{pago.gestion}
                                 </TableCell>
                                 <TableCell>{pago.estudiante_nombre || "—"}</TableCell>
-                                <TableCell>{pago.tipopago_nombre || "—"}</TableCell>
+                                <TableCell>{pago.tipo_pago_nombre || "—"}</TableCell>
                                 <TableCell className="text-right font-mono-num">{formatMoney(pago.total)}</TableCell>
                                 <TableCell className="font-mono-num">{pago.fecha_pago}</TableCell>
                                 <TableCell>
@@ -142,7 +160,7 @@ export default function AnularPagoPage() {
                                                     Confirmar anulación
                                                 </AlertDialogTitle>
                                                 <AlertDialogDescription>
-                                                    El comprobante <strong>{pago.codcomprobante}/{pago.gestion}</strong> de{" "}
+                                                     El comprobante <strong>{pago.cod_comprobante}/{pago.gestion}</strong> de{" "}
                                                     <strong>{pago.estudiante_nombre}</strong> por <strong>Bs. {formatMoney(pago.total)}</strong> quedará anulado y no podrá revertirse.
                                                 </AlertDialogDescription>
                                             </AlertDialogHeader>
@@ -172,6 +190,35 @@ export default function AnularPagoPage() {
                     </TableBody>
                 </Table>
             </div>
+            {totalResultados > 0 && (
+                <div className="flex items-center justify-between px-2 text-xs text-[color:var(--institution-muted)]">
+                    <div>
+                        Página <b>{pagina}</b> de <b>{totalPaginas}</b> · {totalResultados} resultado{totalResultados === 1 ? "" : "s"}
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            className="rounded-sm gap-1 h-8 px-3"
+                            onClick={() => buscar(Math.max(pagina - 1, 1))}
+                            disabled={loading || pagina === 1}
+                        >
+                            <ChevronLeft size={14} />
+                            Anterior
+                        </Button>
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            className="rounded-sm gap-1 h-8 px-3"
+                            onClick={() => buscar(Math.min(pagina + 1, totalPaginas))}
+                            disabled={loading || pagina === totalPaginas}
+                        >
+                            Siguiente
+                            <ChevronRight size={14} />
+                        </Button>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

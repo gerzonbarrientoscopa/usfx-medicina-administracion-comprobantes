@@ -1,22 +1,40 @@
-import React from "react";
-
 const INSTITUTION = {
     linea1: "Universidad Mayor, Real y Pontificia de San Francisco Xavier",
     linea2: "Facultad de Medicina",
     linea3: "Administración",
 };
 
+const escapeHTML = (value) =>
+    String(value ?? "").replace(
+        /[&<>"']/g,
+        (character) =>
+            ({
+                "&": "&amp;",
+                "<": "&lt;",
+                ">": "&gt;",
+                '"': "&quot;",
+                "'": "&#039;",
+            })[character],
+    );
+
 export function buildComprobanteHTML(pago) {
-    const fecha = (pago.fecha_pago || "").substring(0, 10);
+    const fecha = escapeHTML((pago.fecha_pago || "").substring(0, 10));
     const moneyFmt = (n) =>
         Number(n || 0).toLocaleString("es-BO", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    const generadoEn = new Date().toLocaleString("es-BO");
+    const generadoEn = escapeHTML(new Date().toLocaleString("es-BO"));
+    const codigo = escapeHTML(pago.cod_comprobante);
+    const gestion = escapeHTML(pago.gestion);
+    const estudianteNombre = escapeHTML(pago.estudiante_nombre);
+    const estudianteCi = escapeHTML(pago.estudiante_ci);
+    const estudianteCu = escapeHTML(pago.estudiante_cu || "-");
+    const tipoPagoNombre = escapeHTML(pago.tipo_pago_nombre || pago.tipopago_nombre);
+    const cantidad = escapeHTML(pago.cantidad);
 
     return `<!DOCTYPE html>
 <html lang="es">
 <head>
 <meta charset="UTF-8" />
-<title>Comprobante ${pago.cod_comprobante}/${pago.gestion}</title>
+<title>Comprobante ${codigo}/${gestion}</title>
 <style>
   @import url("https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap");
   * { box-sizing: border-box; }
@@ -65,21 +83,21 @@ export function buildComprobanteHTML(pago) {
     <div class="receipt">
       <div class="header">
         <div class="header-text">
-          <h1>${INSTITUTION.linea1}</h1>
-          <h2>${INSTITUTION.linea2}</h2>
-          <h3>${INSTITUTION.linea3}</h3>
+          <h1>${escapeHTML(INSTITUTION.linea1)}</h1>
+          <h2>${escapeHTML(INSTITUTION.linea2)}</h2>
+          <h3>${escapeHTML(INSTITUTION.linea3)}</h3>
         </div>
         <div class="cod-box">
           <div class="cod-label">Comprobante N°</div>
-          <div class="cod-num">${pago.cod_comprobante}/${pago.gestion}</div>
+          <div class="cod-num">${codigo}/${gestion}</div>
         </div>
       </div>
 
       <div class="title-bar">Comprobante de Pago</div>
 
-      <div class="row"><span class="label">Estudiante</span><span class="value">${pago.estudiante_nombre || ""}</span></div>
-      <div class="row"><span class="label">C.I.</span><span class="value">${pago.estudiante_ci || ""}</span></div>
-      <div class="row"><span class="label">C.U.</span><span class="value">${pago.estudiante_cu || "-"}</span></div>
+      <div class="row"><span class="label">Estudiante</span><span class="value">${estudianteNombre}</span></div>
+      <div class="row"><span class="label">C.I.</span><span class="value">${estudianteCi}</span></div>
+      <div class="row"><span class="label">C.U.</span><span class="value">${estudianteCu}</span></div>
       <div class="row"><span class="label">Fecha de Pago</span><span class="value">${fecha}</span></div>
 
       <table>
@@ -88,8 +106,8 @@ export function buildComprobanteHTML(pago) {
         </thead>
         <tbody>
           <tr>
-            <td>${pago.tipopago_nombre || ""}</td>
-            <td style="text-align:right">${pago.cantidad}</td>
+            <td>${tipoPagoNombre}</td>
+            <td style="text-align:right">${cantidad}</td>
             <td style="text-align:right">Bs. ${moneyFmt(pago.monto)}</td>
             <td style="text-align:right">Bs. ${moneyFmt(pago.total)}</td>
           </tr>

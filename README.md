@@ -68,12 +68,11 @@ Servicios:
 - **Backend**  → http://localhost:8001/api
 - **MongoDB**  → mongodb://localhost:27017
 
-### 4. Credenciales iniciales
-```
-Email:    admin@usfx.edu.bo
-Password: admin123
-```
-> Cámbielas en `.env` antes del primer arranque. El admin se crea automáticamente al iniciar el backend.
+### 4. Credenciales administrativas
+Configura `ADMIN_EMAIL`, `ADMIN_PASSWORD` y `ADMIN_NAME` como secretos
+privados antes del primer arranque. No se proporcionan credenciales
+administrativas predeterminadas. El admin se crea o actualiza automáticamente
+al iniciar el backend.
 
 ### 5. Apagar / reiniciar
 ```bash
@@ -225,7 +224,7 @@ El correlativo del comprobante usa `findOneAndUpdate` con `$inc` (atómico) sobr
 ```bash
 curl -X POST http://localhost:8001/api/auth/login \
   -H "Content-Type: application/json" \
-  -d '{"email":"admin@usfx.edu.bo","password":"admin123"}'
+  -d '{"email":"TU_ADMIN_EMAIL","password":"TU_ADMIN_PASSWORD"}'
 ```
 
 ---

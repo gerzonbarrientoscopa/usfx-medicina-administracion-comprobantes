@@ -1,5 +1,6 @@
 import os
 import logging
+import re
 import bcrypt
 import jwt
 import uuid
@@ -28,7 +29,7 @@ JWT_SECRET_KEY = os.environ["JWT_SECRET"]
 JWT_ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRES_MIN = 60 * 8
 # User Enviroment Configuration
-ADMIN_EMAIL = os.environ["ADMIN_EMAIL"]
+ADMIN_EMAIL = os.environ["ADMIN_EMAIL"].strip().lower()
 ADMIN_PASSWORD = os.environ["ADMIN_PASSWORD"]
 ADMIN_NAME = os.environ["ADMIN_NAME"]
 
@@ -153,7 +154,7 @@ class Pago(PagoBase):
     anulado: bool = False
     anulado_at: Optional[str] = None
     anulado_by: Optional[str] = None
-    creado_at: Optional[str] = None
+    created_at: Optional[str] = None
     created_by: Optional[str] = None
     created_by_name: Optional[str] = None
     edited_at: Optional[str] = None
@@ -516,10 +517,10 @@ async def get_tipos_pagos(
     salto = (pag - 1) * tam
     
     # 2. Contar de manera eficiente el total de documentos en la colección
-    total_tipos = await db.usuarios.count_documents({})
+    total_tipos = await db.tipos_pagos.count_documents(filt)
     
     # 3. Consultar solo el bloque/lote de datos requerido
-    cursor = db.tipos_pagos.find({}, {"_id": 0}) \
+    cursor = db.tipos_pagos.find(filt, {"_id": 0}) \
                         .sort([("nombre", 1), ("inicio", -1)]) \
                         .skip(salto) \
                         .limit(tam)
@@ -617,7 +618,7 @@ async def preview_comprobante(_: dict = Depends(require_roles("Administrador", "
 
 
 # ----------------------------- Pagos CRUD -----------------------------
-# Aggregation pipeline stages that join estudiantes / tipospagos / users
+# Aggregation pipeline stages that join estudiantes, tipos de pago y usuarios
 # in a single round-trip to MongoDB. Used by list endpoints to avoid N+1.
 _PAGO_HYDRATE_PIPELINE = [
     {
@@ -638,7 +639,7 @@ _PAGO_HYDRATE_PIPELINE = [
     },
     {
         "$lookup": {
-            "from": "users",
+            "from": "usuarios",
             "localField": "created_by",
             "foreignField": "id",
             "as": "_cu",
@@ -646,7 +647,7 @@ _PAGO_HYDRATE_PIPELINE = [
     },
     {
         "$lookup": {
-            "from": "users",
+            "from": "usuarios",
             "localField": "edited_by",
             "foreignField": "id",
             "as": "_eu",
@@ -657,9 +658,9 @@ _PAGO_HYDRATE_PIPELINE = [
             "estudiante_nombre": {"$arrayElemAt": ["$_est.nombre", 0]},
             "estudiante_ci": {"$arrayElemAt": ["$_est.ci", 0]},
             "estudiante_cu": {"$ifNull": [{"$arrayElemAt": ["$_est.cu", 0]}, ""]},
-            "tipopago_nombre": {"$arrayElemAt": ["$_tp.nombre", 0]},
-            "created_by_name": {"$arrayElemAt": ["$_cu.name", 0]},
-            "edited_by_name": {"$arrayElemAt": ["$_eu.name", 0]},
+            "tipo_pago_nombre": {"$arrayElemAt": ["$_tp.nombre", 0]},
+            "created_by_name": {"$arrayElemAt": ["$_cu.nombre", 0]},
+            "edited_by_name": {"$arrayElemAt": ["$_eu.nombre", 0]},
         }
     },
     {"$project": {"_id": 0, "_est": 0, "_tp": 0, "_cu": 0, "_eu": 0}},
@@ -676,10 +677,10 @@ async def _hydrate_pago(pago: dict) -> dict:
     pago["estudiante_cu"] = estudiante.get("cu", "") if estudiante else ""
     pago["tipo_pago_nombre"] = tipo["nombre"] if tipo else None
     if pago.get("created_by"):
-        usuario = await db.usuarios.find_one({"id": pago["created_by"]}, {"_id": 0, "name": 1})
+        usuario = await db.usuarios.find_one({"id": pago["created_by"]}, {"_id": 0, "nombre": 1})
         pago["created_by_name"] = usuario["nombre"] if usuario else None
     if pago.get("edited_by"):
-        usuario = await db.usuarios.find_one({"id": pago["edited_by"]}, {"_id": 0, "name": 1})
+        usuario = await db.usuarios.find_one({"id": pago["edited_by"]}, {"_id": 0, "nombre": 1})
         pago["edited_by_name"] = usuario["nombre"] if usuario else None
     return pago
 
@@ -742,8 +743,16 @@ async def get_pagos(
     fecha_hasta: Optional[str] = None,
     incluir_anulados: bool = True,
     created_by: Optional[str] = None,
+    pag: int = Query(1, ge=1, description="Número de página"),
+    tam: int = Query(20, ge=1, le=100, description="Elementos por página"),
     _: dict = Depends(get_current_user),
 ):
+    if fecha_desde and fecha_hasta and fecha_desde > fecha_hasta:
+        raise HTTPException(
+            status_code=400,
+            detail="La fecha inicial no puede ser posterior a la fecha final.",
+        )
+
     filt: dict = {}
     if not incluir_anulados:
         filt["anulado"] = False
@@ -759,28 +768,29 @@ async def get_pagos(
             rng["$lte"] = fecha_hasta
         filt["fecha_pago"] = rng
 
-    # If q present, we need to filter by codcomprobante (cod/gestion) or estudiante name
-    extra_or = []
-    if q:
-        ql = q.strip()
+    # If q is present, filter by comprobante, estudiante or tipo de pago.
+    ql = q.strip() if q else ""
+    if ql:
+        extra_or = []
+        escaped_q = re.escape(ql)
         if "/" in ql:
             try:
                 cod_part, ges_part = ql.split("/", 1)
                 extra_or.append(
-                    {"codcomprobante": cod_part.zfill(5), "gestion": int(ges_part)}
+                    {"cod_comprobante": cod_part.zfill(5), "gestion": int(ges_part)}
                 )
             except Exception:
                 pass
-        extra_or.append({"codcomprobante": {"$regex": ql, "$options": "i"}})
+        extra_or.append({"cod_comprobante": {"$regex": escaped_q, "$options": "i"}})
         # Match by estudiante: look up matching estudiantes ids
         est_ids = [
             e["id"]
             async for e in db.estudiantes.find(
                 {
                     "$or": [
-                        {"nombre": {"$regex": ql, "$options": "i"}},
-                        {"ci": {"$regex": ql, "$options": "i"}},
-                        {"cu": {"$regex": ql, "$options": "i"}},
+                        {"nombre": {"$regex": escaped_q, "$options": "i"}},
+                        {"ci": {"$regex": escaped_q, "$options": "i"}},
+                        {"cu": {"$regex": escaped_q, "$options": "i"}},
                     ]
                 },
                 {"_id": 0, "id": 1},
@@ -791,7 +801,7 @@ async def get_pagos(
         tp_ids = [
             t["id"]
             async for t in db.tipos_pagos.find(
-                {"nombre": {"$regex": ql, "$options": "i"}}, {"_id": 0, "id": 1}
+                {"nombre": {"$regex": escaped_q, "$options": "i"}}, {"_id": 0, "id": 1}
             )
         ]
         if tp_ids:
@@ -799,20 +809,32 @@ async def get_pagos(
 
         filt["$or"] = extra_or
 
+    total_pagos = await db.pagos.count_documents(filt)
+    total_paginas = (total_pagos + tam - 1) // tam if total_pagos > 0 else 1
+    salto = (pag - 1) * tam
+
     cursor = db.pagos.aggregate(
         [
             {"$match": filt},
             {"$sort": {"created_at": -1}},
-            {"$limit": 1000},
+            {"$skip": salto},
+            {"$limit": tam},
             *_PAGO_HYDRATE_PIPELINE,
         ]
     )
-    return [Pago(**p) async for p in cursor]
+    pagos = [Pago(**p) async for p in cursor]
+    return {
+        "items": pagos,
+        "total": total_pagos,
+        "page": pag,
+        "size": tam,
+        "pages": total_paginas,
+    }
 
 
 @api.put("/pagos/{pago_id}", response_model=Pago)
 async def update_pago(
-    pago_id: str, body: PagoCreate, user: dict = Depends(require_roles("Administrador", "Caja"))
+    pago_id: str, body: PagoCreate, user: dict = Depends(require_roles("Administrador"))
 ):
     pago = await db.pagos.find_one({"id": pago_id}, {"_id": 0})
     if not pago:
@@ -987,7 +1009,7 @@ async def startup():
     await db.estudiantes.create_index("id", unique=True)    
     await db.estudiantes.create_index("ci")
     await db.tipos_pagos.create_index("id", unique=True)    
-    await db.pagos.create_index([("gestion", 1), ("codcomprobante", 1)])
+    await db.pagos.create_index([("gestion", 1),("cod_comprobante", 1)])
     await db.pagos.create_index("fecha_pago")
     # filter indexes used by /api/pagos
     await db.pagos.create_index("created_by")
@@ -1006,14 +1028,21 @@ async def startup():
                 "created_at": iso(datetime.now(timezone.utc)),
             }
         )
-        logger.info(f"Seeded admin: {ADMIN_EMAIL}")
+        logger.info("Creacion cuenta admin.")
     else:
+        updates = {}
         if not verify_password(ADMIN_PASSWORD, admin["password_hash"]):
+            updates["password_hash"] = hash_password(ADMIN_PASSWORD)
+        if admin.get("nombre") != ADMIN_NAME:
+            updates["nombre"] = ADMIN_NAME
+        if admin.get("rol") != "Administrador":
+            updates["rol"] = "Administrador"
+        if updates:
             await db.usuarios.update_one(
-                {"email": ADMIN_EMAIL.lower()},
-                {"$set": {"password_hash": hash_password(ADMIN_PASSWORD)}},
+                {"_id": admin["_id"]},
+                {"$set": updates},
             )
-            logger.info("Updated admin password to match .env")
+            logger.info("Update configuracion cuenta admin.")
 
 
 @app.on_event("shutdown")

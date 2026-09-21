@@ -108,7 +108,7 @@ export default function ReportesPage() {
                 `${pago.cod_comprobante}/${pago.gestion}`,
                 pago.estudiante_nombre || "",
                 pago.fecha_pago,
-                pago.tipopago_nombre || "",
+                pago.tipo_pago_nombre || "",
                 pago.anulado ? "" : formatMoney(pago.total),
                 pago.anulado ? formatMoney(pago.total) : "",
             ]);
@@ -192,7 +192,7 @@ export default function ReportesPage() {
                 Comprobante: `${p.cod_comprobante}/${p.gestion}`,
                 Estudiante: p.estudiante_nombre || "",
                 Fecha: p.fecha_pago,
-                Tipo: p.tipopago_nombre || "",
+                Tipo: p.tipo_pago_nombre || "",
                 Cantidad: p.cantidad,
                 Total: p.total,
             }));
