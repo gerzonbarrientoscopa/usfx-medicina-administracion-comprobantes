@@ -29,7 +29,7 @@ import { Check, ChevronsUpDown, Plus, Printer, FileCheck2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { printComprobante } from "@/components/ComprobantePrint";
 
-const NEW_EST_EMPTY = { codigo: "", ci: "", cu: "", nombre: "", gestion: new Date().getFullYear() };
+const NEW_EST_EMPTY = { ci: "", cu: "", nombre: "", gestion: new Date().getFullYear() };
 
 export default function RegistroPagoPage() {
     const [estudiantes, setEstudiantes] = useState([]);
@@ -47,6 +47,7 @@ export default function RegistroPagoPage() {
 
     const [newEstOpen, setNewEstOpen] = useState(false);
     const [newEst, setNewEst] = useState(NEW_EST_EMPTY);
+    const [creatingEstudiante, setCreatingEstudiante] = useState(false);
 
     const [submitting, setSubmitting] = useState(false);
 
@@ -128,9 +129,12 @@ export default function RegistroPagoPage() {
 
     const onCreateNewEst = async (e) => {
         e.preventDefault();
+        setCreatingEstudiante(true);
         try {
             const { data } = await apiClient.post("/estudiantes", {
-                ...newEst,
+                ci: newEst.ci,
+                cu: newEst.cu,
+                nombre: newEst.nombre,
                 gestion: Number(newEst.gestion),
             });
             toast.success("Estudiante registrado");
@@ -139,7 +143,20 @@ export default function RegistroPagoPage() {
             setNewEst(NEW_EST_EMPTY);
             setNewEstOpen(false);
         } catch (err) {
-            toast.error(formatApiError(err));
+            const serverDetail = err.response?.data?.detail;
+            if (Array.isArray(serverDetail)) {
+                const primerError = serverDetail[0];
+                const campo = primerError.loc
+                    ? primerError.loc[primerError.loc.length - 1]
+                    : "campo";
+                toast.error(`Error en '${campo}': ${primerError.msg}`);
+            } else if (typeof serverDetail === "string") {
+                toast.error(serverDetail);
+            } else {
+                toast.error("Error al guardar los cambios.");
+            }
+        } finally {
+            setCreatingEstudiante(false);
         }
     };
 
@@ -371,16 +388,6 @@ export default function RegistroPagoPage() {
                     </DialogHeader>
                     <form onSubmit={onCreateNewEst} className="grid grid-cols-2 gap-4" data-testid="new-est-popup-form">
                         <div className="space-y-1.5">
-                            <Label className="text-xs uppercase tracking-widest text-[color:var(--institution-muted)]">Código</Label>
-                            <Input
-                                value={newEst.codigo}
-                                onChange={(e) => setNewEst({ ...newEst, codigo: e.target.value })}
-                                required
-                                className="rounded-sm"
-                                data-testid="new-est-codigo"
-                            />
-                        </div>
-                        <div className="space-y-1.5">
                             <Label className="text-xs uppercase tracking-widest text-[color:var(--institution-muted)]">Gestión</Label>
                             <Input
                                 type="number"
@@ -423,11 +430,12 @@ export default function RegistroPagoPage() {
                         <DialogFooter className="col-span-2">
                             <Button
                                 type="submit"
+                                disabled={creatingEstudiante}
                                 className="rounded-sm text-white"
                                 style={{ backgroundColor: "var(--institution-burgundy)" }}
                                 data-testid="new-est-save"
                             >
-                                Registrar y seleccionar
+                                {creatingEstudiante ? "Registrando…" : "Registrar y seleccionar"}
                             </Button>
                         </DialogFooter>
                     </form>
