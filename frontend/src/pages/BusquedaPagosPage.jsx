@@ -47,7 +47,7 @@ import { printComprobante } from "@/components/ComprobantePrint";
 
 export default function BusquedaPagosPage() {
     const { user } = useAuth();
-    const canEdit = user?.rol === "Administrador";
+    const canEdit = user?.rol === "Administrador" || user?.rol === "Caja";
 
     const [tipos, setTipos] = useState([]);
     const [users, setUsers] = useState([]);
