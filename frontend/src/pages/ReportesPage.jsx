@@ -305,8 +305,8 @@ export default function ReportesPage() {
                         >
                             <Printer size={14} className="mr-2" /> Imprimir Todos los Pagos
                         </Button>
-
-                        <div className="flex-1" />
+                    </div>
+                    <div className="flex flex-wrap justify-end gap-3">
                         <Button variant="outline" onClick={() => exportExcel("validos")} className="rounded-sm" data-testid="excel-validos-btn">
                             <FileSpreadsheet size={14} className="mr-1" /> Excel Válidos
                         </Button>
