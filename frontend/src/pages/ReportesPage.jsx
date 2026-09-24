@@ -42,6 +42,28 @@ const PERIODOS = [
     { id: "rango", label: "Rango" },
 ];
 
+const MESES = [
+    "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
+    "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre",
+];
+
+const formatDate = (value) => {
+    if (!value) return "";
+    const [year, month, day] = value.substring(0, 10).split("-");
+    if (!year || !month || !day) return value;
+    return `${day}/${month}/${year}`;
+};
+
+const formatPeriodo = (reporte) => {
+    if (!reporte) return "";
+    if (reporte.periodo === "diario") return formatDate(reporte.desde);
+    if (reporte.periodo === "mensual") {
+        const monthIndex = Number(reporte.desde?.substring(5, 7)) - 1;
+        return MESES[monthIndex] || formatDate(reporte.desde);
+    }
+    return `${formatDate(reporte.desde)} - ${formatDate(reporte.hasta)}`;
+};
+
 export default function ReportesPage() {
     const [periodo, setPeriodo] = useState("diario");
     const [desde, setDesde] = useState("");
@@ -69,8 +91,8 @@ export default function ReportesPage() {
                 params.hasta = hasta;
             }
             if (createdBy && createdBy !== "all") params.created_by = createdBy;
-            const { data } = await apiClient.get("/reportes", { params });
-            setData(data);
+            const { data: reporte } = await apiClient.get("/reportes", { params });
+            setData({ ...reporte, periodo });
         } catch (e) {
             toast.error(formatApiError(e));
         } finally {
@@ -100,14 +122,14 @@ export default function ReportesPage() {
         doc.text(titulo, W / 2, 84, { align: "center" });
         doc.setFontSize(10);
         doc.setTextColor(99, 99, 105);
-        doc.text(`Periodo: ${data.desde} → ${data.hasta}`, W / 2, 100, { align: "center" });
+        doc.text(`Periodo: ${formatPeriodo(data)}`, W / 2, 100, { align: "center" });
 
         if (modo === "todos") {
             // Columns: Cod, Estudiante, Fecha, Tipo, Total Válido, Total Anulado
             const rows = data.pagos.map((pago) => [
                 `${pago.cod_comprobante}/${pago.gestion}`,
                 pago.estudiante_nombre || "",
-                pago.fecha_pago,
+                formatDate(pago.fecha_pago),
                 pago.tipo_pago_nombre || "",
                 pago.anulado ? "" : formatMoney(pago.total),
                 pago.anulado ? formatMoney(pago.total) : "",
@@ -137,7 +159,7 @@ export default function ReportesPage() {
             const rows = filtered.map((pago) => [
                 `${pago.cod_comprobante}/${pago.gestion}`,
                 pago.estudiante_nombre || "",
-                pago.fecha_pago,
+                formatDate(pago.fecha_pago),
                 pago.tipo_pago_nombre || "",
                 pago.cantidad,
                 formatMoney(pago.total),
@@ -177,7 +199,7 @@ export default function ReportesPage() {
             rows = data.pagos.map((pago) => ({
                 Comprobante: `${pago.cod_comprobante}/${pago.gestion}`,
                 Estudiante: pago.estudiante_nombre || "",
-                Fecha: pago.fecha_pago,
+                Fecha: formatDate(pago.fecha_pago),
                 Tipo: pago.tipo_pago_nombre || "",
                 Valido: pago.anulado ? 0 : pago.total,
                 Anulado: pago.anulado ? pago.total : 0,
@@ -191,7 +213,7 @@ export default function ReportesPage() {
             rows = filtered.map((p) => ({
                 Comprobante: `${p.cod_comprobante}/${p.gestion}`,
                 Estudiante: p.estudiante_nombre || "",
-                Fecha: p.fecha_pago,
+                Fecha: formatDate(p.fecha_pago),
                 Tipo: p.tipo_pago_nombre || "",
                 Cantidad: p.cantidad,
                 Total: p.total,
@@ -202,7 +224,16 @@ export default function ReportesPage() {
                 Total: modo === "validos" ? data.totales.validos : data.totales.anulados,
             });
         }
-        const ws = XLSX.utils.json_to_sheet(rows);
+        const titulo =
+            modo === "validos" ? "Reporte de Pagos Válidos" :
+            modo === "anulados" ? "Reporte de Pagos Anulados" :
+            "Reporte de Todos los Pagos";
+        const ws = XLSX.utils.json_to_sheet(rows, { origin: "A4" });
+        XLSX.utils.sheet_add_aoa(
+            ws,
+            [[titulo], ["Periodo", formatPeriodo(data)], []],
+            { origin: "A1" },
+        );
         const wb = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(wb, ws, "Reporte");
         XLSX.writeFile(wb, `reporte_${modo}_${data.desde}_${data.hasta}.xlsx`);
@@ -324,7 +355,7 @@ export default function ReportesPage() {
                                 <div>
                                     <div className="section-eyebrow">Periodo</div>
                                     <div className="font-mono-num text-sm">
-                                        {data.desde} → {data.hasta}
+                                        {formatPeriodo(data)}
                                     </div>
                                 </div>
                                 <div className="grid grid-cols-3 gap-6 text-right">
@@ -368,7 +399,7 @@ export default function ReportesPage() {
                                             <TableRow key={pago.id}>
                                                 <TableCell className="font-mono-num">{pago.cod_comprobante}/{pago.gestion}</TableCell>
                                                 <TableCell>{pago.estudiante_nombre}</TableCell>
-                                                <TableCell className="font-mono-num">{pago.fecha_pago}</TableCell>
+                                                 <TableCell className="font-mono-num">{formatDate(pago.fecha_pago)}</TableCell>
                                                 <TableCell>{pago.tipo_pago_nombre}</TableCell>
                                                 <TableCell className="text-right font-mono-num">{pago.anulado ? "—" : formatMoney(pago.total)}</TableCell>
                                                 <TableCell className="text-right font-mono-num">{pago.anulado ? formatMoney(pago.total) : "—"}</TableCell>
