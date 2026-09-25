@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { apiClient, formatApiError, formatMoney } from "@/lib/api";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -28,12 +28,20 @@ import {
 import { Check, ChevronsUpDown, Plus, Printer, FileCheck2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { printComprobante } from "@/components/ComprobantePrint";
+import { useOfficeScope } from "@/hooks/useOfficeScope";
+import {
+    Select, SelectTrigger, SelectValue, SelectContent, SelectItem,
+} from "@/components/ui/select";
 
 const NEW_EST_EMPTY = { ci: "", cu: "", nombre: "", gestion: new Date().getFullYear() };
 
 export default function RegistroPagoPage() {
+    const {
+        isSuperAdmin, offices, officeId, officeName, selectedOfficeId, setSelectedOfficeId,
+    } = useOfficeScope();
     const [estudiantes, setEstudiantes] = useState([]);
     const [tiposPago, setTiposPago] = useState([]);
+    const catalogRequest = useRef(0);
 
     const [selectedEst, setSelectedEst] = useState(null);
     const [selectedTipo, setSelectedTipo] = useState(null);
@@ -51,18 +59,38 @@ export default function RegistroPagoPage() {
 
     const [submitting, setSubmitting] = useState(false);
 
-    const loadAll = async () => {
-        const [estudiantesResponse, tiposResponse] = await Promise.all([
-            apiClient.get("/estudiantes"),
-            apiClient.get("/tipos-pagos"),
+    const loadAll = useCallback(async () => {
+        const requestId = ++catalogRequest.current;
+        if (isSuperAdmin && !officeId) {
+            setEstudiantes([]);
+            setTiposPago([]);
+            return;
+        }
+        const loadPages = async (endpoint) => {
+            const params = { office_id: officeId, pag: 1, tam: 100 };
+            const first = await apiClient.get(endpoint, { params });
+            const rest = await Promise.all(
+                Array.from({ length: (first.data.pages || 1) - 1 }, (_, index) =>
+                    apiClient.get(endpoint, { params: { ...params, pag: index + 2 } }),
+                ),
+            );
+            return [
+                ...first.data.items,
+                ...rest.flatMap((response) => response.data.items),
+            ];
+        };
+        const [students, types] = await Promise.all([
+            loadPages("/estudiantes"), loadPages("/tipos-pagos"),
         ]);
-        setEstudiantes(estudiantesResponse.data.items);
-        setTiposPago(tiposResponse.data.items);
-    };
+        if (requestId === catalogRequest.current) {
+            setEstudiantes(students);
+            setTiposPago(types);
+        }
+    }, [officeId, isSuperAdmin]);
 
     useEffect(() => {
-        loadAll();
-    }, []);
+        loadAll().catch((error) => toast.error(formatApiError(error)));
+    }, [loadAll]);
 
     const monto = selectedTipo ? Number(selectedTipo.monto) : 0;
     const total = useMemo(() => {
@@ -72,6 +100,7 @@ export default function RegistroPagoPage() {
     }, [monto, cantidad]);
 
     const generarComprobante = async () => {
+        if (!officeId) return toast.error("Seleccione una oficina.");
         if (!selectedEst) return toast.error("Seleccione un estudiante.");
         if (!selectedTipo) return toast.error("Seleccione un tipo de pago.");
         try {
@@ -81,6 +110,7 @@ export default function RegistroPagoPage() {
                 id_tipo_pago: selectedTipo.id,
                 cantidad: cantidad,
                 fecha_pago: fechaPago,
+                office_id: officeId,
             });
             setPago(data);            
             toast.success(`Comprobante generado: ${data.cod_comprobante}/${data.gestion}`);
@@ -110,6 +140,7 @@ export default function RegistroPagoPage() {
                         id_tipo_pago: selectedTipo.id,
                         cantidad: cant,
                         fecha_pago: fechaPago,
+                        office_id: officeId,
                     })
                 ).data;
             toast.success(`Pago registrado: ${data.cod_comprobante}/${data.gestion}`);
@@ -129,6 +160,7 @@ export default function RegistroPagoPage() {
 
     const onCreateNewEst = async (e) => {
         e.preventDefault();
+        if (!officeId) return toast.error("Seleccione una oficina.");
         setCreatingEstudiante(true);
         try {
             const { data } = await apiClient.post("/estudiantes", {
@@ -136,6 +168,7 @@ export default function RegistroPagoPage() {
                 cu: newEst.cu,
                 nombre: newEst.nombre,
                 gestion: Number(newEst.gestion),
+                office_id: officeId,
             });
             toast.success("Estudiante registrado");
             await loadAll();
@@ -174,6 +207,31 @@ export default function RegistroPagoPage() {
                 <CardContent className="p-8 grid grid-cols-1 lg:grid-cols-2 gap-8">
                     {/* Left column - selectors */}
                     <div className="space-y-5">
+                        {isSuperAdmin ? (
+                            <div className="space-y-1.5">
+                                <Label className="text-xs uppercase tracking-widest text-[color:var(--institution-muted)]">Oficina</Label>
+                                <Select
+                                    value={selectedOfficeId}
+                                    onValueChange={(value) => {
+                                        setSelectedOfficeId(value);
+                                        setSelectedEst(null);
+                                        setSelectedTipo(null);
+                                    }}
+                                    disabled={Boolean(pago)}
+                                >
+                                    <SelectTrigger className="rounded-sm" data-testid="registro-office-select">
+                                        <SelectValue placeholder="Seleccione una oficina" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        {offices.filter((office) => office.activa).map((office) => (
+                                            <SelectItem key={office.id} value={office.id}>{office.nombre}</SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                        ) : (
+                            <div className="text-sm text-[color:var(--institution-muted)]">Oficina: {officeName}</div>
+                        )}
                         <div className="space-y-1.5">
                             <Label className="text-xs uppercase tracking-widest text-[color:var(--institution-muted)]">
                                 Estudiante
@@ -184,6 +242,7 @@ export default function RegistroPagoPage() {
                                         <Button
                                             variant="outline"
                                             role="combobox"
+                                            disabled={!officeId}
                                             className="rounded-sm justify-between flex-1 font-normal"
                                             data-testid="estudiante-select-btn"
                                         >
@@ -197,14 +256,14 @@ export default function RegistroPagoPage() {
                                     </PopoverTrigger>
                                     <PopoverContent className="p-0 rounded-sm" align="start" style={{ width: "var(--radix-popover-trigger-width)" }}>
                                         <Command>
-                                            <CommandInput placeholder="Nombre, CI, CU o código…" data-testid="estudiante-search-input" />
+                                            <CommandInput placeholder="Nombre, CI o CU…" data-testid="estudiante-search-input" />
                                             <CommandList>
                                                 <CommandEmpty>Sin resultados.</CommandEmpty>
                                                 <CommandGroup>
                                                     {estudiantes.map((e) => (
                                                         <CommandItem
                                                             key={e.id}
-                                                            value={`${e.nombre} ${e.ci} ${e.cu || ""} ${e.codigo}`}
+                                                            value={`${e.nombre} ${e.ci} ${e.cu || ""}`}
                                                             onSelect={() => {
                                                                 setSelectedEst(e);
                                                                 setEstOpen(false);
@@ -235,6 +294,7 @@ export default function RegistroPagoPage() {
                                     variant="outline"
                                     className="rounded-sm"
                                     onClick={() => setNewEstOpen(true)}
+                                    disabled={!officeId}
                                     data-testid="add-new-estudiante-btn"
                                 >
                                     <Plus size={14} className="mr-1" /> Nuevo
@@ -251,6 +311,7 @@ export default function RegistroPagoPage() {
                                     <Button
                                         variant="outline"
                                         role="combobox"
+                                        disabled={!officeId}
                                         className="rounded-sm justify-between w-full font-normal"
                                         data-testid="tipopago-select-btn"
                                     >
@@ -269,7 +330,7 @@ export default function RegistroPagoPage() {
                                                 {tiposPago.map((t) => (
                                                     <CommandItem
                                                         key={t.id}
-                                                        value={`${t.nombre} ${t.codigo}`}
+                                                        value={t.nombre}
                                                         onSelect={() => {
                                                             setSelectedTipo(t);
                                                             setTpOpen(false);
@@ -300,7 +361,7 @@ export default function RegistroPagoPage() {
                         <Button
                             type="button"
                             onClick={generarComprobante}                            
-                            disabled={!selectedEst || !selectedTipo || pago || submitting}
+                            disabled={!officeId || !selectedEst || !selectedTipo || pago || submitting}
                             className="rounded-sm w-full text-white h-11 uppercase text-xs tracking-widest"
                             style={{ backgroundColor: "var(--institution-navy)" }}
                             data-testid="generar-comprobante-btn"
@@ -326,6 +387,7 @@ export default function RegistroPagoPage() {
                         </div>
 
                         <div className="space-y-2 pt-2">
+                            <Row label="Oficina" value={officeName || "—"} />
                             <Row label="Estudiante" value={selectedEst ? `${selectedEst.nombre}` : "—"} />
                             <Row label="C.I." value={selectedEst?.ci || "—"} />
                             <Row label="Tipo de pago" value={selectedTipo?.nombre || "—"} />

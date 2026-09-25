@@ -1,8 +1,10 @@
-import React, { useState } from "react";
+import React, { useRef, useState } from "react";
 import { apiClient, formatApiError, formatMoney } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { useOfficeScope } from "@/hooks/useOfficeScope";
 import {
     Table,
     TableBody,
@@ -27,12 +29,16 @@ import {
 } from "@/components/ui/alert-dialog";
 
 export default function AnularPagoPage() {
+    const {
+        isSuperAdmin, offices, selectedOfficeId, setSelectedOfficeId, officeParams, officeName,
+    } = useOfficeScope();
     const [textoBuscar, setTextoBuscar] = useState("");
     const [pagos, setPagos] = useState([]);
     const [pagina, setPagina] = useState(1);
     const [totalPaginas, setTotalPaginas] = useState(1);
     const [totalResultados, setTotalResultados] = useState(0);
     const [loading, setLoading] = useState(false);
+    const requestId = useRef(0);
     const FILAS_POR_PAGINA = 20;
 
     const buscar = async (paginaSolicitada = 1) => {
@@ -40,6 +46,7 @@ export default function AnularPagoPage() {
             toast.error("Ingrese código de comprobante o nombre del estudiante");
             return;
         }
+        const currentRequest = ++requestId.current;
         setLoading(true);
         try {
             const { data } = await apiClient.get("/pagos", {
@@ -47,8 +54,10 @@ export default function AnularPagoPage() {
                     q: textoBuscar.trim(),
                     pag: paginaSolicitada,
                     tam: FILAS_POR_PAGINA,
+                    ...officeParams,
                 },
             });
+            if (currentRequest !== requestId.current) return;
             setPagos(data.items);
             setPagina(data.page);
             setTotalPaginas(data.pages || 1);
@@ -56,9 +65,9 @@ export default function AnularPagoPage() {
             if (data.items.length === 0)
                 toast.message("Sin resultados.");
         } catch (e) {
-            toast.error(formatApiError(e));
+            if (currentRequest === requestId.current) toast.error(formatApiError(e));
         } finally {
-            setLoading(false);
+            if (currentRequest === requestId.current) setLoading(false);
         }
     };
 
@@ -84,6 +93,32 @@ export default function AnularPagoPage() {
 
             <Card className="rounded-sm border-[color:var(--institution-border)] shadow-none">
                 <CardContent className="p-6 flex flex-col md:flex-row gap-4 md:items-end">
+                    {isSuperAdmin && (
+                        <div className="space-y-1.5 min-w-[220px]">
+                            <Label className="text-xs uppercase tracking-widest text-[color:var(--institution-muted)]">Oficina</Label>
+                            <Select
+                                value={selectedOfficeId || "all"}
+                                onValueChange={(value) => {
+                                    requestId.current += 1;
+                                    setSelectedOfficeId(value === "all" ? "" : value);
+                                    setLoading(false);
+                                    setPagos([]);
+                                    setTotalResultados(0);
+                                    setPagina(1);
+                                }}
+                            >
+                                <SelectTrigger className="rounded-sm" data-testid="anular-office-select">
+                                    <SelectValue placeholder="Todas las oficinas" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="all">Todas las oficinas</SelectItem>
+                                    {offices.map((office) => (
+                                        <SelectItem key={office.id} value={office.id}>{office.nombre}</SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                        </div>
+                    )}
                     <div className="space-y-1.5 flex-1">
                         <Label className="text-xs uppercase tracking-widest text-[color:var(--institution-muted)]">
                             Número de comprobante o nombre del estudiante
@@ -114,6 +149,7 @@ export default function AnularPagoPage() {
                     <TableHeader>
                         <TableRow style={{ backgroundColor: "var(--institution-cream)" }}>
                             <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Código</TableHead>
+                            {isSuperAdmin && <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Oficina</TableHead>}
                             <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Estudiante</TableHead>
                             <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Tipo</TableHead>
                             <TableHead className="text-right uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Total</TableHead>
@@ -128,6 +164,7 @@ export default function AnularPagoPage() {
                                 <TableCell className="font-mono-num font-medium">
                                     {pago.cod_comprobante}/{pago.gestion}
                                 </TableCell>
+                                {isSuperAdmin && <TableCell>{pago.office_nombre || officeName}</TableCell>}
                                 <TableCell>{pago.estudiante_nombre || "—"}</TableCell>
                                 <TableCell>{pago.tipo_pago_nombre || "—"}</TableCell>
                                 <TableCell className="text-right font-mono-num">{formatMoney(pago.total)}</TableCell>
@@ -182,7 +219,7 @@ export default function AnularPagoPage() {
                         ))}
                         {pagos.length === 0 && (
                             <TableRow>
-                                <TableCell colSpan={7} className="text-center py-12 text-sm text-[color:var(--institution-muted)]">
+                                <TableCell colSpan={isSuperAdmin ? 8 : 7} className="text-center py-12 text-sm text-[color:var(--institution-muted)]">
                                     Ingrese un criterio de búsqueda y presione Buscar.
                                 </TableCell>
                             </TableRow>

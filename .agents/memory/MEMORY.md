@@ -1,0 +1,1 @@
+- [Dev-domain Python TLS](dev-domain-python-tls.md) — shell Python requests may reject the development proxy certificate even when the app works.

@@ -12,6 +12,7 @@ import {
     Search,
     LogOut,
     UserCog,
+    Building2,
 } from "lucide-react";
 
 const NAV_BY_ROLE = {
@@ -37,12 +38,26 @@ const NAV_BY_ROLE = {
         { section: "Consultas" },
         { to: "/buscar", icon: Search, label: "Búsqueda Pagos" },
     ],
+    SuperAdmin: [
+        { to: "/", icon: LayoutDashboard, label: "Panel General" },
+        { section: "Gestión" },
+        { to: "/oficinas", icon: Building2, label: "Oficinas" },
+        { to: "/usuarios", icon: UserCog, label: "Usuarios" },
+        { to: "/estudiantes", icon: GraduationCap, label: "Estudiantes" },
+        { to: "/tipos-pagos", icon: Tags, label: "Tipos de Pago" },
+        { section: "Operaciones" },
+        { to: "/registro", icon: Receipt, label: "Registro de Pago" },
+        { to: "/buscar", icon: Search, label: "Búsqueda Pagos" },
+        { to: "/anular", icon: FileX, label: "Anular Pago" },
+        { to: "/reportes", icon: FileBarChart, label: "Reportes" },
+    ],
 };
 
 const ROLE_LABEL = {
     Administrador: "Administrador",
     Caja: "Caja",
     Consultas: "Consultas",
+    SuperAdmin: "SuperAdmin",
 };
 
 export function AppLayout({ children }) {
@@ -102,9 +117,14 @@ export function AppLayout({ children }) {
 
                 <div className="border-t p-3" style={{ borderColor: "var(--institution-border)" }}>
                     <div className="px-2 pb-2">
-                        <div className="text-sm font-medium">{user?.name}</div>
+                        <div className="text-sm font-medium">{user?.nombre}</div>
                         <div className="text-xs text-[color:var(--institution-muted)]">
-                            {ROLE_LABEL[user?.role] || user?.role}
+                            {ROLE_LABEL[user?.rol] || user?.rol}
+                        </div>
+                        <div className="text-xs text-[color:var(--institution-muted)] mt-1">
+                            {user?.rol === "SuperAdmin"
+                                ? "Todas las oficinas"
+                                : user?.office_nombre}
                         </div>
                     </div>
                     <button
@@ -132,7 +152,9 @@ export function AppLayout({ children }) {
                             Universidad Mayor, Real y Pontificia de San Francisco Xavier
                         </div>
                         <div className="text-xs font-medium" style={{ color: "var(--institution-burgundy)" }}>
-                            Facultad de Medicina · Administración
+                            {user?.rol === "SuperAdmin"
+                                ? "Administración · Todas las oficinas"
+                                : user?.office_nombre || "Administración de comprobantes"}
                         </div>
                     </div>
                     <div className="text-xs text-[color:var(--institution-muted)]">

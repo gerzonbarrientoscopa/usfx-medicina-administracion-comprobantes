@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { apiClient, formatApiError, formatMoney } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -29,10 +29,11 @@ import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import * as XLSX from "xlsx";
 import { FileSpreadsheet, Printer, FileText } from "lucide-react";
+import { useOfficeScope } from "@/hooks/useOfficeScope";
 
 const INSTITUCION = {
     l1: "Universidad Mayor, Real y Pontificia de San Francisco Xavier",
-    l2: "Facultad de Medicina · Administración",
+    l2: "Administración de oficinas",
 };
 
 const PERIODOS = [
@@ -65,6 +66,14 @@ const formatPeriodo = (reporte) => {
 };
 
 export default function ReportesPage() {
+    const {
+        isSuperAdmin,
+        offices,
+        officeId,
+        officeName,
+        selectedOfficeId,
+        setSelectedOfficeId,
+    } = useOfficeScope();
     const [periodo, setPeriodo] = useState("diario");
     const [desde, setDesde] = useState("");
     const [hasta, setHasta] = useState("");
@@ -72,15 +81,29 @@ export default function ReportesPage() {
     const [usuarios, setUsuarios] = useState([]);
     const [data, setData] = useState(null);
     const [loading, setLoading] = useState(false);
+    const requestId = useRef(0);
 
-    React.useEffect(() => {
-        apiClient.get("/usuarios/list").then((r) => setUsuarios(r.data)).catch(() => {});
-    }, []);
+    useEffect(() => {
+        let cancelled = false;
+        setData(null);
+        setCreatedBy("");
+        setUsuarios([]);
+        const params = officeId ? { office_id: officeId } : {};
+        apiClient.get("/usuarios/list", { params })
+            .then((r) => {
+                if (!cancelled) setUsuarios(r.data);
+            })
+            .catch((error) => {
+                if (!cancelled) toast.error(formatApiError(error));
+            });
+        return () => { cancelled = true; };
+    }, [officeId]);
 
     const generar = async () => {
+        const thisRequest = ++requestId.current;
         setLoading(true);
         try {
-            const params = { periodo };
+            const params = { periodo, ...(officeId ? { office_id: officeId } : {}) };
             if (periodo === "rango") {
                 if (!desde || !hasta) {
                     toast.error("Indique fechas Desde y Hasta.");
@@ -92,13 +115,20 @@ export default function ReportesPage() {
             }
             if (createdBy && createdBy !== "all") params.created_by = createdBy;
             const { data: reporte } = await apiClient.get("/reportes", { params });
-            setData({ ...reporte, periodo });
+            if (thisRequest === requestId.current) setData({ ...reporte, periodo });
         } catch (e) {
-            toast.error(formatApiError(e));
+            if (thisRequest === requestId.current) toast.error(formatApiError(e));
         } finally {
-            setLoading(false);
+            if (thisRequest === requestId.current) setLoading(false);
         }
     };
+
+    useEffect(() => {
+        requestId.current += 1;
+        setLoading(false);
+    }, [officeId]);
+
+    const reportOfficeName = data?.office_nombre || officeName;
 
     const buildPDF = (modo) => {
         if (!data) return;
@@ -122,7 +152,8 @@ export default function ReportesPage() {
         doc.text(titulo, W / 2, 84, { align: "center" });
         doc.setFontSize(10);
         doc.setTextColor(99, 99, 105);
-        doc.text(`Periodo: ${formatPeriodo(data)}`, W / 2, 100, { align: "center" });
+        doc.text(`Oficina: ${reportOfficeName}`, W / 2, 100, { align: "center" });
+        doc.text(`Periodo: ${formatPeriodo(data)}`, W / 2, 114, { align: "center" });
 
         if (modo === "todos") {
             // Columns: Cod, Estudiante, Fecha, Tipo, Total Válido, Total Anulado
@@ -131,27 +162,28 @@ export default function ReportesPage() {
                 pago.estudiante_nombre || "",
                 formatDate(pago.fecha_pago),
                 pago.tipo_pago_nombre || "",
+                pago.office_nombre || reportOfficeName || "",
                 pago.anulado ? "" : formatMoney(pago.total),
                 pago.anulado ? formatMoney(pago.total) : "",
             ]);
             autoTable(doc, {
-                startY: 120,
-                head: [["Comprobante", "Estudiante", "Fecha", "Tipo", "Válido (Bs.)", "Anulado (Bs.)"]],
+                startY: 134,
+                head: [["Comprobante", "Estudiante", "Fecha", "Tipo", "Oficina", "Válido (Bs.)", "Anulado (Bs.)"]],
                 body: rows,
                 styles: { fontSize: 9, cellPadding: 5 },
                 headStyles: { fillColor: [122, 32, 53], textColor: 255 },
-                columnStyles: { 4: { halign: "right" }, 5: { halign: "right" } },
+                columnStyles: { 5: { halign: "right" }, 6: { halign: "right" } },
             });
             const finalY = doc.lastAutoTable.finalY + 10;
             autoTable(doc, {
                 startY: finalY,
                 body: [
-                    ["", "", "", "TOTAL VÁLIDOS", formatMoney(data.totales.validos), ""],
-                    ["", "", "", "TOTAL ANULADOS", "", formatMoney(data.totales.anulados)],
-                    ["", "", "", "DIFERENCIA (Válidos − Anulados)", formatMoney(data.totales.diferencia), ""],
+                    ["", "", "", "TOTAL VÁLIDOS", "", formatMoney(data.totales.validos), ""],
+                    ["", "", "", "TOTAL ANULADOS", "", "", formatMoney(data.totales.anulados)],
+                    ["", "", "", "DIFERENCIA (Válidos − Anulados)", "", formatMoney(data.totales.diferencia), ""],
                 ],
                 styles: { fontSize: 10, fontStyle: "bold", cellPadding: 5 },
-                columnStyles: { 4: { halign: "right" }, 5: { halign: "right" } },
+                columnStyles: { 5: { halign: "right" }, 6: { halign: "right" } },
                 theme: "grid",
             });
         } else {
@@ -161,24 +193,25 @@ export default function ReportesPage() {
                 pago.estudiante_nombre || "",
                 formatDate(pago.fecha_pago),
                 pago.tipo_pago_nombre || "",
+                pago.office_nombre || reportOfficeName || "",
                 pago.cantidad,
                 formatMoney(pago.total),
             ]);
             autoTable(doc, {
-                startY: 120,
-                head: [["Comprobante", "Estudiante", "Fecha", "Tipo", "Cant.", "Total (Bs.)"]],
+                startY: 134,
+                head: [["Comprobante", "Estudiante", "Fecha", "Tipo", "Oficina", "Cant.", "Total (Bs.)"]],
                 body: rows,
                 styles: { fontSize: 9, cellPadding: 5 },
                 headStyles: { fillColor: [122, 32, 53], textColor: 255 },
-                columnStyles: { 4: { halign: "right" }, 5: { halign: "right" } },
+                columnStyles: { 5: { halign: "right" }, 6: { halign: "right" } },
             });
             const total = modo === "validos" ? data.totales.validos : data.totales.anulados;
             const finalY = doc.lastAutoTable.finalY + 10;
             autoTable(doc, {
                 startY: finalY,
-                body: [["", "", "", "", "TOTAL", formatMoney(total)]],
+                body: [["", "", "", "", "", "TOTAL", formatMoney(total)]],
                 styles: { fontSize: 11, fontStyle: "bold", cellPadding: 6 },
-                columnStyles: { 5: { halign: "right" } },
+                columnStyles: { 6: { halign: "right" } },
                 theme: "grid",
             });
         }
@@ -201,6 +234,7 @@ export default function ReportesPage() {
                 Estudiante: pago.estudiante_nombre || "",
                 Fecha: formatDate(pago.fecha_pago),
                 Tipo: pago.tipo_pago_nombre || "",
+                Oficina: pago.office_nombre || reportOfficeName || "",
                 Valido: pago.anulado ? 0 : pago.total,
                 Anulado: pago.anulado ? pago.total : 0,
             }));
@@ -215,6 +249,7 @@ export default function ReportesPage() {
                 Estudiante: p.estudiante_nombre || "",
                 Fecha: formatDate(p.fecha_pago),
                 Tipo: p.tipo_pago_nombre || "",
+                Oficina: p.office_nombre || reportOfficeName || "",
                 Cantidad: p.cantidad,
                 Total: p.total,
             }));
@@ -231,7 +266,7 @@ export default function ReportesPage() {
         const ws = XLSX.utils.json_to_sheet(rows, { origin: "A4" });
         XLSX.utils.sheet_add_aoa(
             ws,
-            [[titulo], ["Periodo", formatPeriodo(data)], []],
+            [[titulo], ["Oficina", reportOfficeName], ["Periodo", formatPeriodo(data)], []],
             { origin: "A1" },
         );
         const wb = XLSX.utils.book_new();
@@ -247,10 +282,36 @@ export default function ReportesPage() {
                 <p className="text-sm text-[color:var(--institution-muted)] mt-1">
                     Genere reportes por período. Tres impresiones disponibles: válidos, anulados, todos.
                 </p>
+                <p className="text-sm text-[color:var(--institution-muted)] mt-1" data-testid="report-office-context">
+                    Oficina: {data?.office_nombre || officeName}
+                </p>
             </div>
 
             <Card className="rounded-sm border-[color:var(--institution-border)] shadow-none">
                 <CardContent className="p-6 space-y-4">
+                    {isSuperAdmin ? (
+                        <div className="space-y-1.5 max-w-sm">
+                            <Label className="text-xs uppercase tracking-widest text-[color:var(--institution-muted)]">Oficina</Label>
+                            <Select
+                                value={selectedOfficeId || "all"}
+                                onValueChange={(value) => setSelectedOfficeId(value === "all" ? "" : value)}
+                            >
+                                <SelectTrigger className="rounded-sm" data-testid="rep-office-select">
+                                    <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="all">Todas las oficinas</SelectItem>
+                                    {offices.map((office) => (
+                                        <SelectItem key={office.id} value={office.id}>{office.nombre}</SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                        </div>
+                    ) : (
+                        <div className="text-sm text-[color:var(--institution-muted)]">
+                            Oficina: {officeName}
+                        </div>
+                    )}
                     <Tabs value={periodo} onValueChange={setPeriodo}>
                         <TabsList className="rounded-sm">
                             {PERIODOS.map((p) => (
@@ -390,6 +451,7 @@ export default function ReportesPage() {
                                             <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Estudiante</TableHead>
                                             <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Fecha</TableHead>
                                             <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Tipo</TableHead>
+                                            <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Oficina</TableHead>
                                             <TableHead className="text-right uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Válido (Bs.)</TableHead>
                                             <TableHead className="text-right uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Anulado (Bs.)</TableHead>
                                         </TableRow>
@@ -401,6 +463,7 @@ export default function ReportesPage() {
                                                 <TableCell>{pago.estudiante_nombre}</TableCell>
                                                  <TableCell className="font-mono-num">{formatDate(pago.fecha_pago)}</TableCell>
                                                 <TableCell>{pago.tipo_pago_nombre}</TableCell>
+                                                <TableCell>{pago.office_nombre || reportOfficeName}</TableCell>
                                                 <TableCell className="text-right font-mono-num">{pago.anulado ? "—" : formatMoney(pago.total)}</TableCell>
                                                 <TableCell className="text-right font-mono-num">{pago.anulado ? formatMoney(pago.total) : "—"}</TableCell>
                                             </TableRow>
@@ -408,14 +471,14 @@ export default function ReportesPage() {
                                         {data.pagos.length > 0 && (
                                             <>
                                                 <TableRow style={{ backgroundColor: "var(--institution-cream)" }}>
-                                                    <TableCell colSpan={4} className="text-right uppercase text-xs tracking-widest text-[color:var(--institution-muted)] font-semibold">
+                                                    <TableCell colSpan={5} className="text-right uppercase text-xs tracking-widest text-[color:var(--institution-muted)] font-semibold">
                                                         Totales
                                                     </TableCell>
                                                     <TableCell className="text-right font-mono-num font-semibold">{formatMoney(data.totales.validos)}</TableCell>
                                                     <TableCell className="text-right font-mono-num font-semibold">{formatMoney(data.totales.anulados)}</TableCell>
                                                 </TableRow>
                                                 <TableRow>
-                                                    <TableCell colSpan={4} className="text-right uppercase text-xs tracking-widest text-[color:var(--institution-burgundy)] font-semibold">
+                                                    <TableCell colSpan={5} className="text-right uppercase text-xs tracking-widest text-[color:var(--institution-burgundy)] font-semibold">
                                                         Diferencia (Válidos − Anulados)
                                                     </TableCell>
                                                     <TableCell colSpan={2} className="text-right font-mono-num font-bold" style={{ color: "var(--institution-burgundy)" }}>
@@ -426,7 +489,7 @@ export default function ReportesPage() {
                                         )}
                                         {data.pagos.length === 0 && (
                                             <TableRow>
-                                                <TableCell colSpan={6} className="text-center py-10 text-sm text-[color:var(--institution-muted)]">
+                                                <TableCell colSpan={7} className="text-center py-10 text-sm text-[color:var(--institution-muted)]">
                                                     Sin pagos en el periodo seleccionado.
                                                 </TableCell>
                                             </TableRow>

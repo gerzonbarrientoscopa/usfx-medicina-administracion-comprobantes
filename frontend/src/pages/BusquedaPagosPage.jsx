@@ -1,6 +1,7 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { apiClient, formatApiError, formatMoney } from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
+import { useOfficeScope } from "@/hooks/useOfficeScope";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -47,11 +48,15 @@ import { printComprobante } from "@/components/ComprobantePrint";
 
 export default function BusquedaPagosPage() {
     const { user } = useAuth();
-    const canEdit = user?.rol === "Administrador" || user?.rol === "Caja";
+    const {
+        isSuperAdmin, offices, officeId, selectedOfficeId, setSelectedOfficeId,
+    } = useOfficeScope();
+    const canEdit = isSuperAdmin || user?.rol === "Administrador" || user?.rol === "Caja";
 
     const [tipos, setTipos] = useState([]);
     const [users, setUsers] = useState([]);
-    const [estudiantes, setEstudiantes] = useState([]);
+    const [editTipos, setEditTipos] = useState([]);
+    const [editEstudiantes, setEditEstudiantes] = useState([]);
 
     const [q, setQ] = useState("");
     const [tipo, setTipo] = useState("");
@@ -73,71 +78,139 @@ export default function BusquedaPagosPage() {
     const [editEstOpen, setEditEstOpen] = useState(false);
     const [editTpOpen, setEditTpOpen] = useState(false);
     const [savingEdit, setSavingEdit] = useState(false);
+    const searchRequest = useRef(0);
+    const catalogRequest = useRef(0);
+    const editOptionsRequest = useRef(0);
+    const officeIdRef = useRef(officeId);
+    officeIdRef.current = officeId;
 
     useEffect(() => {
+        const requestId = ++catalogRequest.current;
+        const cargarTodasLasPaginas = async (endpoint, params) => {
+            const primera = await apiClient.get(endpoint, { params: { ...params, pag: 1, tam: 100 } });
+            const paginas = primera.data.pages || 1;
+            if (paginas === 1) return primera.data.items;
+            const restantes = await Promise.all(
+                Array.from({ length: paginas - 1 }, (_, index) =>
+                    apiClient.get(endpoint, { params: { ...params, pag: index + 2, tam: 100 } }),
+                ),
+            );
+            return [
+                ...primera.data.items,
+                ...restantes.flatMap((response) => response.data.items),
+            ];
+        };
         const cargarCatalogos = async () => {
             try {
-                const cargarTodasLasPaginas = async (endpoint) => {
-                    const primera = await apiClient.get(endpoint, { params: { pag: 1, tam: 100 } });
-                    const paginas = primera.data.pages || 1;
-                    if (paginas === 1) return primera.data.items;
-                    const restantes = await Promise.all(
-                        Array.from({ length: paginas - 1 }, (_, index) =>
-                            apiClient.get(endpoint, { params: { pag: index + 2, tam: 100 } }),
-                        ),
-                    );
-                    return [
-                        ...primera.data.items,
-                        ...restantes.flatMap((response) => response.data.items),
-                    ];
-                };
-                const solicitudes = [
-                    cargarTodasLasPaginas("/tipos-pagos"),
-                    apiClient.get("/usuarios/list"),
-                ];
-                if (canEdit) {
-                    solicitudes.push(cargarTodasLasPaginas("/estudiantes"));
-                }
-                const [tiposResponse, usuariosResponse, estudiantesResponse] = await Promise.all(solicitudes);
+                const params = officeId ? { office_id: officeId } : {};
+                const [tiposResponse, usuariosResponse] = await Promise.all([
+                    cargarTodasLasPaginas("/tipos-pagos", params),
+                    apiClient.get("/usuarios/list", { params }),
+                ]);
+                if (requestId !== catalogRequest.current || officeIdRef.current !== officeId) return;
                 setTipos(tiposResponse);
                 setUsers(usuariosResponse.data);
-                if (estudiantesResponse) setEstudiantes(estudiantesResponse);
             } catch (error) {
-                toast.error(formatApiError(error));
+                if (requestId === catalogRequest.current && officeIdRef.current === officeId) {
+                    toast.error(formatApiError(error));
+                }
             }
         };
+        setTipos([]);
+        setUsers([]);
+        setPagos([]);
+        setPagina(1);
+        setTotalPaginas(1);
+        setTotalResultados(0);
+        setTipo("");
+        setCreatedBy("");
         cargarCatalogos();
-        buscar(1);
+        buscar(1, true);
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []);
+    }, [officeId]);
 
-    const buscar = async (paginaSolicitada = 1) => {
+    const buscar = async (paginaSolicitada = 1, resetOfficeFilters = false) => {
         if (desde && hasta && desde > hasta) {
             toast.error("La fecha inicial no puede ser posterior a la fecha final.");
             return;
         }
+        const requestId = ++searchRequest.current;
+        const officeAtStart = officeId;
         setLoading(true);
         try {
             const params = {
                 pag: paginaSolicitada,
                 tam: FILAS_POR_PAGINA,
             };
+            if (officeId) params.office_id = officeId;
             if (q.trim()) params.q = q.trim();
-            if (tipo && tipo !== "all") params.id_tipo_pago = tipo;
+            if (!resetOfficeFilters && tipo && tipo !== "all") params.id_tipo_pago = tipo;
             if (desde) params.fecha_desde = desde;
             if (hasta) params.fecha_hasta = hasta;
-            if (createdBy && createdBy !== "all") params.created_by = createdBy;
+            if (!resetOfficeFilters && createdBy && createdBy !== "all") params.created_by = createdBy;
             const { data } = await apiClient.get("/pagos", { params });
+            if (requestId !== searchRequest.current || officeIdRef.current !== officeAtStart) return null;
             setPagos(data.items);
             setPagina(data.page);
             setTotalPaginas(data.pages || 1);
             setTotalResultados(data.total);
             return data;
         } catch (e) {
-            toast.error(formatApiError(e));
+            if (requestId === searchRequest.current && officeIdRef.current === officeAtStart) {
+                toast.error(formatApiError(e));
+            }
             return null;
         } finally {
-            setLoading(false);
+            if (requestId === searchRequest.current) setLoading(false);
+        }
+    };
+
+    const cargarOpcionesEdicion = async (p, requestId) => {
+        const paymentOfficeId = p.office_id;
+        const paymentStudent = {
+            id: p.id_estudiante,
+            nombre: p.estudiante_nombre,
+            ci: p.estudiante_ci,
+            cu: p.estudiante_cu,
+        };
+        const paymentTipo = {
+            id: p.id_tipo_pago,
+            nombre: p.tipo_pago_nombre,
+            monto: p.monto,
+            codigo: p.tipo_pago_codigo || "",
+        };
+        setEditEstudiantes([paymentStudent]);
+        setEditTipos([paymentTipo]);
+        if (!paymentOfficeId) return;
+        const params = { office_id: paymentOfficeId };
+        try {
+            const cargarTodasLasPaginas = async (endpoint) => {
+                const primera = await apiClient.get(endpoint, { params: { ...params, pag: 1, tam: 100 } });
+                const paginas = primera.data.pages || 1;
+                if (paginas === 1) return primera.data.items;
+                const restantes = await Promise.all(
+                    Array.from({ length: paginas - 1 }, (_, index) =>
+                        apiClient.get(endpoint, { params: { ...params, pag: index + 2, tam: 100 } }),
+                    ),
+                );
+                return [
+                    ...primera.data.items,
+                    ...restantes.flatMap((response) => response.data.items),
+                ];
+            };
+            const [students, types] = await Promise.all([
+                cargarTodasLasPaginas("/estudiantes"),
+                cargarTodasLasPaginas("/tipos-pagos"),
+            ]);
+            if (requestId !== editOptionsRequest.current) return;
+            setEditEstudiantes(students.some((student) => student.id === p.id_estudiante)
+                ? students
+                : [...students, paymentStudent]);
+            setEditTipos(types.some((paymentType) => paymentType.id === p.id_tipo_pago)
+                ? types
+                : [...types, paymentTipo]);
+        } catch (error) {
+            if (requestId === editOptionsRequest.current) toast.error(formatApiError(error));
         }
     };
 
@@ -149,28 +222,18 @@ export default function BusquedaPagosPage() {
             cantidad: String(p.cantidad),
             fecha_pago: p.fecha_pago,
         });
-        setEstudiantes((actuales) => {
-            if (actuales.some((e) => e.id === p.id_estudiante)) return actuales;
-            return [
-                ...actuales,
-                {
-                    id: p.id_estudiante,
-                    nombre: p.estudiante_nombre,
-                    ci: p.estudiante_ci,
-                    cu: p.estudiante_cu,
-                },
-            ];
-        });
+        const requestId = ++editOptionsRequest.current;
         setEditOpen(true);
+        cargarOpcionesEdicion(p, requestId);
     };
 
     const selectedEditEst = useMemo(
-        () => estudiantes.find((e) => e.id === editForm.id_estudiante) || null,
-        [estudiantes, editForm.id_estudiante],
+        () => editEstudiantes.find((e) => e.id === editForm.id_estudiante) || null,
+        [editEstudiantes, editForm.id_estudiante],
     );
     const selectedEditTipo = useMemo(
-        () => tipos.find((t) => t.id === editForm.id_tipo_pago) || null,
-        [tipos, editForm.id_tipo_pago],
+        () => editTipos.find((t) => t.id === editForm.id_tipo_pago) || null,
+        [editTipos, editForm.id_tipo_pago],
     );
     const editTotal = useMemo(() => {
         const m = selectedEditTipo ? Number(selectedEditTipo.monto) : 0;
@@ -215,6 +278,25 @@ export default function BusquedaPagosPage() {
 
             <Card className="rounded-sm border-[color:var(--institution-border)] shadow-none">
                 <CardContent className="p-6 grid grid-cols-1 md:grid-cols-6 gap-4">
+                    {isSuperAdmin && (
+                        <div className="space-y-1.5 md:col-span-2">
+                            <Label className="text-xs uppercase tracking-widest text-[color:var(--institution-muted)]">Oficina</Label>
+                            <Select
+                                value={selectedOfficeId || "all"}
+                                onValueChange={(value) => setSelectedOfficeId(value === "all" ? "" : value)}
+                            >
+                                <SelectTrigger className="rounded-sm" data-testid="busq-office-select">
+                                    <SelectValue placeholder="Todas las oficinas" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="all">Todas las oficinas</SelectItem>
+                                    {offices.map((office) => (
+                                        <SelectItem key={office.id} value={office.id}>{office.nombre}</SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                        </div>
+                    )}
                     <div className="space-y-1.5 md:col-span-2">
                         <Label className="text-xs uppercase tracking-widest text-[color:var(--institution-muted)]">Búsqueda</Label>
                         <Input
@@ -296,6 +378,7 @@ export default function BusquedaPagosPage() {
                     <TableHeader>
                         <TableRow style={{ backgroundColor: "var(--institution-cream)" }}>
                             <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Código</TableHead>
+                            {isSuperAdmin && <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Oficina</TableHead>}
                             <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Estudiante</TableHead>
                             <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Tipo de pago</TableHead>
                             <TableHead className="text-right uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Cantidad</TableHead>
@@ -313,6 +396,7 @@ export default function BusquedaPagosPage() {
                                 <TableCell className="font-mono-num font-medium">
                                     {p.cod_comprobante}/{p.gestion}
                                 </TableCell>
+                                {isSuperAdmin && <TableCell>{p.office_nombre || "—"}</TableCell>}
                                 <TableCell>{p.estudiante_nombre || "—"}</TableCell>
                                 <TableCell>{p.tipo_pago_nombre || "—"}</TableCell>
                                 <TableCell className="text-right font-mono-num">{p.cantidad}</TableCell>
@@ -358,14 +442,14 @@ export default function BusquedaPagosPage() {
                         ))}
                         {!loading && pagos.length === 0 && (
                             <TableRow>
-                                <TableCell colSpan={10} className="text-center py-12 text-sm text-[color:var(--institution-muted)]">
+                                <TableCell colSpan={isSuperAdmin ? 11 : 10} className="text-center py-12 text-sm text-[color:var(--institution-muted)]">
                                     Sin resultados.
                                 </TableCell>
                             </TableRow>
                         )}
                         {loading && (
                             <TableRow>
-                                <TableCell colSpan={10} className="text-center py-12 text-sm text-[color:var(--institution-muted)]">
+                                <TableCell colSpan={isSuperAdmin ? 11 : 10} className="text-center py-12 text-sm text-[color:var(--institution-muted)]">
                                     Buscando…
                                 </TableCell>
                             </TableRow>
@@ -435,7 +519,7 @@ export default function BusquedaPagosPage() {
                                             <CommandList>
                                                 <CommandEmpty>Sin resultados.</CommandEmpty>
                                                 <CommandGroup>
-                                                    {estudiantes.map((e) => (
+                                                     {editEstudiantes.map((e) => (
                                                         <CommandItem
                                                             key={e.id}
                                                             value={`${e.nombre} ${e.ci} ${e.cu || ""} ${e.codigo}`}
@@ -480,7 +564,7 @@ export default function BusquedaPagosPage() {
                                             <CommandList>
                                                 <CommandEmpty>Sin resultados.</CommandEmpty>
                                                 <CommandGroup>
-                                                    {tipos.map((t) => (
+                                                     {editTipos.map((t) => (
                                                         <CommandItem
                                                             key={t.id}
                                                             value={`${t.nombre} ${t.codigo}`}

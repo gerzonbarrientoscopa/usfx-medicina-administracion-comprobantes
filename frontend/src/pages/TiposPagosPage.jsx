@@ -1,5 +1,6 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { apiClient, formatApiError, formatMoney } from "@/lib/api";
+import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -32,21 +33,52 @@ const EMPTY = {
 };
 
 export default function TiposPagosPage() {
+  const { user } = useAuth();
+  const isSuperAdmin = user?.rol === "SuperAdmin";
   const [tiposPagos, setTiposPagos] = useState([]);
+  const [oficinas, setOficinas] = useState([]);
+  const [oficinaFiltro, setOficinaFiltro] = useState("");
   const [open, setOpen] = useState(false);
   const [editingTipo, setEditingTipo] = useState(null);
-  const [formData, setFormData] = useState(EMPTY);
+  const [formData, setFormData] = useState({ ...EMPTY, office_id: "" });
   const [loading, setLoading] = useState(false);
   const [pagina, setPagina] = useState(1);
   const [totalPaginas, setTotalPaginas] = useState(1);
   const FILAS_POR_PAGINA = 20; 
 
-  const fetchTiposPago = async () => {
+  useEffect(() => {
+    if (!isSuperAdmin) return;
+    const fetchOficinas = async () => {
+      try {
+        const firstResponse = await apiClient.get("/oficinas", {
+          params: { pag: 1, tam: 100 },
+        });
+        const paginas = firstResponse.data.pages || 1;
+        const remainingResponses = await Promise.all(
+          Array.from({ length: paginas - 1 }, (_, index) =>
+            apiClient.get("/oficinas", {
+              params: { pag: index + 2, tam: 100 },
+            }),
+          ),
+        );
+        setOficinas([
+          ...firstResponse.data.items,
+          ...remainingResponses.flatMap((response) => response.data.items),
+        ]);
+      } catch (error) {
+        toast.error("Error al cargar oficinas.");
+      }
+    };
+    fetchOficinas();
+  }, [isSuperAdmin]);
+
+  const fetchTiposPago = useCallback(async () => {
     try {
       const response = await apiClient.get("/tipos-pagos", {
         params: {
           pag: pagina,
           tam: FILAS_POR_PAGINA,
+          office_id: isSuperAdmin ? oficinaFiltro || undefined : undefined,
         },
       });
       setTiposPagos(response.data.items);
@@ -56,11 +88,11 @@ export default function TiposPagosPage() {
     } catch (error) {
       toast.error("Error al cargar tipos de pagos.");
     }
-  };
+  }, [pagina, oficinaFiltro, isSuperAdmin]);
 
   useEffect(() => {
     fetchTiposPago();
-  }, [pagina]);
+  }, [fetchTiposPago]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -71,6 +103,9 @@ export default function TiposPagosPage() {
         monto: Number(formData.monto),
         fin: formData.fin || null,
       };
+      if (editingTipo || !isSuperAdmin) {
+        delete payloadFormData.office_id;
+      }
       if (editingTipo) {
         await apiClient.put(`/tipos-pagos/${editingTipo.id}`, payloadFormData);
         toast.success("Tipo de pago actualizado.");
@@ -117,18 +152,31 @@ export default function TiposPagosPage() {
       descripcion: tipo.descripcion || "",
       inicio: tipo.inicio,
       fin: tipo.fin || "",
+      office_id: "",
     });
     setOpen(true);
   };
 
   const handleOpenChange = (isOpen) => {
     setOpen(isOpen);
+    if (!isOpen) {
+      setEditingTipo(null);
+      return;
+    }
     // Si la ventana se está abriendo, reseteamos los campos
     if (isOpen && !editingTipo) {
       setEditingTipo(null);
-      setFormData(EMPTY);
+      setFormData({
+        ...EMPTY,
+        office_id: isSuperAdmin ? oficinaFiltro : "",
+      });
     }
   }; 
+
+  const handleOficinaFiltro = (e) => {
+    setOficinaFiltro(e.target.value);
+    setPagina(1);
+  };
 
   return (
     <div className="space-y-6" data-testid="tipospagos-page">
@@ -139,6 +187,11 @@ export default function TiposPagosPage() {
           <p className="text-sm text-[color:var(--institution-muted)] mt-1">
             Conceptos por los cuales se pueden emitir comprobantes.
           </p>
+          {!isSuperAdmin && user?.office_nombre && (
+            <p className="text-xs text-[color:var(--institution-muted)] mt-1">
+              Oficina: <b>{user.office_nombre}</b>
+            </p>
+          )}
         </div>
         <Dialog open={open} onOpenChange={handleOpenChange}>
           <DialogTrigger asChild>
@@ -157,6 +210,34 @@ export default function TiposPagosPage() {
               </DialogTitle>
             </DialogHeader>
             <form onSubmit={handleSubmit} className="grid grid-cols-2 gap-4">
+              {isSuperAdmin && !editingTipo && (
+                <div className="space-y-1.5 col-span-2">
+                  <Label className="text-xs uppercase tracking-widest text-[color:var(--institution-muted)]">
+                    Oficina
+                  </Label>
+                  <select
+                    value={formData.office_id}
+                    onChange={(e) =>
+                      setFormData({ ...formData, office_id: e.target.value })
+                    }
+                    required
+                    data-testid="tp-office-select"
+                    className="h-10 w-full rounded-sm border border-input bg-background px-3 text-sm"
+                  >
+                    <option value="">Seleccione una oficina</option>
+                    {oficinas.map((oficina) => (
+                      <option key={oficina.id} value={oficina.id}>
+                        {oficina.nombre}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+              {!isSuperAdmin && !editingTipo && user?.office_nombre && (
+                <div className="col-span-2 text-sm text-[color:var(--institution-muted)]">
+                  Oficina: <b>{user.office_nombre}</b>
+                </div>
+              )}
               <div className="space-y-1.5">
                 <Label className="text-xs uppercase tracking-widest text-[color:var(--institution-muted)]">
                   Monto (Bs.)
@@ -246,6 +327,25 @@ export default function TiposPagosPage() {
         </Dialog>
       </div>
 
+      {isSuperAdmin && (
+        <div className="flex gap-3">
+          <select
+            value={oficinaFiltro}
+            onChange={handleOficinaFiltro}
+            data-testid="tipos-pagos-office-filter"
+            aria-label="Filtrar por oficina"
+            className="h-10 w-full max-w-xs rounded-sm border border-input bg-background px-3 text-sm"
+          >
+            <option value="">Todas las oficinas</option>
+            {oficinas.map((oficina) => (
+              <option key={oficina.id} value={oficina.id}>
+                {oficina.nombre}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+
       <div
         className="bg-white border rounded-sm"
         style={{ borderColor: "var(--institution-border)" }}
@@ -268,6 +368,11 @@ export default function TiposPagosPage() {
               <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">
                 Descripción
               </TableHead>
+              {isSuperAdmin && (
+                <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">
+                  Oficina
+                </TableHead>
+              )}
               <TableHead className="text-right uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">
                 Acciones
               </TableHead>
@@ -287,6 +392,7 @@ export default function TiposPagosPage() {
                 <TableCell className="text-xs text-[color:var(--institution-muted)] max-w-xs truncate">
                   {tipo.descripcion || "—"}
                 </TableCell>
+                {isSuperAdmin && <TableCell>{tipo.office_nombre || "—"}</TableCell>}
                 <TableCell className="text-right">
                   <Button
                     variant="ghost"
@@ -312,7 +418,7 @@ export default function TiposPagosPage() {
             {tiposPagos.length === 0 && (
               <TableRow>
                 <TableCell
-                  colSpan={6}
+                  colSpan={isSuperAdmin ? 7 : 6}
                   className="text-center py-12 text-sm text-[color:var(--institution-muted)]"
                 >
                   Sin tipos de pago registrados.

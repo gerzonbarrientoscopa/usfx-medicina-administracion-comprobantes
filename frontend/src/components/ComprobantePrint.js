@@ -1,6 +1,5 @@
 const INSTITUTION = {
     linea1: "Universidad Mayor, Real y Pontificia de San Francisco Xavier",
-    linea2: "Facultad de Medicina",
     linea3: "Administración",
 };
 
@@ -28,13 +27,14 @@ export function buildComprobanteHTML(pago) {
     const estudianteCi = escapeHTML(pago.estudiante_ci);
     const estudianteCu = escapeHTML(pago.estudiante_cu || "-");
     const tipoPagoNombre = escapeHTML(pago.tipo_pago_nombre || pago.tipopago_nombre);
+    const oficina = escapeHTML(pago.office_nombre || "Oficina no identificada");
     const cantidad = escapeHTML(pago.cantidad);
 
     return `<!DOCTYPE html>
 <html lang="es">
 <head>
 <meta charset="UTF-8" />
-<title>Comprobante ${codigo}/${gestion}</title>
+<title>Comprobante ${codigo}/${gestion} — ${oficina}</title>
 <style>
   @import url("https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap");
   * { box-sizing: border-box; }
@@ -84,7 +84,7 @@ export function buildComprobanteHTML(pago) {
       <div class="header">
         <div class="header-text">
           <h1>${escapeHTML(INSTITUTION.linea1)}</h1>
-          <h2>${escapeHTML(INSTITUTION.linea2)}</h2>
+           <h2>${oficina}</h2>
           <h3>${escapeHTML(INSTITUTION.linea3)}</h3>
         </div>
         <div class="cod-box">
@@ -95,6 +95,7 @@ export function buildComprobanteHTML(pago) {
 
       <div class="title-bar">Comprobante de Pago</div>
 
+      <div class="row"><span class="label">Oficina</span><span class="value">${oficina}</span></div>
       <div class="row"><span class="label">Estudiante</span><span class="value">${estudianteNombre}</span></div>
       <div class="row"><span class="label">C.I.</span><span class="value">${estudianteCi}</span></div>
       <div class="row"><span class="label">C.U.</span><span class="value">${estudianteCu}</span></div>

@@ -15,6 +15,7 @@ import AnularPagoPage from "@/pages/AnularPagoPage";
 import ReportesPage from "@/pages/ReportesPage";
 import RegistroPagoPage from "@/pages/RegistroPagoPage";
 import BusquedaPagosPage from "@/pages/BusquedaPagosPage";
+import OficinasPage from "@/pages/OficinasPage";
 
 function withLayout(element) {
     return (
@@ -33,6 +34,16 @@ function App() {
 
                     <Route path="/" element={withLayout(<DashboardPage />)} />
 
+                    <Route
+                        path="/oficinas"
+                        element={
+                            <ProtectedRoute roles={["SuperAdmin"]}>
+                                <AppLayout>
+                                    <OficinasPage />
+                                </AppLayout>
+                            </ProtectedRoute>
+                        }
+                    />
                     <Route
                         path="/estudiantes"
                         element={

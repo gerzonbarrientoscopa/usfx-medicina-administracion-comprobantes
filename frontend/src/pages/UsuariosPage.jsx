@@ -1,5 +1,6 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { apiClient, formatApiError } from "@/lib/api";
+import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -32,50 +33,95 @@ import { Plus, Pencil, Trash2, ChevronLeft, ChevronRight } from "lucide-react";
 const EMPTY = { email: "", nombre: "", password: "", rol: "Caja" };
 
 export default function UsuariosPage() {
+  const { user } = useAuth();
+  const isSuperAdmin = user?.rol === "SuperAdmin";
+  const isAdministrador = user?.rol === "Administrador";
   const [usuarios, setUsuarios] = useState([]);
+  const [oficinas, setOficinas] = useState([]);
+  const [officeFilter, setOfficeFilter] = useState("all");
   const [open, setOpen] = useState(false);
   const [editingUsuario, setEditingUsuario] = useState(null);
-  const [formData, setFormData] = useState(EMPTY);
+  const [formData, setFormData] = useState({ ...EMPTY, office_id: "" });
   const [loading, setLoading] = useState(false);
   const [pagina, setPagina] = useState(1);
   const [totalPaginas, setTotalPaginas] = useState(1);
   const FILAS_POR_PAGINA = 20;
 
-  const fetchUsuarios = async () => {
+  const fetchUsuarios = useCallback(async () => {
     try {
       const response = await apiClient.get("/usuarios", {
         params: {
           pag: pagina,
           tam: FILAS_POR_PAGINA,
+          ...(isSuperAdmin && officeFilter !== "all"
+            ? { office_id: officeFilter }
+            : {}),
         },
       });
-      setUsuarios(response.data.items);
-      if (response.data.pages) {
-        setTotalPaginas(response.data.pages);
-      }
+      setUsuarios(response.data.items || []);
+      setTotalPaginas(response.data.pages || 1);
     } catch (error) {
       toast.error("Error al cargar usuarios.");
     }
-  };
+  }, [pagina, officeFilter, isSuperAdmin]);
+
+  const fetchOficinas = useCallback(async () => {
+    try {
+      const first = await apiClient.get("/oficinas", {
+        params: { pag: 1, tam: 100 },
+      });
+      const rest = await Promise.all(
+        Array.from({ length: (first.data.pages || 1) - 1 }, (_, index) =>
+          apiClient.get("/oficinas", { params: { pag: index + 2, tam: 100 } }),
+        ),
+      );
+      setOficinas([
+        ...(first.data.items || []),
+        ...rest.flatMap((response) => response.data.items || []),
+      ]);
+    } catch (error) {
+      toast.error("Error al cargar oficinas.");
+    }
+  }, []);
 
   useEffect(() => {
     fetchUsuarios();
-  }, [pagina]);
+  }, [fetchUsuarios]);
+
+  useEffect(() => {
+    if (isSuperAdmin) fetchOficinas();
+  }, [isSuperAdmin, fetchOficinas]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (isSuperAdmin && !formData.office_id) {
+      toast.error("Selecciona una oficina.");
+      return;
+    }
     setLoading(true);
     try {
       if (editingUsuario) {
-        const payload = { nombre: formData.nombre, rol: formData.rol };
+        const payload = {
+          nombre: formData.nombre,
+          rol: formData.rol,
+          ...(isSuperAdmin ? { office_id: formData.office_id } : {}),
+        };
         if (formData.password) payload.password = formData.password;
-        await apiClient.put(`/usuarios/${editing.id}`, payload);
+        await apiClient.put(`/usuarios/${editingUsuario.id}`, payload);
         toast.success("Usuario actualizado.");
       } else {
-        await apiClient.post("/usuarios", formData);
+        const payload = {
+          email: formData.email,
+          nombre: formData.nombre,
+          password: formData.password,
+          rol: formData.rol,
+          ...(isSuperAdmin ? { office_id: formData.office_id } : {}),
+        };
+        await apiClient.post("/usuarios", payload);
         toast.success("Usuario creado.");
       }
       setOpen(false);
+      setEditingUsuario(null);
       fetchUsuarios();
     } catch (error) {
       const serverDetail = error.response?.data?.detail;
@@ -96,9 +142,10 @@ export default function UsuariosPage() {
   };
 
   const handleDelete = async (usuario) => {
+    if (!canManage(usuario)) return;
     if (!window.confirm(`¿Eliminar "${usuario.nombre}"?`)) return;
     try {
-      await apiClient.delete(`/users/${usuario.id}`);
+      await apiClient.delete(`/usuarios/${usuario.id}`);
       toast.success("Usuario eliminado.");
       fetchUsuarios();
     } catch (err) {
@@ -107,22 +154,29 @@ export default function UsuariosPage() {
   };
 
   const handleEdit = (usuario) => {
+    if (!canManage(usuario)) return;
     setEditingUsuario(usuario);
     setFormData({
       email: usuario.email,
       nombre: usuario.nombre,
       password: "",
       rol: usuario.rol,
+      office_id: usuario.office_id == null ? "" : String(usuario.office_id),
     });
     setOpen(true);
   };
 
+  const canManage = (usuario) =>
+    usuario.rol !== "SuperAdmin" &&
+    (isSuperAdmin || (isAdministrador && usuario.rol !== "Administrador"));
+
   const handleOpenChange = (isOpen) => {
     setOpen(isOpen);
-    // Si la ventana se está abriendo, reseteamos los campos
-    if (isOpen && !editingUsuario) {
+    if (!isOpen) {
       setEditingUsuario(null);
-      setFormData(EMPTY);
+      setFormData({ ...EMPTY, office_id: "" });
+    } else if (!editingUsuario) {
+      setFormData({ ...EMPTY, office_id: "" });
     }
   };
 
@@ -136,6 +190,42 @@ export default function UsuariosPage() {
             Usuarios habilitados para iniciar sesión en el sistema.
           </p>
         </div>
+        {isSuperAdmin && (
+          <div className="flex items-center gap-3">
+            <Label
+              htmlFor="user-office-filter"
+              className="text-xs uppercase tracking-widest text-[color:var(--institution-muted)]"
+            >
+              Oficina
+            </Label>
+            <Select
+              value={officeFilter}
+              onValueChange={(value) => {
+                setOfficeFilter(value);
+                setPagina(1);
+              }}
+            >
+              <SelectTrigger
+                id="user-office-filter"
+                className="rounded-sm max-w-xs"
+                data-testid="user-office-filter"
+              >
+                <SelectValue placeholder="Todas las oficinas" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Todas las oficinas</SelectItem>
+                {oficinas.map((oficina) => {
+                  const id = oficina.id ?? oficina.office_id;
+                  return (
+                    <SelectItem key={id} value={String(id)}>
+                      {oficina.nombre || oficina.office_nombre || `Oficina ${id}`}
+                    </SelectItem>
+                  );
+                })}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
         <Dialog open={open} onOpenChange={handleOpenChange}>
           <DialogTrigger asChild>
             <Button
@@ -215,12 +305,48 @@ export default function UsuariosPage() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="Administrador">Administrador</SelectItem>
+                    {isSuperAdmin && (
+                      <SelectItem value="Administrador">
+                        Administrador
+                      </SelectItem>
+                    )}
                     <SelectItem value="Caja">Caja</SelectItem>
                     <SelectItem value="Consultas">Consultas</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
+              {isSuperAdmin && (
+                <div className="space-y-1.5">
+                  <Label className="text-xs uppercase tracking-widest text-[color:var(--institution-muted)]">
+                    Oficina
+                  </Label>
+                  <Select
+                    value={formData.office_id}
+                    onValueChange={(value) =>
+                      setFormData({ ...formData, office_id: value })
+                    }
+                  >
+                    <SelectTrigger
+                      className="rounded-sm"
+                      data-testid="user-office-select"
+                    >
+                      <SelectValue placeholder="Selecciona una oficina" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {oficinas.map((oficina) => {
+                        const id = oficina.id ?? oficina.office_id;
+                        return (
+                          <SelectItem key={id} value={String(id)}>
+                            {oficina.nombre ||
+                              oficina.office_nombre ||
+                              `Oficina ${id}`}
+                          </SelectItem>
+                        );
+                      })}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
               <DialogFooter>
                 <Button
                   type="submit"
@@ -257,6 +383,9 @@ export default function UsuariosPage() {
               <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">
                 Rol
               </TableHead>
+              <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">
+                Oficina
+              </TableHead>
               <TableHead className="text-right uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">
                 Acciones
               </TableHead>
@@ -278,32 +407,37 @@ export default function UsuariosPage() {
                     {usuario.rol}
                   </span>
                 </TableCell>
+                <TableCell>{usuario.office_nombre || "—"}</TableCell>
                 <TableCell className="text-right">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => handleEdit(usuario)}
-                    data-testid={`user-edit-${usuario.id}`}
-                    className="rounded-sm"
-                  >
-                    <Pencil size={14} />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => handleDelete(usuario)}
-                    data-testid={`user-delete-${usuario.id}`}
-                    className="rounded-sm text-[color:var(--institution-danger)]"
-                  >
-                    <Trash2 size={14} />
-                  </Button>
+                  {canManage(usuario) && (
+                    <>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => handleEdit(usuario)}
+                        data-testid={`user-edit-${usuario.id}`}
+                        className="rounded-sm"
+                      >
+                        <Pencil size={14} />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => handleDelete(usuario)}
+                        data-testid={`user-delete-${usuario.id}`}
+                        className="rounded-sm text-[color:var(--institution-danger)]"
+                      >
+                        <Trash2 size={14} />
+                      </Button>
+                    </>
+                  )}
                 </TableCell>
               </TableRow>
             ))}
             {usuarios.length === 0 && (
               <TableRow>
                 <TableCell
-                  colSpan={4}
+                  colSpan={5}
                   className="text-center py-12 text-sm text-[color:var(--institution-muted)]"
                 >
                   Sin usuarios registrados.

@@ -64,8 +64,7 @@ export default function LoginPage() {
                 className="font-serif-display text-3xl leading-tight"
                 style={{ color: "var(--institution-text)" }}
               >
-                Sistema Web Comprobantes Administración de la Facultad de
-                Medicina
+                Sistema Web de Comprobantes de Pago
               </CardTitle>
             </div>
             <CardDescription className="text-sm text-[color:var(--institution-muted)] leading-relaxed px-2">
@@ -77,7 +76,7 @@ export default function LoginPage() {
                 style={{ color: "var(--institution-burgundy)" }}
                 className="font-medium"
               >
-                Facultad de Medicina · Administración
+                Administración de oficinas
               </span>
             </CardDescription>
           </CardHeader>

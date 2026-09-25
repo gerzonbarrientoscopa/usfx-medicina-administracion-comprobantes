@@ -14,10 +14,16 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true);
 
   const refresh = useCallback(async () => {
+    if (!localStorage.getItem("token")) {
+      setUser(false);
+      setLoading(false);
+      return;
+    }
     try {
       const { data } = await apiClient.get("/auth/me");
       setUser(data);
     } catch (_e) {
+      localStorage.removeItem("token");
       setUser(false);
     } finally {
       setLoading(false);

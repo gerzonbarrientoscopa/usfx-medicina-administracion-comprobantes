@@ -1,5 +1,6 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { apiClient, formatApiError } from "@/lib/api";
+import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -30,27 +31,54 @@ const EMPTY = {
 };
 
 export default function EstudiantesPage() {
+    const { user } = useAuth();
+    const isSuperAdmin = user?.rol === "SuperAdmin";
     const [estudiantes, setEstudiantes] = useState([]);
+    const [oficinas, setOficinas] = useState([]);
+    const [oficinaFiltro, setOficinaFiltro] = useState("");
     const [textoBuscar, setTextoBuscar] = useState("");
     const [open, setOpen] = useState(false);
     const [editingEstudiante, setEditingEstudiante] = useState(null);
-    const [formData, setFormData] = useState(EMPTY);
+    const [formData, setFormData] = useState({ ...EMPTY, office_id: "" });
     const [loading, setLoading] = useState(false);
     const [pagina, setPagina] = useState(1);
     const [totalPaginas, setTotalPaginas] = useState(1);
     const FILAS_POR_PAGINA = 20;
 
     useEffect(() => {
-        fetchEstudiantes();        
-    }, [pagina, textoBuscar]);
+      if (!isSuperAdmin) return;
+      const fetchOficinas = async () => {
+        try {
+          const firstResponse = await apiClient.get("/oficinas", {
+            params: { pag: 1, tam: 100 },
+          });
+          const paginas = firstResponse.data.pages || 1;
+          const remainingResponses = await Promise.all(
+            Array.from({ length: paginas - 1 }, (_, index) =>
+              apiClient.get("/oficinas", {
+                params: { pag: index + 2, tam: 100 },
+              }),
+            ),
+          );
+          setOficinas([
+            ...firstResponse.data.items,
+            ...remainingResponses.flatMap((response) => response.data.items),
+          ]);
+        } catch (error) {
+          toast.error("Error al cargar oficinas.");
+        }
+      };
+      fetchOficinas();
+    }, [isSuperAdmin]);
 
-    const fetchEstudiantes = async () => {
+    const fetchEstudiantes = useCallback(async () => {
       try {
         const response = await apiClient.get("/estudiantes", {
           params: {
             pag: pagina,
             tam: FILAS_POR_PAGINA,
             textoBuscar: textoBuscar || undefined,
+            office_id: isSuperAdmin ? oficinaFiltro || undefined : undefined,
           },
         });
         setEstudiantes(response.data.items);
@@ -60,7 +88,11 @@ export default function EstudiantesPage() {
       } catch (error) {
         toast.error("Error al cargar estudiantes.");
       }
-    };
+    }, [pagina, textoBuscar, oficinaFiltro, isSuperAdmin]);
+
+    useEffect(() => {
+        fetchEstudiantes();
+    }, [fetchEstudiantes]);
 
     const handleSubmit = async (ev) => {
       ev.preventDefault();
@@ -70,6 +102,9 @@ export default function EstudiantesPage() {
           ...formData,
           gestion: Number(formData.gestion),
         };
+        if (editingEstudiante || !isSuperAdmin) {
+          delete payloadFormData.office_id;
+        }
         if (editingEstudiante) {
           await apiClient.put(
             `/estudiantes/${editingEstudiante.id}`,
@@ -118,22 +153,35 @@ export default function EstudiantesPage() {
         cu: est.cu || "",
         nombre: est.nombre,
         gestion: est.gestion,
+        office_id: "",
       });
       setOpen(true);
     };
 
     const handleOpenChange = (isOpen) => {
       setOpen(isOpen);
+      if (!isOpen) {
+        setEditingEstudiante(null);
+        return;
+      }
       // Si la ventana se está abriendo, reseteamos los campos
       if (isOpen && !editingEstudiante) {
         setEditingEstudiante(null);
-        setFormData(EMPTY);
+        setFormData({
+          ...EMPTY,
+          office_id: isSuperAdmin ? oficinaFiltro : "",
+        });
       }
     };     
     
     const handleBuscar = (e) => {
       setTextoBuscar(e.target.value); // 1. Actualiza el texto con lo que escribe el usuario
       setPagina(1); // 2. Reinicia la paginación a la página 1
+    };
+
+    const handleOficinaFiltro = (e) => {
+      setOficinaFiltro(e.target.value);
+      setPagina(1);
     };
 
     return (
@@ -145,6 +193,11 @@ export default function EstudiantesPage() {
             <p className="text-sm text-[color:var(--institution-muted)] mt-1">
               Registro de estudiantes habilitados para realizar pagos.
             </p>
+            {!isSuperAdmin && user?.office_nombre && (
+              <p className="text-xs text-[color:var(--institution-muted)] mt-1">
+                Oficina: <b>{user.office_nombre}</b>
+              </p>
+            )}
           </div>
           <Dialog open={open} onOpenChange={handleOpenChange}>
             <DialogTrigger asChild>
@@ -167,6 +220,34 @@ export default function EstudiantesPage() {
                 className="grid grid-cols-2 gap-4"
                 data-testid="estudiante-form"
               >
+                {isSuperAdmin && !editingEstudiante && (
+                  <div className="space-y-1.5 col-span-2">
+                    <Label className="text-xs uppercase tracking-widest text-[color:var(--institution-muted)]">
+                      Oficina
+                    </Label>
+                    <select
+                      value={formData.office_id}
+                      onChange={(e) =>
+                        setFormData({ ...formData, office_id: e.target.value })
+                      }
+                      required
+                      data-testid="est-office-select"
+                      className="h-10 w-full rounded-sm border border-input bg-background px-3 text-sm"
+                    >
+                      <option value="">Seleccione una oficina</option>
+                      {oficinas.map((oficina) => (
+                        <option key={oficina.id} value={oficina.id}>
+                          {oficina.nombre}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+                {!isSuperAdmin && !editingEstudiante && user?.office_nombre && (
+                  <div className="col-span-2 text-sm text-[color:var(--institution-muted)]">
+                    Oficina: <b>{user.office_nombre}</b>
+                  </div>
+                )}
                 <div className="space-y-1.5">
                   <Label className="text-xs uppercase tracking-widest text-[color:var(--institution-muted)]">
                     Gestión
@@ -175,7 +256,7 @@ export default function EstudiantesPage() {
                     type="number"
                     value={formData.gestion}
                     onChange={(e) =>
-                      setForm({ ...formData, gestion: e.target.value })
+                      setFormData({ ...formData, gestion: e.target.value })
                     }
                     required
                     data-testid="est-gestion-input"
@@ -247,6 +328,22 @@ export default function EstudiantesPage() {
             className="max-w-md rounded-sm"
             data-testid="estudiantes-search"
           />
+          {isSuperAdmin && (
+            <select
+              value={oficinaFiltro}
+              onChange={handleOficinaFiltro}
+              data-testid="estudiantes-office-filter"
+              aria-label="Filtrar por oficina"
+              className="h-10 w-full max-w-xs rounded-sm border border-input bg-background px-3 text-sm"
+            >
+              <option value="">Todas las oficinas</option>
+              {oficinas.map((oficina) => (
+                <option key={oficina.id} value={oficina.id}>
+                  {oficina.nombre}
+                </option>
+              ))}
+            </select>
+          )}
         </div>
 
         <div
@@ -271,6 +368,11 @@ export default function EstudiantesPage() {
                 <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">
                   Gestión
                 </TableHead>
+                {isSuperAdmin && (
+                  <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">
+                    Oficina
+                  </TableHead>
+                )}
                 <TableHead className="text-right uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">
                   Acciones
                 </TableHead>
@@ -286,6 +388,7 @@ export default function EstudiantesPage() {
                   </TableCell>
                   <TableCell className="font-medium">{est.nombre}</TableCell>
                   <TableCell className="font-mono-num">{est.gestion}</TableCell>
+                  {isSuperAdmin && <TableCell>{est.office_nombre || "—"}</TableCell>}
                   <TableCell className="text-right">
                     <Button
                       variant="ghost"
@@ -311,7 +414,7 @@ export default function EstudiantesPage() {
               {estudiantes.length === 0 && (
                 <TableRow>
                   <TableCell
-                    colSpan={6}
+                    colSpan={isSuperAdmin ? 7 : 6}
                     className="text-center py-12 text-sm text-[color:var(--institution-muted)]"
                   >
                     Sin estudiantes registrados.
