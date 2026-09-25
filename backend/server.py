@@ -83,12 +83,18 @@ class OfficeBase(BaseModel):
     prefijo_comprobante: str = Field(
         min_length=3, max_length=3, pattern=r"^[A-Z]{3}$"
     )
+    suboficina: str = Field(default="", max_length=100)
     activa: bool = True
 
     @field_validator("prefijo_comprobante", mode="before")
     @classmethod
     def normalize_receipt_prefix(cls, value):
         return value.strip().upper() if isinstance(value, str) else value
+
+    @field_validator("suboficina", mode="before")
+    @classmethod
+    def normalize_suboffice(cls, value):
+        return value.strip() if isinstance(value, str) else value
 
 
 class OfficeCreate(OfficeBase):
@@ -194,6 +200,7 @@ class Pago(PagoBase):
     total: float    
     prefijo_comprobante: Optional[str] = None
     comprobante_display: Optional[str] = None
+    suboficina: Optional[str] = None
     estudiante_nombre: Optional[str] = None
     estudiante_ci: Optional[str] = None
     estudiante_cu: Optional[str] = ""
@@ -432,6 +439,7 @@ async def create_office(
         "nombre": nombre,
         "nombre_key": nombre.casefold(),
         "prefijo_comprobante": body.prefijo_comprobante,
+        "suboficina": body.suboficina,
         "activa": body.activa,
         "created_at": iso(datetime.now(timezone.utc)),
     }
@@ -458,6 +466,7 @@ async def update_office(
                 "nombre": nombre,
                 "nombre_key": nombre.casefold(),
                 "prefijo_comprobante": body.prefijo_comprobante,
+                "suboficina": body.suboficina,
                 "activa": body.activa,
             }},
         )
@@ -883,6 +892,7 @@ _PAGO_HYDRATE_PIPELINE = [
             "created_by_name": {"$arrayElemAt": ["$_cu.nombre", 0]},
             "edited_by_name": {"$arrayElemAt": ["$_eu.nombre", 0]},
             "office_nombre": {"$arrayElemAt": ["$_office.nombre", 0]},
+            "suboficina": {"$arrayElemAt": ["$_office.suboficina", 0]},
             "prefijo_comprobante": {
                 "$ifNull": [
                     "$prefijo_comprobante",
@@ -920,9 +930,11 @@ async def _hydrate_pago(pago: dict) -> dict:
         {"id": pago["id_tipo_pago"], "office_id": office_id}, {"_id": 0}
     )
     office = await db.oficinas.find_one(
-        {"id": office_id}, {"_id": 0, "nombre": 1, "prefijo_comprobante": 1}
+        {"id": office_id},
+        {"_id": 0, "nombre": 1, "prefijo_comprobante": 1, "suboficina": 1},
     )
     pago["office_nombre"] = office["nombre"] if office else None
+    pago["suboficina"] = office.get("suboficina", "") if office else ""
     pago["prefijo_comprobante"] = (
         pago.get("prefijo_comprobante")
         or (office.get("prefijo_comprobante") if office else None)

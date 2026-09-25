@@ -2,7 +2,6 @@ import { formatComprobante } from "@/lib/receipt";
 
 const INSTITUTION = {
     linea1: "Universidad Mayor, Real y Pontificia de San Francisco Xavier",
-    linea3: "Administración",
 };
 
 const escapeHTML = (value) =>
@@ -29,6 +28,7 @@ export function buildComprobanteHTML(pago) {
     const estudianteCu = escapeHTML(pago.estudiante_cu || "-");
     const tipoPagoNombre = escapeHTML(pago.tipo_pago_nombre || pago.tipopago_nombre);
     const oficina = escapeHTML(pago.office_nombre || "Oficina no identificada");
+    const suboficina = escapeHTML(pago.suboficina || "");
     const cantidad = escapeHTML(pago.cantidad);
 
     return `<!DOCTYPE html>
@@ -86,7 +86,7 @@ export function buildComprobanteHTML(pago) {
         <div class="header-text">
           <h1>${escapeHTML(INSTITUTION.linea1)}</h1>
            <h2>${oficina}</h2>
-          <h3>${escapeHTML(INSTITUTION.linea3)}</h3>
+          ${suboficina ? `<h3>${suboficina}</h3>` : ""}
         </div>
         <div class="cod-box">
           <div class="cod-label">Comprobante N°</div>

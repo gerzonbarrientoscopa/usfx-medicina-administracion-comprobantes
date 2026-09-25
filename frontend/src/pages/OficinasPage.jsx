@@ -23,7 +23,12 @@ import {
 } from "@/components/ui/table";
 import { Plus, Pencil, Trash2, ChevronLeft, ChevronRight } from "lucide-react";
 
-const EMPTY = { nombre: "", prefijo_comprobante: "", activa: true };
+const EMPTY = {
+  nombre: "",
+  prefijo_comprobante: "",
+  suboficina: "",
+  activa: true,
+};
 const FILAS_POR_PAGINA = 20;
 
 export default function OficinasPage() {
@@ -93,6 +98,7 @@ export default function OficinasPage() {
     setFormData({
       nombre: oficina.nombre,
       prefijo_comprobante: oficina.prefijo_comprobante || "",
+      suboficina: oficina.suboficina || "",
       activa: Boolean(oficina.activa),
     });
     setOpen(true);
@@ -182,6 +188,24 @@ export default function OficinasPage() {
                 />
                 <p className="text-xs text-[color:var(--institution-muted)]">
                   Debe ser único. Se mostrará, por ejemplo, como MED-00001 / 2026.
+                </p>
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs uppercase tracking-widest text-[color:var(--institution-muted)]">
+                  Suboficina (solo para impresión)
+                </Label>
+                <Input
+                  value={formData.suboficina}
+                  onChange={(event) =>
+                    setFormData({ ...formData, suboficina: event.target.value })
+                  }
+                  placeholder="Administración, Caja…"
+                  maxLength={100}
+                  data-testid="oficina-suboffice-input"
+                  className="rounded-sm"
+                />
+                <p className="text-xs text-[color:var(--institution-muted)]">
+                  Opcional. Si queda vacío, no aparecerá en el comprobante.
                 </p>
               </div>
               <div className="flex items-center justify-between">
