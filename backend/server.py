@@ -32,6 +32,8 @@ ACCESS_TOKEN_EXPIRES_MIN = 60 * 8
 ADMIN_EMAIL = os.environ["ADMIN_EMAIL"].strip().lower()
 ADMIN_PASSWORD = os.environ["ADMIN_PASSWORD"]
 ADMIN_NAME = os.environ["ADMIN_NAME"]
+SUPER_ADMIN_EMAIL = "admin@usfx.bo"
+SUPER_ADMIN_ROLE = "SuperAdmin"
 
 # ----------------------------- DB -----------------------------
 client = AsyncIOMotorClient(MONGO_URL)
@@ -44,6 +46,7 @@ api = APIRouter(prefix="/api")
 security = HTTPBearer()
 
 ROLES = ("Administrador", "Caja", "Consultas")
+ALL_ROLES = (SUPER_ADMIN_ROLE, *ROLES)
 
 
 # ----------------------------- MODELS -----------------------------
@@ -52,7 +55,9 @@ class UserPublic(BaseModel):
     id: str
     email: EmailStr
     nombre: str
-    rol: Literal["Administrador", "Caja", "Consultas"]
+    rol: Literal["SuperAdmin", "Administrador", "Caja", "Consultas"]
+    office_id: Optional[str] = None
+    office_nombre: Optional[str] = None
     created_at: Optional[str] = None
 
 
@@ -61,12 +66,36 @@ class UserCreate(BaseModel):
     nombre: str
     password: str = Field(min_length=4)
     rol: Literal["Administrador", "Caja", "Consultas"]
+    office_id: Optional[str] = None
 
 
 class UserUpdate(BaseModel):
     nombre: Optional[str] = None
     rol: Optional[Literal["Administrador", "Caja", "Consultas"]] = None
     password: Optional[str] = Field(default=None, min_length=4)
+    office_id: Optional[str] = None
+
+
+class OfficeBase(BaseModel):
+    nombre: str
+    activa: bool = True
+
+
+class OfficeCreate(OfficeBase):
+    pass
+
+
+class Office(OfficeBase):
+    id: str
+    created_at: Optional[str] = None
+
+
+class OfficePaginationResponse(BaseModel):
+    items: List[Office]
+    total: int
+    page: int
+    size: int
+    pages: int
 
 class UserPaginationResponse(BaseModel):
     items: List[UserPublic]
@@ -90,6 +119,8 @@ class EstudianteBase(BaseModel):
     cu: Optional[str] = ""
     nombre: str
     gestion: int
+    office_id: Optional[str] = None
+    office_nombre: Optional[str] = None
 
 
 class EstudianteCreate(EstudianteBase):
@@ -114,6 +145,8 @@ class TipoPagoBase(BaseModel):
     descripcion: Optional[str] = ""
     inicio: str  # ISO date YYYY-MM-DD
     fin: Optional[str] = None
+    office_id: Optional[str] = None
+    office_nombre: Optional[str] = None
 
 
 class TipoPagoCreate(TipoPagoBase):
@@ -136,6 +169,8 @@ class PagoBase(BaseModel):
     id_tipo_pago: str
     cantidad: float = Field(gt=0)
     fecha_pago: str  # YYYY-MM-DD
+    office_id: Optional[str] = None
+    office_nombre: Optional[str] = None
 
 class PagoCreate(PagoBase):
     pass
@@ -205,13 +240,12 @@ async def get_current_user(
     try:
         payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
         user_id = payload.get("sub")
-        email = payload.get("email")
         if user_id is None:
             raise HTTPException(status_code=401, detail="Token inválido.")
     except InvalidTokenError:
         raise HTTPException(status_code=401, detail="Token inválido.")
 
-    user = await db.usuarios.find_one({"email": email}, {"_id": 0})
+    user = await db.usuarios.find_one({"id": user_id}, {"_id": 0})
     if user is None:
         raise HTTPException(status_code=401, detail="Usuario no encontrado.")
     return user
@@ -219,13 +253,73 @@ async def get_current_user(
 
 def require_roles(*allowed: str):
     async def _dep(user: dict = Depends(get_current_user)) -> dict:
-        if user.get("rol") not in allowed:
+        if (
+            user.get("rol") not in allowed
+            and user.get("rol") != SUPER_ADMIN_ROLE
+        ):
             raise HTTPException(
                 status_code=403, detail="Sin permisos para esta acción."
             )
         return user
 
     return _dep
+
+
+async def _office_exists(office_id: str, *, active: bool = False) -> dict:
+    filt = {"id": office_id}
+    if active:
+        filt["activa"] = True
+    office = await db.oficinas.find_one(filt, {"_id": 0})
+    if not office:
+        raise HTTPException(status_code=404, detail="Oficina no encontrada o inactiva.")
+    return office
+
+
+async def office_scope(
+    user: dict, requested_office_id: Optional[str] = None
+) -> dict:
+    """Return a Mongo filter that confines non-super-admins to their office."""
+    if user.get("rol") == SUPER_ADMIN_ROLE:
+        if requested_office_id:
+            await _office_exists(requested_office_id)
+            return {"office_id": requested_office_id}
+        return {}
+
+    office_id = user.get("office_id")
+    if not office_id:
+        raise HTTPException(status_code=403, detail="El usuario no tiene una oficina asignada.")
+    if requested_office_id and requested_office_id != office_id:
+        raise HTTPException(status_code=403, detail="Sin permisos para consultar otra oficina.")
+    return {"office_id": office_id}
+
+
+async def office_for_write(
+    user: dict, requested_office_id: Optional[str] = None
+) -> str:
+    """Resolve office ownership server-side for a new record."""
+    if user.get("rol") == SUPER_ADMIN_ROLE:
+        office_id = requested_office_id
+        if not office_id:
+            raise HTTPException(status_code=400, detail="Seleccione una oficina.")
+        await _office_exists(office_id, active=True)
+        return office_id
+
+    office_id = user.get("office_id")
+    if not office_id:
+        raise HTTPException(status_code=403, detail="El usuario no tiene una oficina asignada.")
+    if requested_office_id and requested_office_id != office_id:
+        raise HTTPException(status_code=403, detail="No puede crear datos en otra oficina.")
+    await _office_exists(office_id, active=True)
+    return office_id
+
+
+async def public_user(user: dict) -> UserPublic:
+    doc = {key: value for key, value in user.items() if key not in ("_id", "password_hash")}
+    office_id = doc.get("office_id")
+    if office_id:
+        office = await db.oficinas.find_one({"id": office_id}, {"_id": 0, "nombre": 1})
+        doc["office_nombre"] = office.get("nombre") if office else None
+    return UserPublic(**doc)
 
 
 # ----------------------------- AUTH ENDPOINTS -----------------------------
