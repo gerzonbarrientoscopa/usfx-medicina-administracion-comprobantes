@@ -354,9 +354,6 @@ export default function TiposPagosPage() {
           <TableHeader>
             <TableRow style={{ backgroundColor: "var(--institution-cream)" }}>
               <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">
-                Código
-              </TableHead>
-              <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">
                 Nombre
               </TableHead>
               <TableHead className="text-right uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">
@@ -381,7 +378,6 @@ export default function TiposPagosPage() {
           <TableBody>
             {tiposPagos.map((tipo) => (
               <TableRow key={tipo.id} data-testid={`tp-row-${tipo.id}`}>
-                <TableCell className="font-mono-num">{tipo.id}</TableCell>
                 <TableCell className="font-medium">{tipo.nombre}</TableCell>
                 <TableCell className="text-right font-mono-num">
                   {formatMoney(tipo.monto)}
@@ -418,7 +414,7 @@ export default function TiposPagosPage() {
             {tiposPagos.length === 0 && (
               <TableRow>
                 <TableCell
-                  colSpan={isSuperAdmin ? 7 : 6}
+                  colSpan={isSuperAdmin ? 6 : 5}
                   className="text-center py-12 text-sm text-[color:var(--institution-muted)]"
                 >
                   Sin tipos de pago registrados.

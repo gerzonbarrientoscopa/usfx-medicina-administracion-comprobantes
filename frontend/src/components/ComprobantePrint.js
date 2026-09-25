@@ -45,9 +45,9 @@ export function buildComprobanteHTML(pago) {
   .header-text h1 { font-family: "Cormorant Garamond", Georgia, serif; font-size: 22px; margin: 0 0 4px 0; color: #1D3557; line-height: 1.15; max-width: 460px; }
   .header-text h2 { font-family: "Cormorant Garamond", Georgia, serif; font-size: 18px; margin: 0; color: #7A2035; font-weight: 600; }
   .header-text h3 { font-family: "IBM Plex Sans", sans-serif; font-size: 11px; letter-spacing: 0.15em; text-transform: uppercase; color: #636369; margin: 4px 0 0 0; }
-  .cod-box { text-align: right; }
+  .cod-box { text-align: right; white-space: nowrap; flex: 0 0 auto; }
   .cod-label { font-size: 10px; letter-spacing: 0.15em; text-transform: uppercase; color: #636369; }
-  .cod-num { font-family: "Cormorant Garamond", Georgia, serif; font-size: 28px; font-weight: 700; color: #7A2035; line-height: 1; }
+  .cod-num { font-family: "Cormorant Garamond", Georgia, serif; font-size: 28px; font-weight: 700; color: #7A2035; line-height: 1; white-space: nowrap; }
   .title-bar { text-align: center; font-family: "Cormorant Garamond", Georgia, serif; font-size: 20px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: #1c1c1e; margin-bottom: 18px; }
   .row { display: flex; justify-content: space-between; gap: 16px; padding: 8px 0; border-bottom: 1px dotted #E5E2DC; font-size: 13px; }
   .row .label { color: #636369; text-transform: uppercase; letter-spacing: 0.08em; font-size: 11px; font-weight: 600; }

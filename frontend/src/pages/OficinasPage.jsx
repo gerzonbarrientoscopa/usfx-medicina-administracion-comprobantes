@@ -184,17 +184,6 @@ export default function OficinasPage() {
                   Debe ser único. Se mostrará, por ejemplo, como MED-00001 / 2026.
                 </p>
               </div>
-              <div className="space-y-1.5">
-                <Label className="text-xs uppercase tracking-widest text-[color:var(--institution-muted)]">
-                  Código UUID de la oficina
-                </Label>
-                <Input
-                  value={editingOficina?.id || "Se genera automáticamente al crear"}
-                  readOnly
-                  className="rounded-sm font-mono text-xs"
-                  data-testid="oficina-uuid"
-                />
-              </div>
               <div className="flex items-center justify-between">
                 <Label
                   htmlFor="oficina-activa"
@@ -244,9 +233,6 @@ export default function OficinasPage() {
                 Nombre
               </TableHead>
               <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">
-                Código UUID
-              </TableHead>
-              <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">
                 Prefijo
               </TableHead>
               <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">
@@ -261,7 +247,6 @@ export default function OficinasPage() {
             {oficinas.map((oficina) => (
               <TableRow key={oficina.id} data-testid={`oficina-row-${oficina.id}`}>
                 <TableCell className="font-medium">{oficina.nombre}</TableCell>
-                <TableCell className="font-mono text-[10px] break-all">{oficina.id}</TableCell>
                 <TableCell className="font-mono font-semibold">{oficina.prefijo_comprobante}</TableCell>
                 <TableCell>
                   <span
@@ -299,7 +284,7 @@ export default function OficinasPage() {
             {oficinas.length === 0 && (
               <TableRow>
                 <TableCell
-                  colSpan={5}
+                  colSpan={4}
                   className="text-center py-12 text-sm text-[color:var(--institution-muted)]"
                 >
                   No hay oficinas registradas.

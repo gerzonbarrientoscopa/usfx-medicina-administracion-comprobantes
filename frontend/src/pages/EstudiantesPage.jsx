@@ -354,9 +354,6 @@ export default function EstudiantesPage() {
             <TableHeader>
               <TableRow style={{ backgroundColor: "var(--institution-cream)" }}>
                 <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">
-                  Código
-                </TableHead>
-                <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">
                   C.I.
                 </TableHead>
                 <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">
@@ -381,7 +378,6 @@ export default function EstudiantesPage() {
             <TableBody>
               {estudiantes.map((est) => (
                 <TableRow key={est.id} data-testid={`est-row-${est.id}`}>
-                  <TableCell className="font-mono-num">{est.id}</TableCell>
                   <TableCell className="font-mono-num">{est.ci}</TableCell>
                   <TableCell className="font-mono-num">
                     {est.cu || "—"}
@@ -414,7 +410,7 @@ export default function EstudiantesPage() {
               {estudiantes.length === 0 && (
                 <TableRow>
                   <TableCell
-                    colSpan={isSuperAdmin ? 7 : 6}
+                    colSpan={isSuperAdmin ? 6 : 5}
                     className="text-center py-12 text-sm text-[color:var(--institution-muted)]"
                   >
                     Sin estudiantes registrados.
