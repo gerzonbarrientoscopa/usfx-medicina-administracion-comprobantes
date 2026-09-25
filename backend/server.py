@@ -1,6 +1,8 @@
 import os
 import logging
 import re
+import itertools
+import string
 import bcrypt
 import jwt
 import uuid
@@ -10,7 +12,7 @@ from fastapi import FastAPI, APIRouter, HTTPException, Query, Depends, Request, 
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from starlette.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field, EmailStr, ConfigDict
+from pydantic import BaseModel, Field, EmailStr, ConfigDict, field_validator
 from motor.motor_asyncio import AsyncIOMotorClient
 from pymongo.errors import DuplicateKeyError
 from pathlib import Path
@@ -78,7 +80,15 @@ class UserUpdate(BaseModel):
 
 class OfficeBase(BaseModel):
     nombre: str
+    prefijo_comprobante: str = Field(
+        min_length=3, max_length=3, pattern=r"^[A-Z]{3}$"
+    )
     activa: bool = True
+
+    @field_validator("prefijo_comprobante", mode="before")
+    @classmethod
+    def normalize_receipt_prefix(cls, value):
+        return value.strip().upper() if isinstance(value, str) else value
 
 
 class OfficeCreate(OfficeBase):
@@ -182,6 +192,8 @@ class Pago(PagoBase):
     gestion: int    
     monto: float
     total: float    
+    prefijo_comprobante: Optional[str] = None
+    comprobante_display: Optional[str] = None
     estudiante_nombre: Optional[str] = None
     estudiante_ci: Optional[str] = None
     estudiante_cu: Optional[str] = ""
@@ -207,6 +219,10 @@ class PaginacionPagos(BaseModel):
 # ----------------------------- HELPERS -----------------------------
 def iso(dt: datetime) -> str:
     return dt.astimezone(timezone.utc).isoformat()
+
+
+def format_receipt_display(prefix: str, code: str, gestion: int) -> str:
+    return f"{prefix.upper()}-{str(code).zfill(5)} / {int(gestion):04d}"
 
 
 def hash_password(password: str) -> str:
@@ -415,13 +431,14 @@ async def create_office(
         "id": str(uuid.uuid4()),
         "nombre": nombre,
         "nombre_key": nombre.casefold(),
+        "prefijo_comprobante": body.prefijo_comprobante,
         "activa": body.activa,
         "created_at": iso(datetime.now(timezone.utc)),
     }
     try:
         await db.oficinas.insert_one(doc)
     except DuplicateKeyError:
-        raise HTTPException(status_code=400, detail="La oficina ya existe.")
+        raise HTTPException(status_code=400, detail="La oficina o el prefijo ya existen.")
     return Office(**doc)
 
 
@@ -437,10 +454,15 @@ async def update_office(
     try:
         result = await db.oficinas.update_one(
             {"id": office_id},
-            {"$set": {"nombre": nombre, "nombre_key": nombre.casefold(), "activa": body.activa}},
+            {"$set": {
+                "nombre": nombre,
+                "nombre_key": nombre.casefold(),
+                "prefijo_comprobante": body.prefijo_comprobante,
+                "activa": body.activa,
+            }},
         )
     except DuplicateKeyError:
-        raise HTTPException(status_code=400, detail="La oficina ya existe.")
+        raise HTTPException(status_code=400, detail="La oficina o el prefijo ya existen.")
     if not result.matched_count:
         raise HTTPException(status_code=404, detail="Oficina no encontrada.")
     return Office(**(await db.oficinas.find_one({"id": office_id}, {"_id": 0})))
@@ -793,14 +815,18 @@ async def preview_comprobante(
     user: dict = Depends(require_roles("Administrador", "Caja")),
 ):
     selected_office_id = await office_for_write(user, office_id)
+    office = await _office_exists(selected_office_id, active=True)
     gestion = datetime.now(timezone.utc).year
     counter_id = f"comprobante_{selected_office_id}_{gestion}"
     counter = await db.contadores.find_one({"_id": counter_id})
     siguiente_num = (counter["seq"] if counter else 0) + 1
     codigo = f"{siguiente_num:05d}"
     return {
-        "cod_comprobante": codigo, "gestion": gestion,
-        "office_id": selected_office_id, "display": f"{codigo}/{gestion}",
+        "cod_comprobante": codigo,
+        "gestion": gestion,
+        "prefijo_comprobante": office["prefijo_comprobante"],
+        "office_id": selected_office_id,
+        "display": format_receipt_display(office["prefijo_comprobante"], codigo, gestion),
     }
 
 
@@ -857,6 +883,26 @@ _PAGO_HYDRATE_PIPELINE = [
             "created_by_name": {"$arrayElemAt": ["$_cu.nombre", 0]},
             "edited_by_name": {"$arrayElemAt": ["$_eu.nombre", 0]},
             "office_nombre": {"$arrayElemAt": ["$_office.nombre", 0]},
+            "prefijo_comprobante": {
+                "$ifNull": [
+                    "$prefijo_comprobante",
+                    {"$arrayElemAt": ["$_office.prefijo_comprobante", 0]},
+                ]
+            },
+            "comprobante_display": {
+                "$concat": [
+                    {
+                        "$ifNull": [
+                            "$prefijo_comprobante",
+                            {"$arrayElemAt": ["$_office.prefijo_comprobante", 0]},
+                        ]
+                    },
+                    "-",
+                    "$cod_comprobante",
+                    " / ",
+                    {"$toString": "$gestion"},
+                ]
+            },
         }
     },
     {"$project": {"_id": 0, "_est": 0, "_tp": 0, "_cu": 0, "_eu": 0, "_office": 0}},
@@ -873,8 +919,21 @@ async def _hydrate_pago(pago: dict) -> dict:
     tipo = await db.tipos_pagos.find_one(
         {"id": pago["id_tipo_pago"], "office_id": office_id}, {"_id": 0}
     )
-    office = await db.oficinas.find_one({"id": office_id}, {"_id": 0, "nombre": 1})
+    office = await db.oficinas.find_one(
+        {"id": office_id}, {"_id": 0, "nombre": 1, "prefijo_comprobante": 1}
+    )
     pago["office_nombre"] = office["nombre"] if office else None
+    pago["prefijo_comprobante"] = (
+        pago.get("prefijo_comprobante")
+        or (office.get("prefijo_comprobante") if office else None)
+    )
+    pago["comprobante_display"] = (
+        format_receipt_display(
+            pago["prefijo_comprobante"], pago["cod_comprobante"], pago["gestion"]
+        )
+        if pago.get("prefijo_comprobante")
+        else None
+    )
     pago["estudiante_nombre"] = estudiante["nombre"] if estudiante else None
     pago["estudiante_ci"] = estudiante["ci"] if estudiante else None
     pago["estudiante_cu"] = estudiante.get("cu", "") if estudiante else ""
@@ -905,6 +964,7 @@ async def create_pago(
         raise HTTPException(status_code=400, detail="Tipo de pago no encontrado en esta oficina.")
 
     gestion = datetime.now(timezone.utc).year
+    office = await _office_exists(office_id, active=True)
 
     # atomic counter via counters collection
     contador = await db.contadores.find_one_and_update(
@@ -923,6 +983,7 @@ async def create_pago(
         "id": str(uuid.uuid4()),
         "cod_comprobante": codigo,
         "gestion": gestion,
+        "prefijo_comprobante": office["prefijo_comprobante"],
         "cantidad": float(pago.cantidad),
         "monto": monto,
         "total": total,
@@ -982,15 +1043,24 @@ async def get_pagos(
     if ql:
         extra_or = []
         escaped_q = re.escape(ql)
-        if "/" in ql:
-            try:
-                cod_part, ges_part = ql.split("/", 1)
-                extra_or.append(
-                    {"cod_comprobante": cod_part.zfill(5), "gestion": int(ges_part)}
-                )
-            except Exception:
-                pass
-        extra_or.append({"cod_comprobante": {"$regex": escaped_q, "$options": "i"}})
+        receipt_match = re.fullmatch(
+            r"(?:(?P<prefix>[A-Za-z]{3})\s*-\s*)?"
+            r"(?P<code>\d{1,5})(?:\s*/\s*(?P<year>\d{4}))?",
+            ql,
+        )
+        if receipt_match:
+            receipt_filter = {
+                "cod_comprobante": receipt_match.group("code").zfill(5)
+            }
+            if receipt_match.group("year"):
+                receipt_filter["gestion"] = int(receipt_match.group("year"))
+            if receipt_match.group("prefix"):
+                receipt_filter["prefijo_comprobante"] = receipt_match.group("prefix").upper()
+            extra_or.append(receipt_filter)
+        else:
+            extra_or.append(
+                {"cod_comprobante": {"$regex": escaped_q, "$options": "i"}}
+            )
         # Match by estudiante: look up matching estudiantes ids
         est_ids = [
             e["id"]
@@ -1240,10 +1310,50 @@ async def dashboard_stats(
 
 
 # ----------------------------- Startup seed -----------------------------
+def _new_office_prefix(nombre: str, used: set) -> str:
+    letters = re.sub(r"[^A-Z]", "", str(nombre or "").upper())
+    base = (letters + "XXX")[:3]
+    if base not in used:
+        return base
+    for candidate in itertools.product(string.ascii_uppercase, repeat=3):
+        prefix = "".join(candidate)
+        if prefix not in used:
+            return prefix
+    raise RuntimeError("No quedan prefijos de comprobante disponibles.")
+
+
+async def ensure_office_receipt_prefixes():
+    offices = await db.oficinas.find({}, {"_id": 0, "id": 1, "nombre": 1, "prefijo_comprobante": 1}) \
+        .sort([("created_at", 1), ("id", 1)]).to_list(None)
+    used = set()
+    for office in offices:
+        current = office.get("prefijo_comprobante")
+        prefix = current.strip().upper() if isinstance(current, str) else ""
+        if not re.fullmatch(r"[A-Z]{3}", prefix) or prefix in used:
+            prefix = _new_office_prefix(office.get("nombre", ""), used)
+            await db.oficinas.update_one(
+                {"id": office["id"]}, {"$set": {"prefijo_comprobante": prefix}}
+            )
+        used.add(prefix)
+        await db.pagos.update_many(
+            {
+                "office_id": office["id"],
+                "$or": [
+                    {"prefijo_comprobante": {"$exists": False}},
+                    {"prefijo_comprobante": None},
+                    {"prefijo_comprobante": ""},
+                ],
+            },
+            {"$set": {"prefijo_comprobante": prefix}},
+        )
+
+
 @app.on_event("startup")
 async def startup():
+    await ensure_office_receipt_prefixes()
     await db.oficinas.create_index("id", unique=True)
     await db.oficinas.create_index("nombre_key", unique=True)
+    await db.oficinas.create_index("prefijo_comprobante", unique=True)
     await db.usuarios.create_index("email", unique=True)
     await db.usuarios.create_index("id", unique=True)
     await db.usuarios.create_index(

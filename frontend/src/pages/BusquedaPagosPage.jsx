@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { apiClient, formatApiError, formatMoney } from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
 import { useOfficeScope } from "@/hooks/useOfficeScope";
+import { formatComprobante } from "@/lib/receipt";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -253,7 +254,7 @@ export default function BusquedaPagosPage() {
                 fecha_pago: editForm.fecha_pago,
             };
             const { data } = await apiClient.put(`/pagos/${editing.id}`, payload);
-            toast.success(`Pago ${data.cod_comprobante}/${data.gestion} actualizado`);
+            toast.success(`Pago ${formatComprobante(data)} actualizado`);
             setEditOpen(false);
             const resultado = await buscar(pagina);
             if (resultado?.items.length === 0 && pagina > 1) {
@@ -272,7 +273,7 @@ export default function BusquedaPagosPage() {
                 <div className="section-eyebrow">Consultas</div>
                 <h1 className="font-serif-display text-4xl mt-1">Búsqueda de Pagos</h1>
                 <p className="text-sm text-[color:var(--institution-muted)] mt-1">
-                    Busque por código (ej. 00001/2026), nombre de estudiante, tipo de pago, rango de fechas o usuario que registró.
+                    Busque por código (ej. MED-00001 / 2026), nombre de estudiante, tipo de pago, rango de fechas o usuario que registró.
                 </p>
             </div>
 
@@ -394,7 +395,7 @@ export default function BusquedaPagosPage() {
                         {pagos.map((p) => (
                             <TableRow key={p.id} data-testid={`pago-row-${p.id}`}>
                                 <TableCell className="font-mono-num font-medium">
-                                    {p.cod_comprobante}/{p.gestion}
+                                    {formatComprobante(p)}
                                 </TableCell>
                                 {isSuperAdmin && <TableCell>{p.office_nombre || "—"}</TableCell>}
                                 <TableCell>{p.estudiante_nombre || "—"}</TableCell>
@@ -492,7 +493,7 @@ export default function BusquedaPagosPage() {
                 <DialogContent className="rounded-sm max-w-2xl">
                     <DialogHeader>
                         <DialogTitle className="font-serif-display text-2xl">
-                            Editar pago {editing ? `${editing.cod_comprobante}/${editing.gestion}` : ""}
+                            Editar pago {editing ? formatComprobante(editing) : ""}
                         </DialogTitle>
                     </DialogHeader>
                     {editing && (

@@ -1,3 +1,5 @@
+import { formatComprobante } from "@/lib/receipt";
+
 const INSTITUTION = {
     linea1: "Universidad Mayor, Real y Pontificia de San Francisco Xavier",
     linea3: "Administración",
@@ -21,8 +23,7 @@ export function buildComprobanteHTML(pago) {
     const moneyFmt = (n) =>
         Number(n || 0).toLocaleString("es-BO", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     const generadoEn = escapeHTML(new Date().toLocaleString("es-BO"));
-    const codigo = escapeHTML(pago.cod_comprobante);
-    const gestion = escapeHTML(pago.gestion);
+    const codigo = escapeHTML(formatComprobante(pago));
     const estudianteNombre = escapeHTML(pago.estudiante_nombre);
     const estudianteCi = escapeHTML(pago.estudiante_ci);
     const estudianteCu = escapeHTML(pago.estudiante_cu || "-");
@@ -34,7 +35,7 @@ export function buildComprobanteHTML(pago) {
 <html lang="es">
 <head>
 <meta charset="UTF-8" />
-<title>Comprobante ${codigo}/${gestion} — ${oficina}</title>
+<title>Comprobante ${codigo} — ${oficina}</title>
 <style>
   @import url("https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap");
   * { box-sizing: border-box; }
@@ -89,7 +90,7 @@ export function buildComprobanteHTML(pago) {
         </div>
         <div class="cod-box">
           <div class="cod-label">Comprobante N°</div>
-          <div class="cod-num">${codigo}/${gestion}</div>
+          <div class="cod-num">${codigo}</div>
         </div>
       </div>
 

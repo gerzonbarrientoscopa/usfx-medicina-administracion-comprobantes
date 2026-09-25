@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { apiClient, formatApiError, formatMoney } from "@/lib/api";
+import { formatComprobante } from "@/lib/receipt";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -158,7 +159,7 @@ export default function ReportesPage() {
         if (modo === "todos") {
             // Columns: Cod, Estudiante, Fecha, Tipo, Total Válido, Total Anulado
             const rows = data.pagos.map((pago) => [
-                `${pago.cod_comprobante}/${pago.gestion}`,
+                formatComprobante(pago),
                 pago.estudiante_nombre || "",
                 formatDate(pago.fecha_pago),
                 pago.tipo_pago_nombre || "",
@@ -189,7 +190,7 @@ export default function ReportesPage() {
         } else {
             const filtered = data.pagos.filter((p) => (modo === "validos" ? !p.anulado : p.anulado));
             const rows = filtered.map((pago) => [
-                `${pago.cod_comprobante}/${pago.gestion}`,
+                formatComprobante(pago),
                 pago.estudiante_nombre || "",
                 formatDate(pago.fecha_pago),
                 pago.tipo_pago_nombre || "",
@@ -230,7 +231,7 @@ export default function ReportesPage() {
         let rows = [];
         if (modo === "todos") {
             rows = data.pagos.map((pago) => ({
-                Comprobante: `${pago.cod_comprobante}/${pago.gestion}`,
+                Comprobante: formatComprobante(pago),
                 Estudiante: pago.estudiante_nombre || "",
                 Fecha: formatDate(pago.fecha_pago),
                 Tipo: pago.tipo_pago_nombre || "",
@@ -245,7 +246,7 @@ export default function ReportesPage() {
         } else {
             const filtered = data.pagos.filter((p) => (modo === "validos" ? !p.anulado : p.anulado));
             rows = filtered.map((p) => ({
-                Comprobante: `${p.cod_comprobante}/${p.gestion}`,
+                Comprobante: formatComprobante(p),
                 Estudiante: p.estudiante_nombre || "",
                 Fecha: formatDate(p.fecha_pago),
                 Tipo: p.tipo_pago_nombre || "",
@@ -459,7 +460,7 @@ export default function ReportesPage() {
                                     <TableBody>
                                         {data.pagos.map((pago) => (
                                             <TableRow key={pago.id}>
-                                                <TableCell className="font-mono-num">{pago.cod_comprobante}/{pago.gestion}</TableCell>
+                                                <TableCell className="font-mono-num">{formatComprobante(pago)}</TableCell>
                                                 <TableCell>{pago.estudiante_nombre}</TableCell>
                                                  <TableCell className="font-mono-num">{formatDate(pago.fecha_pago)}</TableCell>
                                                 <TableCell>{pago.tipo_pago_nombre}</TableCell>

@@ -29,6 +29,7 @@ import { Check, ChevronsUpDown, Plus, Printer, FileCheck2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { printComprobante } from "@/components/ComprobantePrint";
 import { useOfficeScope } from "@/hooks/useOfficeScope";
+import { formatComprobante } from "@/lib/receipt";
 import {
     Select, SelectTrigger, SelectValue, SelectContent, SelectItem,
 } from "@/components/ui/select";
@@ -113,7 +114,7 @@ export default function RegistroPagoPage() {
                 office_id: officeId,
             });
             setPago(data);            
-            toast.success(`Comprobante generado: ${data.cod_comprobante}/${data.gestion}`);
+            toast.success(`Comprobante generado: ${formatComprobante(data)}`);
         } catch (e) {
             toast.error(formatApiError(e));
         }
@@ -143,7 +144,7 @@ export default function RegistroPagoPage() {
                         office_id: officeId,
                     })
                 ).data;
-            toast.success(`Pago registrado: ${data.cod_comprobante}/${data.gestion}`);
+            toast.success(`Pago registrado: ${formatComprobante(data)}`);
             printComprobante(data);
             // reset
             setSelectedEst(null);
@@ -382,7 +383,7 @@ export default function RegistroPagoPage() {
                                 style={{ color: "var(--institution-burgundy)" }}
                                 data-testid="comprobante-display"
                             >                                
-                                {pago ? `${pago.cod_comprobante}/${pago.gestion}` : "—"}
+                                {pago ? formatComprobante(pago) : "—"}
                             </div>
                         </div>
 

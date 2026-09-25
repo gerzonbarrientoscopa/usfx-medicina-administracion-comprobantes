@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useOfficeScope } from "@/hooks/useOfficeScope";
+import { formatComprobante } from "@/lib/receipt";
 import {
     Table,
     TableBody,
@@ -74,7 +75,7 @@ export default function AnularPagoPage() {
     const anular = async (pago) => {
         try {
             await apiClient.post(`/pagos/${pago.id}/anular`);
-            toast.success(`Comprobante ${pago.cod_comprobante}/${pago.gestion} anulado.`);
+            toast.success(`Comprobante ${formatComprobante(pago)} anulado.`);
             setPagos((prev) => prev.map((x) => (x.id === pago.id ? { ...x, anulado: true } : x)));
         } catch (e) {
             toast.error(formatApiError(e));
@@ -162,7 +163,7 @@ export default function AnularPagoPage() {
                         {pagos.map((pago) => (
                             <TableRow key={pago.id}>
                                 <TableCell className="font-mono-num font-medium">
-                                    {pago.cod_comprobante}/{pago.gestion}
+                                    {formatComprobante(pago)}
                                 </TableCell>
                                 {isSuperAdmin && <TableCell>{pago.office_nombre || officeName}</TableCell>}
                                 <TableCell>{pago.estudiante_nombre || "—"}</TableCell>
@@ -197,7 +198,7 @@ export default function AnularPagoPage() {
                                                     Confirmar anulación
                                                 </AlertDialogTitle>
                                                 <AlertDialogDescription>
-                                                     El comprobante <strong>{pago.cod_comprobante}/{pago.gestion}</strong> de{" "}
+                                                     El comprobante <strong>{formatComprobante(pago)}</strong> de{" "}
                                                     <strong>{pago.estudiante_nombre}</strong> por <strong>Bs. {formatMoney(pago.total)}</strong> quedará anulado y no podrá revertirse.
                                                 </AlertDialogDescription>
                                             </AlertDialogHeader>

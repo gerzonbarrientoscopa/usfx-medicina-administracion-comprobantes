@@ -23,7 +23,7 @@ import {
 } from "@/components/ui/table";
 import { Plus, Pencil, Trash2, ChevronLeft, ChevronRight } from "lucide-react";
 
-const EMPTY = { nombre: "", activa: true };
+const EMPTY = { nombre: "", prefijo_comprobante: "", activa: true };
 const FILAS_POR_PAGINA = 20;
 
 export default function OficinasPage() {
@@ -90,7 +90,11 @@ export default function OficinasPage() {
 
   const handleEdit = (oficina) => {
     setEditingOficina(oficina);
-    setFormData({ nombre: oficina.nombre, activa: Boolean(oficina.activa) });
+    setFormData({
+      nombre: oficina.nombre,
+      prefijo_comprobante: oficina.prefijo_comprobante || "",
+      activa: Boolean(oficina.activa),
+    });
     setOpen(true);
   };
 
@@ -153,6 +157,44 @@ export default function OficinasPage() {
                   className="rounded-sm"
                 />
               </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs uppercase tracking-widest text-[color:var(--institution-muted)]">
+                  Prefijo del comprobante (3 letras)
+                </Label>
+                <Input
+                  value={formData.prefijo_comprobante}
+                  onChange={(event) =>
+                    setFormData({
+                      ...formData,
+                      prefijo_comprobante: event.target.value
+                        .toUpperCase()
+                        .replace(/[^A-Z]/g, "")
+                        .slice(0, 3),
+                    })
+                  }
+                  placeholder="MED"
+                  maxLength={3}
+                  minLength={3}
+                  required
+                  autoCapitalize="characters"
+                  data-testid="oficina-prefix-input"
+                  className="rounded-sm font-mono uppercase"
+                />
+                <p className="text-xs text-[color:var(--institution-muted)]">
+                  Debe ser único. Se mostrará, por ejemplo, como MED-00001 / 2026.
+                </p>
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs uppercase tracking-widest text-[color:var(--institution-muted)]">
+                  Código UUID de la oficina
+                </Label>
+                <Input
+                  value={editingOficina?.id || "Se genera automáticamente al crear"}
+                  readOnly
+                  className="rounded-sm font-mono text-xs"
+                  data-testid="oficina-uuid"
+                />
+              </div>
               <div className="flex items-center justify-between">
                 <Label
                   htmlFor="oficina-activa"
@@ -202,6 +244,12 @@ export default function OficinasPage() {
                 Nombre
               </TableHead>
               <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">
+                Código UUID
+              </TableHead>
+              <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">
+                Prefijo
+              </TableHead>
+              <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">
                 Estado
               </TableHead>
               <TableHead className="text-right uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">
@@ -213,6 +261,8 @@ export default function OficinasPage() {
             {oficinas.map((oficina) => (
               <TableRow key={oficina.id} data-testid={`oficina-row-${oficina.id}`}>
                 <TableCell className="font-medium">{oficina.nombre}</TableCell>
+                <TableCell className="font-mono text-[10px] break-all">{oficina.id}</TableCell>
+                <TableCell className="font-mono font-semibold">{oficina.prefijo_comprobante}</TableCell>
                 <TableCell>
                   <span
                     className="pill"
@@ -249,7 +299,7 @@ export default function OficinasPage() {
             {oficinas.length === 0 && (
               <TableRow>
                 <TableCell
-                  colSpan={3}
+                  colSpan={5}
                   className="text-center py-12 text-sm text-[color:var(--institution-muted)]"
                 >
                   No hay oficinas registradas.
