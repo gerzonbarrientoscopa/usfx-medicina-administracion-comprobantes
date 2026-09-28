@@ -47,6 +47,16 @@ import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { printComprobante } from "@/components/ComprobantePrint";
 
+const pagoItems = (pago) => {
+    if (Array.isArray(pago.items) && pago.items.length) return pago.items;
+    if (!pago.id_tipo_pago && !pago.tipo_pago_nombre) return [];
+    return [{
+        tipo_pago_nombre: pago.tipo_pago_nombre || "",
+        cantidad: pago.cantidad,
+        monto: pago.monto,
+    }];
+};
+
 export default function BusquedaPagosPage() {
     const { user } = useAuth();
     const {
@@ -399,9 +409,19 @@ export default function BusquedaPagosPage() {
                                 </TableCell>
                                 {isSuperAdmin && <TableCell>{p.office_nombre || "—"}</TableCell>}
                                 <TableCell>{p.estudiante_nombre || "—"}</TableCell>
-                                <TableCell>{p.tipo_pago_nombre || "—"}</TableCell>
-                                <TableCell className="text-right font-mono-num">{p.cantidad}</TableCell>
-                                <TableCell className="text-right font-mono-num">{formatMoney(p.monto)}</TableCell>
+                                <TableCell>
+                                    {pagoItems(p).length ? pagoItems(p).map((item, index) => (
+                                        <div key={`${item.id_tipo_pago || item.tipo_pago_nombre}-${index}`}>
+                                            {item.tipo_pago_nombre || "—"}
+                                        </div>
+                                    )) : "—"}
+                                </TableCell>
+                                <TableCell className="text-right font-mono-num">
+                                    {pagoItems(p).map((item, index) => <div key={index}>{item.cantidad}</div>)}
+                                </TableCell>
+                                <TableCell className="text-right font-mono-num">
+                                    {pagoItems(p).map((item, index) => <div key={index}>{formatMoney(item.monto)}</div>)}
+                                </TableCell>
                                 <TableCell className="text-right font-mono-num font-semibold">{formatMoney(p.total)}</TableCell>
                                 <TableCell className="font-mono-num">{p.fecha_pago}</TableCell>
                                 <TableCell className="text-xs text-[color:var(--institution-muted)]">
@@ -418,7 +438,7 @@ export default function BusquedaPagosPage() {
                                     )}
                                 </TableCell>
                                 <TableCell className="text-right whitespace-nowrap">
-                                    {canEdit && !p.anulado && (
+                                    {canEdit && !p.anulado && pagoItems(p).length <= 1 && (
                                         <Button
                                             size="sm"
                                             variant="ghost"

@@ -56,6 +56,27 @@ const formatDate = (value) => {
     return `${day}/${month}/${year}`;
 };
 
+const pagoItems = (pago) => {
+    if (Array.isArray(pago.items) && pago.items.length) return pago.items;
+    if (!pago.id_tipo_pago && !pago.tipo_pago_nombre) return [];
+    return [{
+        id_tipo_pago: pago.id_tipo_pago,
+        tipo_pago_nombre: pago.tipo_pago_nombre || "",
+        cantidad: pago.cantidad,
+        monto: pago.monto,
+        total: pago.total,
+    }];
+};
+
+const groupedPdfCell = (content, rowSpan) => ({
+    content,
+    rowSpan,
+    styles: { valign: "middle" },
+});
+
+const reportConcept = (item) =>
+    `${item.tipo_pago_nombre || "Concepto"}\nCant.: ${item.cantidad} · Bs. ${formatMoney(item.total)}`;
+
 const formatPeriodo = (reporte) => {
     if (!reporte) return "";
     if (reporte.periodo === "diario") return formatDate(reporte.desde);
@@ -157,19 +178,27 @@ export default function ReportesPage() {
         doc.text(`Periodo: ${formatPeriodo(data)}`, W / 2, 114, { align: "center" });
 
         if (modo === "todos") {
-            // Columns: Cod, Estudiante, Fecha, Tipo, Total Válido, Total Anulado
-            const rows = data.pagos.map((pago) => [
-                formatComprobante(pago),
-                pago.estudiante_nombre || "",
-                formatDate(pago.fecha_pago),
-                pago.tipo_pago_nombre || "",
-                pago.office_nombre || reportOfficeName || "",
-                pago.anulado ? "" : formatMoney(pago.total),
-                pago.anulado ? formatMoney(pago.total) : "",
-            ]);
+            const rows = data.pagos.flatMap((pago) => {
+                const items = pagoItems(pago);
+                const group = items.length ? items : [null];
+                return group.map((item, index) => {
+                    const first = index === 0;
+                    const span = (value) =>
+                        first ? groupedPdfCell(value, group.length) : "";
+                    return [
+                        span(formatComprobante(pago)),
+                        span(pago.estudiante_nombre || ""),
+                        span(formatDate(pago.fecha_pago)),
+                        item ? reportConcept(item) : "Sin conceptos",
+                        span(pago.office_nombre || reportOfficeName || ""),
+                        span(pago.anulado ? "" : formatMoney(pago.total)),
+                        span(pago.anulado ? formatMoney(pago.total) : ""),
+                    ];
+                });
+            });
             autoTable(doc, {
                 startY: 134,
-                head: [["Comprobante", "Estudiante", "Fecha", "Tipo", "Oficina", "Válido (Bs.)", "Anulado (Bs.)"]],
+                head: [["Comprobante", "Estudiante", "Fecha", "Concepto", "Oficina", "Válido (Bs.)", "Anulado (Bs.)"]],
                 body: rows,
                 styles: { fontSize: 9, cellPadding: 5 },
                 headStyles: { fillColor: [122, 32, 53], textColor: 255 },
@@ -189,18 +218,27 @@ export default function ReportesPage() {
             });
         } else {
             const filtered = data.pagos.filter((p) => (modo === "validos" ? !p.anulado : p.anulado));
-            const rows = filtered.map((pago) => [
-                formatComprobante(pago),
-                pago.estudiante_nombre || "",
-                formatDate(pago.fecha_pago),
-                pago.tipo_pago_nombre || "",
-                pago.office_nombre || reportOfficeName || "",
-                pago.cantidad,
-                formatMoney(pago.total),
-            ]);
+            const rows = filtered.flatMap((pago) => {
+                const items = pagoItems(pago);
+                const group = items.length ? items : [null];
+                return group.map((item, index) => {
+                    const first = index === 0;
+                    const span = (value) =>
+                        first ? groupedPdfCell(value, group.length) : "";
+                    return [
+                        span(formatComprobante(pago)),
+                        span(pago.estudiante_nombre || ""),
+                        span(formatDate(pago.fecha_pago)),
+                        item ? reportConcept(item) : "Sin conceptos",
+                        span(pago.office_nombre || reportOfficeName || ""),
+                        item?.cantidad ?? "",
+                        span(formatMoney(pago.total)),
+                    ];
+                });
+            });
             autoTable(doc, {
                 startY: 134,
-                head: [["Comprobante", "Estudiante", "Fecha", "Tipo", "Oficina", "Cant.", "Total (Bs.)"]],
+                head: [["Comprobante", "Estudiante", "Fecha", "Concepto", "Oficina", "Cant.", "Total (Bs.)"]],
                 body: rows,
                 styles: { fontSize: 9, cellPadding: 5 },
                 headStyles: { fillColor: [122, 32, 53], textColor: 255 },
@@ -230,30 +268,41 @@ export default function ReportesPage() {
         if (!data) return;
         let rows = [];
         if (modo === "todos") {
-            rows = data.pagos.map((pago) => ({
-                Comprobante: formatComprobante(pago),
-                Estudiante: pago.estudiante_nombre || "",
-                Fecha: formatDate(pago.fecha_pago),
-                Tipo: pago.tipo_pago_nombre || "",
-                Oficina: pago.office_nombre || reportOfficeName || "",
-                Valido: pago.anulado ? 0 : pago.total,
-                Anulado: pago.anulado ? pago.total : 0,
-            }));
+            rows = data.pagos.flatMap((pago) => {
+                const items = pagoItems(pago);
+                const group = items.length ? items : [null];
+                return group.map((item, index) => ({
+                    Comprobante: index === 0 ? formatComprobante(pago) : "",
+                    Estudiante: index === 0 ? pago.estudiante_nombre || "" : "",
+                    Fecha: index === 0 ? formatDate(pago.fecha_pago) : "",
+                    Concepto: item?.tipo_pago_nombre || "Sin conceptos",
+                    Cantidad: item?.cantidad ?? "",
+                    Importe_concepto: item?.total ?? "",
+                    Oficina: index === 0 ? pago.office_nombre || reportOfficeName || "" : "",
+                    Valido: index === 0 && !pago.anulado ? pago.total : "",
+                    Anulado: index === 0 && pago.anulado ? pago.total : "",
+                }));
+            });
             rows.push({});
             rows.push({ Comprobante: "TOTAL VÁLIDOS", Valido: data.totales.validos });
             rows.push({ Comprobante: "TOTAL ANULADOS", Anulado: data.totales.anulados });
             rows.push({ Comprobante: "DIFERENCIA", Valido: data.totales.diferencia });
         } else {
             const filtered = data.pagos.filter((p) => (modo === "validos" ? !p.anulado : p.anulado));
-            rows = filtered.map((p) => ({
-                Comprobante: formatComprobante(p),
-                Estudiante: p.estudiante_nombre || "",
-                Fecha: formatDate(p.fecha_pago),
-                Tipo: p.tipo_pago_nombre || "",
-                Oficina: p.office_nombre || reportOfficeName || "",
-                Cantidad: p.cantidad,
-                Total: p.total,
-            }));
+            rows = filtered.flatMap((pago) => {
+                const items = pagoItems(pago);
+                const group = items.length ? items : [null];
+                return group.map((item, index) => ({
+                    Comprobante: index === 0 ? formatComprobante(pago) : "",
+                    Estudiante: index === 0 ? pago.estudiante_nombre || "" : "",
+                    Fecha: index === 0 ? formatDate(pago.fecha_pago) : "",
+                    Concepto: item?.tipo_pago_nombre || "Sin conceptos",
+                    Oficina: index === 0 ? pago.office_nombre || reportOfficeName || "" : "",
+                    Cantidad: item?.cantidad ?? "",
+                    Importe_concepto: item?.total ?? "",
+                    Total_comprobante: index === 0 ? pago.total : "",
+                }));
+            });
             rows.push({});
             rows.push({
                 Comprobante: "TOTAL",
@@ -451,24 +500,64 @@ export default function ReportesPage() {
                                             <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Comprobante</TableHead>
                                             <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Estudiante</TableHead>
                                             <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Fecha</TableHead>
-                                            <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Tipo</TableHead>
+                                            <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Concepto</TableHead>
                                             <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Oficina</TableHead>
                                             <TableHead className="text-right uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Válido (Bs.)</TableHead>
                                             <TableHead className="text-right uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Anulado (Bs.)</TableHead>
                                         </TableRow>
                                     </TableHeader>
                                     <TableBody>
-                                        {data.pagos.map((pago) => (
-                                            <TableRow key={pago.id}>
-                                                <TableCell className="font-mono-num">{formatComprobante(pago)}</TableCell>
-                                                <TableCell>{pago.estudiante_nombre}</TableCell>
-                                                 <TableCell className="font-mono-num">{formatDate(pago.fecha_pago)}</TableCell>
-                                                <TableCell>{pago.tipo_pago_nombre}</TableCell>
-                                                <TableCell>{pago.office_nombre || reportOfficeName}</TableCell>
-                                                <TableCell className="text-right font-mono-num">{pago.anulado ? "—" : formatMoney(pago.total)}</TableCell>
-                                                <TableCell className="text-right font-mono-num">{pago.anulado ? formatMoney(pago.total) : "—"}</TableCell>
-                                            </TableRow>
-                                        ))}
+                                        {data.pagos.flatMap((pago) => {
+                                            const items = pagoItems(pago);
+                                            const group = items.length ? items : [null];
+                                            return group.map((item, index) => {
+                                                const first = index === 0;
+                                                return (
+                                                    <TableRow key={`${pago.id}-${item?.id || index}`}>
+                                                        {first && (
+                                                            <TableCell rowSpan={group.length} className="font-mono-num align-middle">
+                                                                {formatComprobante(pago)}
+                                                            </TableCell>
+                                                        )}
+                                                        {first && (
+                                                            <TableCell rowSpan={group.length} className="align-middle">
+                                                                {pago.estudiante_nombre}
+                                                            </TableCell>
+                                                        )}
+                                                        {first && (
+                                                            <TableCell rowSpan={group.length} className="font-mono-num align-middle">
+                                                                {formatDate(pago.fecha_pago)}
+                                                            </TableCell>
+                                                        )}
+                                                        <TableCell>
+                                                            {item ? (
+                                                                <>
+                                                                    <div>{item.tipo_pago_nombre || "Concepto"}</div>
+                                                                    <div className="text-xs text-[color:var(--institution-muted)]">
+                                                                        {item.cantidad} × Bs. {formatMoney(item.monto)} = Bs. {formatMoney(item.total)}
+                                                                    </div>
+                                                                </>
+                                                            ) : "Sin conceptos"}
+                                                        </TableCell>
+                                                        {first && (
+                                                            <TableCell rowSpan={group.length} className="align-middle">
+                                                                {pago.office_nombre || reportOfficeName}
+                                                            </TableCell>
+                                                        )}
+                                                        {first && (
+                                                            <TableCell rowSpan={group.length} className="text-right font-mono-num align-middle">
+                                                                {pago.anulado ? "—" : formatMoney(pago.total)}
+                                                            </TableCell>
+                                                        )}
+                                                        {first && (
+                                                            <TableCell rowSpan={group.length} className="text-right font-mono-num align-middle">
+                                                                {pago.anulado ? formatMoney(pago.total) : "—"}
+                                                            </TableCell>
+                                                        )}
+                                                    </TableRow>
+                                                );
+                                            });
+                                        })}
                                         {data.pagos.length > 0 && (
                                             <>
                                                 <TableRow style={{ backgroundColor: "var(--institution-cream)" }}>

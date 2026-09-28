@@ -182,22 +182,39 @@ class PaginacionTiposPagos(BaseModel):
 
 class PagoBase(BaseModel):
     id_estudiante: str
-    id_tipo_pago: str
-    cantidad: float = Field(gt=0)
     fecha_pago: str  # YYYY-MM-DD
     office_id: Optional[str] = None
     office_nombre: Optional[str] = None
+    # Optional for older clients that still submit a single concept at creation.
+    id_tipo_pago: Optional[str] = None
+    cantidad: Optional[float] = Field(default=None, gt=0)
 
 class PagoCreate(PagoBase):
     pass
 
 
+class PagoItemCreate(BaseModel):
+    id_tipo_pago: str
+    cantidad: float = Field(gt=0)
+
+
+class PagoItem(BaseModel):
+    id: Optional[str] = None
+    id_tipo_pago: str
+    tipo_pago_nombre: Optional[str] = None
+    cantidad: float
+    monto: float
+    total: float
+
+
 class Pago(PagoBase):
     id: str
     cod_comprobante: str
-    gestion: int    
-    monto: float
-    total: float    
+    gestion: int
+    monto: float = 0
+    total: float = 0
+    items: List[PagoItem] = Field(default_factory=list)
+    estado: Literal["borrador", "emitido"] = "emitido"
     prefijo_comprobante: Optional[str] = None
     comprobante_display: Optional[str] = None
     suboficina: Optional[str] = None
@@ -811,7 +828,15 @@ async def delete_tipo_pago(
     target = await db.tipos_pagos.find_one({"id": tipo_id, **scope}, {"_id": 0})
     if not target:
         raise HTTPException(status_code=404, detail="Tipo de pago no encontrado.")
-    if await db.pagos.find_one({"id_tipo_pago": tipo_id, "office_id": target["office_id"]}):
+    if await db.pagos.find_one(
+        {
+            "office_id": target["office_id"],
+            "$or": [
+                {"id_tipo_pago": tipo_id},
+                {"items.id_tipo_pago": tipo_id},
+            ],
+        }
+    ):
         raise HTTPException(status_code=400, detail="No se puede eliminar: tiene pagos registrados.")
     await db.tipos_pagos.delete_one({"id": tipo_id, **scope})
     return {"ok": True}
@@ -888,11 +913,30 @@ _PAGO_HYDRATE_PIPELINE = [
             "estudiante_nombre": {"$arrayElemAt": ["$_est.nombre", 0]},
             "estudiante_ci": {"$arrayElemAt": ["$_est.ci", 0]},
             "estudiante_cu": {"$ifNull": [{"$arrayElemAt": ["$_est.cu", 0]}, ""]},
-            "tipo_pago_nombre": {"$arrayElemAt": ["$_tp.nombre", 0]},
             "created_by_name": {"$arrayElemAt": ["$_cu.nombre", 0]},
             "edited_by_name": {"$arrayElemAt": ["$_eu.nombre", 0]},
             "office_nombre": {"$arrayElemAt": ["$_office.nombre", 0]},
             "suboficina": {"$arrayElemAt": ["$_office.suboficina", 0]},
+            "items": {
+                "$ifNull": [
+                    "$items",
+                    {
+                        "$cond": [
+                            {"$ifNull": ["$id_tipo_pago", False]},
+                            [
+                                {
+                                    "id_tipo_pago": "$id_tipo_pago",
+                                    "tipo_pago_nombre": {"$arrayElemAt": ["$_tp.nombre", 0]},
+                                    "cantidad": "$cantidad",
+                                    "monto": "$monto",
+                                    "total": "$total",
+                                }
+                            ],
+                            [],
+                        ]
+                    },
+                ]
+            },
             "prefijo_comprobante": {
                 "$ifNull": [
                     "$prefijo_comprobante",
@@ -915,19 +959,69 @@ _PAGO_HYDRATE_PIPELINE = [
             },
         }
     },
+    {
+        "$addFields": {
+            "tipo_pago_nombre": {
+                "$cond": [
+                    {"$eq": [{"$size": "$items"}, 1]},
+                    {"$arrayElemAt": ["$items.tipo_pago_nombre", 0]},
+                    {
+                        "$cond": [
+                            {"$gt": [{"$size": "$items"}, 1]},
+                            "Varios conceptos",
+                            None,
+                        ]
+                    },
+                ]
+            },
+            "id_tipo_pago": {"$arrayElemAt": ["$items.id_tipo_pago", 0]},
+            "cantidad": {
+                "$cond": [
+                    {"$eq": [{"$size": "$items"}, 1]},
+                    {"$arrayElemAt": ["$items.cantidad", 0]},
+                    None,
+                ]
+            },
+            "monto": {
+                "$cond": [
+                    {"$eq": [{"$size": "$items"}, 1]},
+                    {"$arrayElemAt": ["$items.monto", 0]},
+                    0,
+                ]
+            },
+        }
+    },
     {"$project": {"_id": 0, "_est": 0, "_tp": 0, "_cu": 0, "_eu": 0, "_office": 0}},
 ]
 
 
+async def _pago_item_snapshot(
+    office_id: str, id_tipo_pago: str, cantidad: float
+) -> dict:
+    tipo = await db.tipos_pagos.find_one(
+        {"id": id_tipo_pago, "office_id": office_id}, {"_id": 0}
+    )
+    if not tipo:
+        raise HTTPException(
+            status_code=400, detail="Tipo de pago no encontrado en esta oficina."
+        )
+    monto = float(tipo["monto"])
+    cantidad = float(cantidad)
+    return {
+        "id": str(uuid.uuid4()),
+        "id_tipo_pago": id_tipo_pago,
+        "tipo_pago_nombre": tipo["nombre"],
+        "cantidad": cantidad,
+        "monto": monto,
+        "total": monto * cantidad,
+    }
+
+
 async def _hydrate_pago(pago: dict) -> dict:
-    """Single-doc hydration — used by POST/PUT responses where only one
-    pago is returned. List endpoints use the aggregation pipeline instead."""
+    """Hydrate a receipt and normalize legacy one-item records for the UI."""
     office_id = pago["office_id"]
     estudiante = await db.estudiantes.find_one(
         {"id": pago["id_estudiante"], "office_id": office_id}, {"_id": 0}
-    )
-    tipo = await db.tipos_pagos.find_one(
-        {"id": pago["id_tipo_pago"], "office_id": office_id}, {"_id": 0}
     )
     office = await db.oficinas.find_one(
         {"id": office_id},
@@ -949,7 +1043,69 @@ async def _hydrate_pago(pago: dict) -> dict:
     pago["estudiante_nombre"] = estudiante["nombre"] if estudiante else None
     pago["estudiante_ci"] = estudiante["ci"] if estudiante else None
     pago["estudiante_cu"] = estudiante.get("cu", "") if estudiante else ""
-    pago["tipo_pago_nombre"] = tipo["nombre"] if tipo else None
+
+    # Old receipts have a single concept on the receipt document itself.
+    items = pago.get("items")
+    if items is None:
+        items = []
+        if pago.get("id_tipo_pago"):
+            tipo = await db.tipos_pagos.find_one(
+                {"id": pago["id_tipo_pago"], "office_id": office_id}, {"_id": 0}
+            )
+            cantidad = float(pago.get("cantidad") or 0)
+            monto = float(pago.get("monto") or 0)
+            items.append(
+                {
+                    "id_tipo_pago": pago["id_tipo_pago"],
+                    "tipo_pago_nombre": tipo["nombre"] if tipo else None,
+                    "cantidad": cantidad,
+                    "monto": monto,
+                    "total": float(pago.get("total") or monto * cantidad),
+                }
+            )
+
+    normalized_items = []
+    for source_item in items:
+        item = dict(source_item)
+        if not item.get("tipo_pago_nombre"):
+            tipo = await db.tipos_pagos.find_one(
+                {"id": item.get("id_tipo_pago"), "office_id": office_id},
+                {"_id": 0},
+            )
+            item["tipo_pago_nombre"] = tipo["nombre"] if tipo else None
+        item["cantidad"] = float(item.get("cantidad") or 0)
+        item["monto"] = float(item.get("monto") or 0)
+        item["total"] = float(
+            item.get("total")
+            if item.get("total") is not None
+            else item["cantidad"] * item["monto"]
+        )
+        normalized_items.append(item)
+
+    pago["items"] = normalized_items
+    pago["estado"] = pago.get("estado", "emitido")
+    if normalized_items:
+        pago["total"] = sum(item["total"] for item in normalized_items)
+    else:
+        pago["total"] = float(pago.get("total") or 0)
+
+    if len(normalized_items) == 1:
+        first = normalized_items[0]
+        pago["id_tipo_pago"] = first["id_tipo_pago"]
+        pago["tipo_pago_nombre"] = first.get("tipo_pago_nombre")
+        pago["cantidad"] = first["cantidad"]
+        pago["monto"] = first["monto"]
+    elif len(normalized_items) > 1:
+        pago["id_tipo_pago"] = None
+        pago["tipo_pago_nombre"] = "Varios conceptos"
+        pago["cantidad"] = None
+        pago["monto"] = 0
+    else:
+        pago["id_tipo_pago"] = None
+        pago["tipo_pago_nombre"] = None
+        pago["cantidad"] = None
+        pago["monto"] = 0
+
     if pago.get("created_by"):
         usuario = await db.usuarios.find_one({"id": pago["created_by"]}, {"_id": 0, "nombre": 1})
         pago["created_by_name"] = usuario["nombre"] if usuario else None
@@ -969,11 +1125,15 @@ async def create_pago(
     )
     if not estudiante:
         raise HTTPException(status_code=400, detail="Estudiante no encontrado en esta oficina.")
-    tipo = await db.tipos_pagos.find_one(
-        {"id": pago.id_tipo_pago, "office_id": office_id}, {"_id": 0}
-    )
-    if not tipo:
-        raise HTTPException(status_code=400, detail="Tipo de pago no encontrado en esta oficina.")
+    items = []
+    estado = "borrador"
+    if pago.id_tipo_pago:
+        if pago.cantidad is None:
+            raise HTTPException(status_code=400, detail="Indique la cantidad del concepto.")
+        items.append(
+            await _pago_item_snapshot(office_id, pago.id_tipo_pago, pago.cantidad)
+        )
+        estado = "emitido"
 
     gestion = datetime.now(timezone.utc).year
     office = await _office_exists(office_id, active=True)
@@ -988,31 +1148,135 @@ async def create_pago(
     seq = contador["seq"]
     codigo = f"{seq:05d}"
 
-    monto = float(tipo["monto"])
-    total = monto * float(pago.cantidad)
-
     doc = {
         "id": str(uuid.uuid4()),
         "cod_comprobante": codigo,
         "gestion": gestion,
         "prefijo_comprobante": office["prefijo_comprobante"],
-        "cantidad": float(pago.cantidad),
-        "monto": monto,
-        "total": total,
+        "items": items,
+        "total": sum(item["total"] for item in items),
+        "estado": estado,
         "fecha_pago": pago.fecha_pago,
         "office_id": office_id,
         "id_estudiante": pago.id_estudiante,
-        "id_tipo_pago": pago.id_tipo_pago,
         "anulado": False,
         "anulado_at": None,
         "anulado_by": None,
         "created_at": iso(datetime.now(timezone.utc)),
         "created_by": usuario["id"],
     }
+    # Keep the original fields for clients and documents that still expect
+    # a single concept per receipt.
+    if items:
+        doc.update(
+            {
+                "id_tipo_pago": items[0]["id_tipo_pago"],
+                "cantidad": items[0]["cantidad"],
+                "monto": items[0]["monto"],
+            }
+        )
     await db.pagos.insert_one(doc)
     doc.pop("_id", None)
     doc = await _hydrate_pago(doc)
     return Pago(**doc)
+
+
+@api.post("/pagos/{pago_id}/items", response_model=Pago)
+async def add_pago_item(
+    pago_id: str,
+    body: PagoItemCreate,
+    user: dict = Depends(require_roles("Administrador", "Caja")),
+):
+    scope = await office_scope(user)
+    pago = await db.pagos.find_one({"id": pago_id, **scope}, {"_id": 0})
+    if not pago:
+        raise HTTPException(status_code=404, detail="Comprobante no encontrado.")
+    if pago.get("anulado") or pago.get("estado") != "borrador":
+        raise HTTPException(
+            status_code=400,
+            detail="Solo se pueden adicionar conceptos a un comprobante en borrador.",
+        )
+
+    item = await _pago_item_snapshot(
+        pago["office_id"], body.id_tipo_pago, body.cantidad
+    )
+    now = iso(datetime.now(timezone.utc))
+    update = {
+        "$push": {"items": item},
+        "$inc": {"total": item["total"]},
+        "$set": {"edited_at": now, "edited_by": user["id"]},
+    }
+    if not pago.get("items"):
+        update["$set"].update(
+            {
+                "id_tipo_pago": item["id_tipo_pago"],
+                "cantidad": item["cantidad"],
+                "monto": item["monto"],
+            }
+        )
+    result = await db.pagos.update_one(
+        {"id": pago_id, **scope, "estado": "borrador", "anulado": {"$ne": True}},
+        update,
+    )
+    if not result.modified_count:
+        raise HTTPException(status_code=409, detail="El comprobante ya no está en borrador.")
+    updated = await db.pagos.find_one({"id": pago_id}, {"_id": 0})
+    return Pago(**await _hydrate_pago(updated))
+
+
+@api.post("/pagos/{pago_id}/finalizar", response_model=Pago)
+async def finalizar_pago(
+    pago_id: str, user: dict = Depends(require_roles("Administrador", "Caja"))
+):
+    scope = await office_scope(user)
+    pago = await db.pagos.find_one({"id": pago_id, **scope}, {"_id": 0})
+    if not pago:
+        raise HTTPException(status_code=404, detail="Comprobante no encontrado.")
+    if pago.get("anulado"):
+        raise HTTPException(status_code=400, detail="El comprobante está anulado.")
+    if pago.get("estado") != "borrador":
+        raise HTTPException(status_code=400, detail="El comprobante ya fue emitido.")
+    if not pago.get("items"):
+        raise HTTPException(
+            status_code=400, detail="Agregue al menos un concepto antes de emitir el comprobante."
+        )
+    await db.pagos.update_one(
+        {"id": pago_id, **scope, "estado": "borrador"},
+        {
+            "$set": {
+                "estado": "emitido",
+                "edited_at": iso(datetime.now(timezone.utc)),
+                "edited_by": user["id"],
+            }
+        },
+    )
+    updated = await db.pagos.find_one({"id": pago_id}, {"_id": 0})
+    return Pago(**await _hydrate_pago(updated))
+
+
+@api.delete("/pagos/{pago_id}/borrador")
+async def delete_pago_draft(
+    pago_id: str, user: dict = Depends(require_roles("Administrador", "Caja"))
+):
+    scope = await office_scope(user)
+    pago = await db.pagos.find_one({"id": pago_id, **scope}, {"_id": 0})
+    if not pago:
+        raise HTTPException(status_code=404, detail="Comprobante no encontrado.")
+    if pago.get("estado") != "borrador":
+        raise HTTPException(status_code=400, detail="Solo se pueden descartar borradores.")
+    await db.pagos.delete_one({"id": pago_id, **scope, "estado": "borrador"})
+    return {"ok": True}
+
+
+@api.get("/pagos/{pago_id}", response_model=Pago)
+async def get_pago(
+    pago_id: str, user: dict = Depends(get_current_user)
+):
+    scope = await office_scope(user)
+    pago = await db.pagos.find_one({"id": pago_id, **scope}, {"_id": 0})
+    if not pago:
+        raise HTTPException(status_code=404, detail="Comprobante no encontrado.")
+    return Pago(**await _hydrate_pago(pago))
 
 
 @api.get("/pagos", response_model=PaginacionPagos)
@@ -1035,11 +1299,19 @@ async def get_pagos(
         )
 
     scope = await office_scope(user, office_id)
-    filt: dict = scope.copy()
+    filt: dict = {**scope, "estado": {"$ne": "borrador"}}
+    filter_clauses = []
     if not incluir_anulados:
         filt["anulado"] = False
     if id_tipo_pago:
-        filt["id_tipo_pago"] = id_tipo_pago
+        filter_clauses.append(
+            {
+                "$or": [
+                    {"id_tipo_pago": id_tipo_pago},
+                    {"items.id_tipo_pago": id_tipo_pago},
+                ]
+            }
+        )
     if created_by:
         filt["created_by"] = created_by
     if fecha_desde or fecha_hasta:
@@ -1101,9 +1373,18 @@ async def get_pagos(
             )
         ]
         if tp_ids:
-            extra_or.append({"id_tipo_pago": {"$in": tp_ids}})
+            extra_or.extend(
+                [
+                    {"id_tipo_pago": {"$in": tp_ids}},
+                    {"items.id_tipo_pago": {"$in": tp_ids}},
+                ]
+            )
 
-        filt["$or"] = extra_or
+        if extra_or:
+            filter_clauses.append({"$or": extra_or})
+
+    if filter_clauses:
+        filt["$and"] = filter_clauses
 
     total_pagos = await db.pagos.count_documents(filt)
     total_paginas = (total_pagos + tam - 1) // tam if total_pagos > 0 else 1
@@ -1140,6 +1421,14 @@ async def update_pago(
         raise HTTPException(
             status_code=400, detail="No se puede editar un pago anulado"
         )
+    stored_items = pago.get("items")
+    if isinstance(stored_items, list) and len(stored_items) > 1:
+        raise HTTPException(
+            status_code=400,
+            detail="No se puede editar desde esta pantalla un comprobante con varios conceptos.",
+        )
+    if pago.get("estado") == "borrador":
+        raise HTTPException(status_code=400, detail="No se puede editar un borrador desde esta pantalla.")
     if body.office_id and body.office_id != pago["office_id"]:
         raise HTTPException(status_code=400, detail="No se puede cambiar la oficina de un pago.")
 
@@ -1152,8 +1441,11 @@ async def update_pago(
             raise HTTPException(status_code=400, detail="Estudiante no encontrado en esta oficina")
         update["id_estudiante"] = body.id_estudiante
 
-    new_monto = pago["monto"]
-    if body.id_tipo_pago and body.id_tipo_pago != pago["id_tipo_pago"]:
+    itemized = isinstance(stored_items, list) and len(stored_items) == 1
+    current_item = stored_items[0] if itemized else {}
+    current_type_id = current_item.get("id_tipo_pago") or pago.get("id_tipo_pago")
+    new_monto = float(current_item.get("monto", pago.get("monto", 0)) or 0)
+    if body.id_tipo_pago and body.id_tipo_pago != current_type_id:
         tp = await db.tipos_pagos.find_one(
             {"id": body.id_tipo_pago, "office_id": pago["office_id"]}, {"_id": 0}
         )
@@ -1162,15 +1454,24 @@ async def update_pago(
         update["id_tipo_pago"] = body.id_tipo_pago
         new_monto = float(tp["monto"])
         update["monto"] = new_monto
+        if itemized:
+            update["items.0.id_tipo_pago"] = body.id_tipo_pago
+            update["items.0.tipo_pago_nombre"] = tp["nombre"]
+            update["items.0.monto"] = new_monto
 
-    new_cantidad = pago["cantidad"]
-    if body.cantidad is not None and body.cantidad != pago["cantidad"]:
+    current_cantidad = float(current_item.get("cantidad", pago.get("cantidad", 0)) or 0)
+    new_cantidad = current_cantidad
+    if body.cantidad is not None and body.cantidad != current_cantidad:
         update["cantidad"] = float(body.cantidad)
         new_cantidad = float(body.cantidad)
+        if itemized:
+            update["items.0.cantidad"] = new_cantidad
 
     # if monto or cantidad changed → recompute total
     if "monto" in update or "cantidad" in update:
         update["total"] = float(new_monto) * float(new_cantidad)
+        if itemized:
+            update["items.0.total"] = update["total"]
 
     if body.fecha_pago and body.fecha_pago != pago["fecha_pago"]:
         update["fecha_pago"] = body.fecha_pago
@@ -1246,7 +1547,11 @@ async def reportes(
 ):
     d, h = _periodo_to_range(periodo, desde, hasta)
     scope = await office_scope(user, office_id)
-    filt = {**scope, "fecha_pago": {"$gte": d, "$lte": h}}
+    filt = {
+        **scope,
+        "fecha_pago": {"$gte": d, "$lte": h},
+        "estado": {"$ne": "borrador"},
+    }
     if created_by:
         filt["created_by"] = created_by
     cursor = db.pagos.aggregate(
@@ -1291,11 +1596,23 @@ async def dashboard_stats(
     estudiantes_count = await db.estudiantes.count_documents(scope)
     tipospagos_count = await db.tipos_pagos.count_documents(scope)
     pagos_hoy_count = await db.pagos.count_documents(
-        {**scope, "fecha_pago": today, "anulado": False}
+        {
+            **scope,
+            "fecha_pago": today,
+            "anulado": False,
+            "estado": {"$ne": "borrador"},
+        }
     )
     agg = db.pagos.aggregate(
         [
-            {"$match": {**scope, "fecha_pago": today, "anulado": False}},
+            {
+                "$match": {
+                    **scope,
+                    "fecha_pago": today,
+                    "anulado": False,
+                    "estado": {"$ne": "borrador"},
+                }
+            },
             {"$group": {"_id": None, "total": {"$sum": "$total"}}},
         ]
     )

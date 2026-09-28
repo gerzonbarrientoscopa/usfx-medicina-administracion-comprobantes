@@ -25,7 +25,7 @@ import {
     DialogTitle,
     DialogFooter,
 } from "@/components/ui/dialog";
-import { Check, ChevronsUpDown, Plus, Printer, FileCheck2 } from "lucide-react";
+import { Check, ChevronsUpDown, Plus, Printer, FileCheck2, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { printComprobante } from "@/components/ComprobantePrint";
 import { useOfficeScope } from "@/hooks/useOfficeScope";
@@ -36,10 +36,35 @@ import {
 
 const NEW_EST_EMPTY = { ci: "", cu: "", nombre: "", gestion: new Date().getFullYear() };
 
+const readSavedDraftId = (key) => {
+    try {
+        return key ? window.sessionStorage.getItem(key) : null;
+    } catch (_error) {
+        return null;
+    }
+};
+
+const saveDraftId = (key, id) => {
+    try {
+        if (key) window.sessionStorage.setItem(key, id);
+    } catch (_error) {
+        // The in-memory receipt remains usable if browser storage is unavailable.
+    }
+};
+
+const clearSavedDraftId = (key) => {
+    try {
+        if (key) window.sessionStorage.removeItem(key);
+    } catch (_error) {
+        // Ignore unavailable browser storage.
+    }
+};
+
 export default function RegistroPagoPage() {
     const {
         isSuperAdmin, offices, officeId, officeName, selectedOfficeId, setSelectedOfficeId,
     } = useOfficeScope();
+    const draftStorageKey = officeId ? `usfx-pago-borrador-${officeId}` : null;
     const [estudiantes, setEstudiantes] = useState([]);
     const [tiposPago, setTiposPago] = useState([]);
     const catalogRequest = useRef(0);
@@ -52,7 +77,7 @@ export default function RegistroPagoPage() {
     
     const [pago, setPago] = useState(null);
     const [cantidad, setCantidad] = useState("1");
-    const [fechaPago, setFechaPago] = useState(new Date().toISOString().substring(0, 10));
+    const [fechaPago] = useState(new Date().toISOString().substring(0, 10));
 
     const [newEstOpen, setNewEstOpen] = useState(false);
     const [newEst, setNewEst] = useState(NEW_EST_EMPTY);
@@ -93,65 +118,54 @@ export default function RegistroPagoPage() {
         loadAll().catch((error) => toast.error(formatApiError(error)));
     }, [loadAll]);
 
+    useEffect(() => {
+        if (!draftStorageKey) return undefined;
+        const draftId = readSavedDraftId(draftStorageKey);
+        if (!draftId) return undefined;
+
+        let cancelled = false;
+        apiClient.get(`/pagos/${draftId}`)
+            .then(({ data }) => {
+                if (cancelled) return;
+                if (data.estado !== "borrador") {
+                    clearSavedDraftId(draftStorageKey);
+                    return;
+                }
+                setPago(data);
+                setSelectedEst({
+                    id: data.id_estudiante,
+                    nombre: data.estudiante_nombre,
+                    ci: data.estudiante_ci,
+                    cu: data.estudiante_cu,
+                });
+            })
+            .catch(() => {
+                if (!cancelled) clearSavedDraftId(draftStorageKey);
+            });
+        return () => { cancelled = true; };
+    }, [draftStorageKey]);
+
     const monto = selectedTipo ? Number(selectedTipo.monto) : 0;
-    const total = useMemo(() => {
+    const subtotal = useMemo(() => {
         const c = Number(cantidad);
         if (isNaN(c) || c <= 0) return 0;
         return monto * c;
     }, [monto, cantidad]);
+    const total = Number(pago?.total || 0);
 
     const generarComprobante = async () => {
         if (!officeId) return toast.error("Seleccione una oficina.");
         if (!selectedEst) return toast.error("Seleccione un estudiante.");
-        if (!selectedTipo) return toast.error("Seleccione un tipo de pago.");
+        setSubmitting(true);
         try {
-            // El comprobante se crea de inmediato con los valores iniciales del panel derecho.
             const { data } = await apiClient.post("/pagos", {
                 id_estudiante: selectedEst.id,
-                id_tipo_pago: selectedTipo.id,
-                cantidad: cantidad,
                 fecha_pago: fechaPago,
                 office_id: officeId,
             });
-            setPago(data);            
+            setPago(data);
+            saveDraftId(draftStorageKey, data.id);
             toast.success(`Comprobante generado: ${formatComprobante(data)}`);
-        } catch (e) {
-            toast.error(formatApiError(e));
-        }
-    };
-
-    const confirmarComprobante = async () => {
-        if (!pago) return toast.error("Primero genere el comprobante.");
-        const cant = Number(cantidad);
-        if (!cant || cant <= 0) return toast.error("La cantidad debe ser mayor a cero.");
-        if (!fechaPago) return toast.error("Indique la fecha de pago.");
-        setSubmitting(true);
-        try {
-            const sinCambios =
-                pago.id_estudiante === selectedEst?.id &&
-                pago.id_tipo_pago === selectedTipo?.id &&
-                Number(pago.cantidad) === cant &&
-                pago.fecha_pago === fechaPago;
-
-            const data = sinCambios
-                ? pago
-                : (
-                    await apiClient.put(`/pagos/${pago.id}`, {
-                        id_estudiante: selectedEst.id,
-                        id_tipo_pago: selectedTipo.id,
-                        cantidad: cant,
-                        fecha_pago: fechaPago,
-                        office_id: officeId,
-                    })
-                ).data;
-            toast.success(`Pago registrado: ${formatComprobante(data)}`);
-            printComprobante(data);
-            // reset
-            setSelectedEst(null);
-            setSelectedTipo(null);
-            setCantidad("1");            
-            setPago(null);
-            setFechaPago(new Date().toISOString().substring(0, 10));
         } catch (e) {
             toast.error(formatApiError(e));
         } finally {
@@ -159,6 +173,70 @@ export default function RegistroPagoPage() {
         }
     };
 
+    const adicionarItem = async () => {
+        if (!pago) return toast.error("Primero genere el comprobante.");
+        if (!selectedTipo) return toast.error("Seleccione un concepto de pago.");
+        const cant = Number(cantidad);
+        if (!Number.isFinite(cant) || cant <= 0) {
+            return toast.error("La cantidad debe ser mayor a cero.");
+        }
+        setSubmitting(true);
+        try {
+            const { data } = await apiClient.post(`/pagos/${pago.id}/items`, {
+                id_tipo_pago: selectedTipo.id,
+                cantidad: cant,
+            });
+            setPago(data);
+            setSelectedTipo(null);
+            setCantidad("1");
+            toast.success("Concepto añadido al comprobante.");
+        } catch (e) {
+            toast.error(formatApiError(e));
+        } finally {
+            setSubmitting(false);
+        }
+    };
+
+    const confirmarComprobante = async () => {
+        if (!pago) return toast.error("Primero genere el comprobante.");
+        if (!pago.items?.length) {
+            return toast.error("Añada al menos un concepto antes de emitir el comprobante.");
+        }
+        setSubmitting(true);
+        try {
+            const { data } = await apiClient.post(`/pagos/${pago.id}/finalizar`);
+            toast.success(`Pago registrado: ${formatComprobante(data)}`);
+            printComprobante(data);
+            clearSavedDraftId(draftStorageKey);
+            // reset
+            setSelectedEst(null);
+            setSelectedTipo(null);
+            setCantidad("1");
+            setPago(null);
+        } catch (e) {
+            toast.error(formatApiError(e));
+        } finally {
+            setSubmitting(false);
+        }
+    };
+
+    const descartarComprobante = async () => {
+        if (!pago) return;
+        setSubmitting(true);
+        try {
+            await apiClient.delete(`/pagos/${pago.id}/borrador`);
+            clearSavedDraftId(draftStorageKey);
+            setPago(null);
+            setSelectedEst(null);
+            setSelectedTipo(null);
+            setCantidad("1");
+            toast.success("Borrador descartado.");
+        } catch (e) {
+            toast.error(formatApiError(e));
+        } finally {
+            setSubmitting(false);
+        }
+    };
     const onCreateNewEst = async (e) => {
         e.preventDefault();
         if (!officeId) return toast.error("Seleccione una oficina.");
@@ -200,7 +278,7 @@ export default function RegistroPagoPage() {
                 <div className="section-eyebrow">Caja</div>
                 <h1 className="font-serif-display text-4xl mt-1">Registro de Pago</h1>
                 <p className="text-sm text-[color:var(--institution-muted)] mt-1">
-                    Genere el comprobante, confirme y se procederá a la impresión automática.
+                    Seleccione un estudiante, genere el comprobante y agregue los conceptos del catálogo.
                 </p>
             </div>
 
@@ -243,7 +321,7 @@ export default function RegistroPagoPage() {
                                         <Button
                                             variant="outline"
                                             role="combobox"
-                                            disabled={!officeId}
+                                            disabled={!officeId || Boolean(pago)}
                                             className="rounded-sm justify-between flex-1 font-normal"
                                             data-testid="estudiante-select-btn"
                                         >
@@ -295,7 +373,7 @@ export default function RegistroPagoPage() {
                                     variant="outline"
                                     className="rounded-sm"
                                     onClick={() => setNewEstOpen(true)}
-                                    disabled={!officeId}
+                                    disabled={!officeId || Boolean(pago)}
                                     data-testid="add-new-estudiante-btn"
                                 >
                                     <Plus size={14} className="mr-1" /> Nuevo
@@ -303,66 +381,10 @@ export default function RegistroPagoPage() {
                             </div>
                         </div>
 
-                        <div className="space-y-1.5">
-                            <Label className="text-xs uppercase tracking-widest text-[color:var(--institution-muted)]">
-                                Tipo de Pago
-                            </Label>
-                            <Popover open={tpOpen} onOpenChange={setTpOpen}>
-                                <PopoverTrigger asChild>
-                                    <Button
-                                        variant="outline"
-                                        role="combobox"
-                                        disabled={!officeId}
-                                        className="rounded-sm justify-between w-full font-normal"
-                                        data-testid="tipopago-select-btn"
-                                    >
-                                        <span className="truncate">
-                                            {selectedTipo ? selectedTipo.nombre : "Buscar tipo de pago…"}
-                                        </span>
-                                        <ChevronsUpDown size={14} className="ml-2 opacity-50" />
-                                    </Button>
-                                </PopoverTrigger>
-                                <PopoverContent className="p-0 rounded-sm" align="start" style={{ width: "var(--radix-popover-trigger-width)" }}>
-                                    <Command>
-                                        <CommandInput placeholder="Buscar tipo de pago…" />
-                                        <CommandList>
-                                            <CommandEmpty>Sin resultados.</CommandEmpty>
-                                            <CommandGroup>
-                                                {tiposPago.map((t) => (
-                                                    <CommandItem
-                                                        key={t.id}
-                                                        value={t.nombre}
-                                                        onSelect={() => {
-                                                            setSelectedTipo(t);
-                                                            setTpOpen(false);
-                                                        }}
-                                                        data-testid={`tp-option-${t.id}`}
-                                                    >
-                                                        <Check
-                                                            className={cn(
-                                                                "mr-2 h-4 w-4",
-                                                                selectedTipo?.id === t.id ? "opacity-100" : "opacity-0",
-                                                            )}
-                                                        />
-                                                        <div className="flex-1">
-                                                            <div className="font-medium text-sm">{t.nombre}</div>
-                                                            <div className="text-xs text-[color:var(--institution-muted)]">
-                                                                Bs. {formatMoney(t.monto)}
-                                                            </div>
-                                                        </div>
-                                                    </CommandItem>
-                                                ))}
-                                            </CommandGroup>
-                                        </CommandList>
-                                    </Command>
-                                </PopoverContent>
-                            </Popover>
-                        </div>
-
                         <Button
                             type="button"
                             onClick={generarComprobante}                            
-                            disabled={!officeId || !selectedEst || !selectedTipo || pago || submitting}
+                            disabled={!officeId || !selectedEst || pago || submitting}
                             className="rounded-sm w-full text-white h-11 uppercase text-xs tracking-widest"
                             style={{ backgroundColor: "var(--institution-navy)" }}
                             data-testid="generar-comprobante-btn"
@@ -391,54 +413,163 @@ export default function RegistroPagoPage() {
                             <Row label="Oficina" value={officeName || "—"} />
                             <Row label="Estudiante" value={selectedEst ? `${selectedEst.nombre}` : "—"} />
                             <Row label="C.I." value={selectedEst?.ci || "—"} />
-                            <Row label="Tipo de pago" value={selectedTipo?.nombre || "—"} />
-                            <Row label="Monto unitario (Bs.)" value={monto ? formatMoney(monto) : "—"} />
+                            <Row label="Fecha de pago" value={pago?.fecha_pago || fechaPago} />
                         </div>
 
-                        <div className="grid grid-cols-2 gap-3 pt-2">
-                            <div className="space-y-1.5">
-                                <Label className="text-xs uppercase tracking-widest text-[color:var(--institution-muted)]">Cantidad</Label>
-                                <Input
-                                    type="number"
-                                    min="0"
-                                    step="1"
-                                    value={cantidad}
-                                    onChange={(e) => setCantidad(e.target.value)}
-                                    disabled={!pago}
-                                    data-testid="cantidad-input"
-                                    className="rounded-sm bg-white"
-                                />
-                            </div>
-                            <div className="space-y-1.5">
-                                <Label className="text-xs uppercase tracking-widest text-[color:var(--institution-muted)]">Fecha de pago</Label>
-                                <Input
-                                    type="date"
-                                    value={fechaPago}
-                                    onChange={(e) => setFechaPago(e.target.value)}
-                                    disabled={!pago}
-                                    data-testid="fecha-pago-input"
-                                    className="rounded-sm bg-white"
-                                />
-                            </div>
-                        </div>
+                        {!pago ? (
+                            <p className="border-t pt-4 text-sm text-[color:var(--institution-muted)]" style={{ borderColor: "var(--institution-border)" }}>
+                                Seleccione un estudiante y genere el comprobante para comenzar a añadir conceptos.
+                            </p>
+                        ) : (
+                            <>
+                                <div className="space-y-3 border-t pt-4" style={{ borderColor: "var(--institution-border)" }}>
+                                    <Label className="text-xs uppercase tracking-widest text-[color:var(--institution-muted)]">
+                                        Añadir concepto de pago
+                                    </Label>
+                                    <Popover open={tpOpen} onOpenChange={setTpOpen}>
+                                        <PopoverTrigger asChild>
+                                            <Button
+                                                variant="outline"
+                                                role="combobox"
+                                                disabled={submitting}
+                                                className="rounded-sm justify-between w-full font-normal bg-white"
+                                                data-testid="tipopago-select-btn"
+                                            >
+                                                <span className="truncate">
+                                                    {selectedTipo ? selectedTipo.nombre : "Buscar concepto en el catálogo…"}
+                                                </span>
+                                                <ChevronsUpDown size={14} className="ml-2 opacity-50" />
+                                            </Button>
+                                        </PopoverTrigger>
+                                        <PopoverContent className="p-0 rounded-sm" align="start" style={{ width: "var(--radix-popover-trigger-width)" }}>
+                                            <Command>
+                                                <CommandInput placeholder="Buscar tipo de pago…" />
+                                                <CommandList>
+                                                    <CommandEmpty>Sin resultados.</CommandEmpty>
+                                                    <CommandGroup>
+                                                        {tiposPago.map((t) => (
+                                                            <CommandItem
+                                                                key={t.id}
+                                                                value={t.nombre}
+                                                                onSelect={() => {
+                                                                    setSelectedTipo(t);
+                                                                    setTpOpen(false);
+                                                                }}
+                                                                data-testid={`tp-option-${t.id}`}
+                                                            >
+                                                                <Check
+                                                                    className={cn(
+                                                                        "mr-2 h-4 w-4",
+                                                                        selectedTipo?.id === t.id ? "opacity-100" : "opacity-0",
+                                                                    )}
+                                                                />
+                                                                <div className="flex-1">
+                                                                    <div className="font-medium text-sm">{t.nombre}</div>
+                                                                    <div className="text-xs text-[color:var(--institution-muted)]">
+                                                                        Bs. {formatMoney(t.monto)}
+                                                                    </div>
+                                                                </div>
+                                                            </CommandItem>
+                                                        ))}
+                                                    </CommandGroup>
+                                                </CommandList>
+                                            </Command>
+                                        </PopoverContent>
+                                    </Popover>
+                                    <div className="grid grid-cols-[1fr_auto] gap-3 items-end">
+                                        <div className="space-y-1.5">
+                                            <Label className="text-xs uppercase tracking-widest text-[color:var(--institution-muted)]">
+                                                Cantidad
+                                            </Label>
+                                            <Input
+                                                type="number"
+                                                min="0.01"
+                                                step="any"
+                                                value={cantidad}
+                                                onChange={(event) => setCantidad(event.target.value)}
+                                                disabled={submitting}
+                                                data-testid="cantidad-input"
+                                                className="rounded-sm bg-white"
+                                            />
+                                        </div>
+                                        <div className="text-right pb-2">
+                                            <div className="text-[10px] uppercase tracking-widest text-[color:var(--institution-muted)]">
+                                                Subtotal
+                                            </div>
+                                            <div className="font-mono-num font-semibold">
+                                                Bs. {formatMoney(subtotal)}
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <Button
+                                        type="button"
+                                        onClick={adicionarItem}
+                                        disabled={!selectedTipo || submitting}
+                                        className="rounded-sm w-full text-white"
+                                        style={{ backgroundColor: "var(--institution-navy)" }}
+                                        data-testid="add-pago-item-btn"
+                                    >
+                                        <Plus size={15} className="mr-2" /> Añadir concepto
+                                    </Button>
+                                </div>
 
-                        <div className="border-t pt-3 flex items-center justify-between" style={{ borderColor: "var(--institution-border)" }}>
-                            <span className="text-xs uppercase tracking-widest text-[color:var(--institution-muted)]">Total a pagar</span>
-                            <span className="font-serif-display text-3xl font-bold font-mono-num" style={{ color: "var(--institution-burgundy)" }} data-testid="total-display">
-                                Bs. {formatMoney(total)}
-                            </span>
-                        </div>
+                                <div className="space-y-2">
+                                    <div className="text-xs uppercase tracking-widest text-[color:var(--institution-muted)]">
+                                        Conceptos del comprobante ({pago.items?.length || 0})
+                                    </div>
+                                    {pago.items?.length ? (
+                                        <div className="divide-y rounded-sm border bg-white px-3" style={{ borderColor: "var(--institution-border)" }}>
+                                            {pago.items.map((item, index) => (
+                                                <div key={item.id || `${item.id_tipo_pago}-${index}`} className="flex items-center justify-between gap-3 py-2 text-sm">
+                                                    <div className="min-w-0">
+                                                        <div className="font-medium truncate">{item.tipo_pago_nombre}</div>
+                                                        <div className="text-xs text-[color:var(--institution-muted)]">
+                                                            {item.cantidad} × Bs. {formatMoney(item.monto)}
+                                                        </div>
+                                                    </div>
+                                                    <div className="shrink-0 font-mono-num font-semibold">
+                                                        Bs. {formatMoney(item.total)}
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    ) : (
+                                        <p className="text-sm text-[color:var(--institution-muted)]">
+                                            Aún no se añadieron conceptos.
+                                        </p>
+                                    )}
+                                </div>
 
-                        <Button
-                            type="button"
-                            onClick={confirmarComprobante}
-                            disabled={!pago || submitting}
-                            className="w-full rounded-sm text-white h-11 uppercase text-xs tracking-widest"
-                            style={{ backgroundColor: "var(--institution-burgundy)" }}
-                            data-testid="confirmar-comprobante-btn"
-                        >
-                            <Printer size={16} className="mr-2" /> Confirmar e imprimir
-                        </Button>
+                                <div className="border-t pt-3 flex items-center justify-between" style={{ borderColor: "var(--institution-border)" }}>
+                                    <span className="text-xs uppercase tracking-widest text-[color:var(--institution-muted)]">Total del comprobante</span>
+                                    <span className="font-serif-display text-3xl font-bold font-mono-num" style={{ color: "var(--institution-burgundy)" }} data-testid="total-display">
+                                        Bs. {formatMoney(total)}
+                                    </span>
+                                </div>
+
+                                <div className="space-y-2">
+                                    <Button
+                                        type="button"
+                                        onClick={confirmarComprobante}
+                                        disabled={!pago.items?.length || submitting}
+                                        className="w-full rounded-sm text-white h-11 uppercase text-xs tracking-widest"
+                                        style={{ backgroundColor: "var(--institution-burgundy)" }}
+                                        data-testid="confirmar-comprobante-btn"
+                                    >
+                                        <Printer size={16} className="mr-2" /> Emitir e imprimir
+                                    </Button>
+                                    <Button
+                                        type="button"
+                                        variant="outline"
+                                        onClick={descartarComprobante}
+                                        disabled={submitting}
+                                        className="w-full rounded-sm"
+                                    >
+                                        <X size={14} className="mr-2" /> Descartar borrador
+                                    </Button>
+                                </div>
+                            </>
+                        )}
                     </div>
                 </CardContent>
             </Card>

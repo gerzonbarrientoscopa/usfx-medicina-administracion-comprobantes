@@ -26,10 +26,27 @@ export function buildComprobanteHTML(pago) {
     const estudianteNombre = escapeHTML(pago.estudiante_nombre);
     const estudianteCi = escapeHTML(pago.estudiante_ci);
     const estudianteCu = escapeHTML(pago.estudiante_cu || "-");
-    const tipoPagoNombre = escapeHTML(pago.tipo_pago_nombre || pago.tipopago_nombre);
     const oficina = escapeHTML(pago.office_nombre || "Oficina no identificada");
     const suboficina = escapeHTML(pago.suboficina || "");
-    const cantidad = escapeHTML(pago.cantidad);
+    const items = Array.isArray(pago.items) && pago.items.length
+        ? pago.items
+        : pago.id_tipo_pago
+            ? [{
+                tipo_pago_nombre: pago.tipo_pago_nombre || pago.tipopago_nombre,
+                cantidad: pago.cantidad,
+                monto: pago.monto,
+                total: pago.total,
+            }]
+            : [];
+    const itemRows = items.length
+        ? items.map((item) => `
+          <tr>
+            <td>${escapeHTML(item.tipo_pago_nombre || "Concepto")}</td>
+            <td style="text-align:right">${escapeHTML(item.cantidad)}</td>
+            <td style="text-align:right">Bs. ${moneyFmt(item.monto)}</td>
+            <td style="text-align:right">Bs. ${moneyFmt(item.total)}</td>
+          </tr>`).join("")
+        : '<tr><td colspan="4" style="text-align:center">Sin conceptos de pago</td></tr>';
 
     return `<!DOCTYPE html>
 <html lang="es">
@@ -107,12 +124,7 @@ export function buildComprobanteHTML(pago) {
           <tr><th>Concepto</th><th style="text-align:right">Cantidad</th><th style="text-align:right">Monto Unit.</th><th style="text-align:right">Subtotal</th></tr>
         </thead>
         <tbody>
-          <tr>
-            <td>${tipoPagoNombre}</td>
-            <td style="text-align:right">${cantidad}</td>
-            <td style="text-align:right">Bs. ${moneyFmt(pago.monto)}</td>
-            <td style="text-align:right">Bs. ${moneyFmt(pago.total)}</td>
-          </tr>
+          ${itemRows}
         </tbody>
       </table>
 
