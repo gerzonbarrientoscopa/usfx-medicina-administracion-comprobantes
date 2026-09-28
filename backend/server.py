@@ -1264,8 +1264,48 @@ async def delete_pago_draft(
         raise HTTPException(status_code=404, detail="Comprobante no encontrado.")
     if pago.get("estado") != "borrador":
         raise HTTPException(status_code=400, detail="Solo se pueden descartar borradores.")
-    await db.pagos.delete_one({"id": pago_id, **scope, "estado": "borrador"})
-    return {"ok": True}
+    deleted = await db.pagos.delete_one(
+        {"id": pago_id, **scope, "estado": "borrador"}
+    )
+    if not deleted.deleted_count:
+        raise HTTPException(status_code=409, detail="El borrador ya no está disponible.")
+
+    correlativo_reutilizado = False
+    try:
+        codigo_descartado = int(pago["cod_comprobante"])
+        gestion = int(pago["gestion"])
+        counter_id = f"comprobante_{pago['office_id']}_{gestion}"
+        highest_rows = await db.pagos.aggregate(
+            [
+                {"$match": {"office_id": pago["office_id"], "gestion": gestion}},
+                {
+                    "$addFields": {
+                        "_receipt_seq": {
+                            "$convert": {
+                                "input": "$cod_comprobante",
+                                "to": "int",
+                                "onError": 0,
+                                "onNull": 0,
+                            }
+                        }
+                    }
+                },
+                {"$group": {"_id": None, "seq": {"$max": "$_receipt_seq"}}},
+            ]
+        ).to_list(1)
+        highest_existing = int(highest_rows[0]["seq"]) if highest_rows else 0
+        if highest_existing < codigo_descartado:
+            # Only rewind if this was still the latest allocated number.
+            # The compare-and-set keeps concurrent receipt creation safe.
+            result = await db.contadores.update_one(
+                {"_id": counter_id, "seq": codigo_descartado},
+                {"$set": {"seq": highest_existing}},
+            )
+            correlativo_reutilizado = result.modified_count > 0
+    except (KeyError, TypeError, ValueError):
+        logging.exception("No se pudo recuperar el correlativo del borrador %s", pago_id)
+
+    return {"ok": True, "correlativo_reutilizado": correlativo_reutilizado}
 
 
 @api.get("/pagos/{pago_id}", response_model=Pago)

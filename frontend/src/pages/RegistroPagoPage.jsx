@@ -224,13 +224,17 @@ export default function RegistroPagoPage() {
         if (!pago) return;
         setSubmitting(true);
         try {
-            await apiClient.delete(`/pagos/${pago.id}/borrador`);
+            const { data } = await apiClient.delete(`/pagos/${pago.id}/borrador`);
             clearSavedDraftId(draftStorageKey);
             setPago(null);
             setSelectedEst(null);
             setSelectedTipo(null);
             setCantidad("1");
-            toast.success("Borrador descartado.");
+            toast.success(
+                data.correlativo_reutilizado
+                    ? "Borrador descartado. El correlativo quedó disponible para el próximo comprobante."
+                    : "Borrador descartado. Se mantuvo la secuencia para evitar duplicados.",
+            );
         } catch (e) {
             toast.error(formatApiError(e));
         } finally {
