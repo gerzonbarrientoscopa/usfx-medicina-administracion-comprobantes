@@ -158,8 +158,6 @@ class PaginacionEstudiantes(BaseModel):
 class PersonaBase(BaseModel):
     ci: str = Field(min_length=1, max_length=30)
     nombre: str = Field(min_length=1, max_length=200)
-    office_id: Optional[str] = None
-    office_nombre: Optional[str] = None
 
     @field_validator("ci", "nombre", mode="before")
     @classmethod
@@ -173,7 +171,6 @@ class PersonaCreate(PersonaBase):
 
 class Persona(PersonaBase):
     id: str
-    office_id: str
     created_at: Optional[str] = None
 
 
@@ -583,7 +580,6 @@ async def delete_office(
     for collection in (
         db.usuarios,
         db.estudiantes,
-        db.personas,
         db.tipos_pagos,
         db.ambientes,
         db.pagos,
@@ -855,10 +851,9 @@ async def get_personas(
     pag: int = Query(1, ge=1),
     tam: int = Query(20, ge=1, le=100),
     textoBuscar: Optional[str] = None,
-    office_id: Optional[str] = None,
     user: dict = Depends(require_roles("Administrador")),
 ):
-    filt = await office_scope(user, office_id)
+    filt = {}
     if textoBuscar and textoBuscar.strip():
         search = re.escape(textoBuscar.strip())
         filt["$or"] = [
@@ -869,7 +864,7 @@ async def get_personas(
     cursor = db.personas.find(filt, {"_id": 0}).sort(
         [("nombre", 1), ("ci", 1)]
     ).skip((pag - 1) * tam).limit(tam)
-    personas = await attach_office_names(await cursor.to_list(length=tam))
+    personas = await cursor.to_list(length=tam)
     return {
         "items": [Persona(**item) for item in personas],
         "total": total,
@@ -883,13 +878,11 @@ async def get_personas(
 async def create_persona(
     persona: PersonaCreate, user: dict = Depends(require_roles("Administrador"))
 ):
-    office_id = await office_for_write(user, persona.office_id)
     await ensure_person_is_not_student(persona.ci)
-    persona_dict = persona.model_dump(exclude={"office_id", "office_nombre"})
+    persona_dict = persona.model_dump()
     persona_dict.update(
         {
             "id": str(uuid.uuid4()),
-            "office_id": office_id,
             "ci_key": persona.ci.casefold(),
             "created_at": iso(datetime.now(timezone.utc)),
         }
@@ -899,9 +892,8 @@ async def create_persona(
     except DuplicateKeyError:
         raise HTTPException(
             status_code=400,
-            detail="Ya existe una persona con este C.I. en la oficina.",
+            detail="Ya existe una persona registrada con este C.I.",
         )
-    await attach_office_names([persona_dict])
     return Persona(**persona_dict)
 
 
@@ -911,30 +903,20 @@ async def update_persona(
     persona: PersonaCreate,
     user: dict = Depends(require_roles("Administrador")),
 ):
-    scope = await office_scope(user)
-    target = await db.personas.find_one(
-        {"id": persona_id, **scope}, {"_id": 0}
-    )
+    target = await db.personas.find_one({"id": persona_id}, {"_id": 0})
     if not target:
         raise HTTPException(status_code=404, detail="Persona no encontrada.")
-    if persona.office_id and persona.office_id != target["office_id"]:
-        raise HTTPException(
-            status_code=400, detail="No se puede cambiar la oficina de la persona."
-        )
     await ensure_person_is_not_student(persona.ci)
-    update = persona.model_dump(exclude={"office_id", "office_nombre"})
+    update = persona.model_dump()
     update["ci_key"] = persona.ci.casefold()
     try:
-        await db.personas.update_one(
-            {"id": persona_id, **scope}, {"$set": update}
-        )
+        await db.personas.update_one({"id": persona_id}, {"$set": update})
     except DuplicateKeyError:
         raise HTTPException(
             status_code=400,
-            detail="Ya existe una persona con este C.I. en la oficina.",
+            detail="Ya existe una persona registrada con este C.I.",
         )
     updated = await db.personas.find_one({"id": persona_id}, {"_id": 0})
-    await attach_office_names([updated])
     return Persona(**updated)
 
 
@@ -942,13 +924,10 @@ async def update_persona(
 async def delete_persona(
     persona_id: str, user: dict = Depends(require_roles("Administrador"))
 ):
-    scope = await office_scope(user)
-    target = await db.personas.find_one(
-        {"id": persona_id, **scope}, {"_id": 0}
-    )
+    target = await db.personas.find_one({"id": persona_id}, {"_id": 0})
     if not target:
         raise HTTPException(status_code=404, detail="Persona no encontrada.")
-    await db.personas.delete_one({"id": persona_id, **scope})
+    await db.personas.delete_one({"id": persona_id})
     return {"ok": True}
 
 
@@ -2093,15 +2072,28 @@ async def startup():
     await db.estudiantes.create_index("id", unique=True)
     await db.estudiantes.create_index("ci")
     await db.estudiantes.create_index("office_id")
+    duplicate_personas = await db.personas.aggregate(
+        [
+            {"$group": {"_id": "$ci_key", "count": {"$sum": 1}}},
+            {"$match": {"count": {"$gt": 1}}},
+            {"$limit": 1},
+        ]
+    ).to_list(1)
+    if duplicate_personas:
+        raise RuntimeError(
+            "No se puede unificar Personas: hay C.I. duplicados entre oficinas. "
+            "Consolide esos registros antes de iniciar la aplicación."
+        )
+    persona_indexes = await db.personas.index_information()
+    if "person_ci_per_office" in persona_indexes:
+        await db.personas.drop_index("person_ci_per_office")
+    await db.personas.update_many(
+        {},
+        {"$unset": {"office_id": "", "office_nombre": ""}},
+    )
     await db.personas.create_index("id", unique=True)
     await db.personas.create_index(
-        [("office_id", 1), ("ci_key", 1)],
-        unique=True,
-        partialFilterExpression={
-            "office_id": {"$type": "string"},
-            "ci_key": {"$type": "string"},
-        },
-        name="person_ci_per_office",
+        "ci_key", unique=True, name="person_ci_global"
     )
     await db.estudiantes.create_index(
         [("office_id", 1), ("cu", 1)],

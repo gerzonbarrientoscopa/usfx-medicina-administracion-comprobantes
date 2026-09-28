@@ -1,6 +1,5 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { apiClient, formatApiError } from "@/lib/api";
-import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -24,18 +23,13 @@ import {
 import { Plus, Pencil, Trash2, ChevronLeft, ChevronRight } from "lucide-react";
 
 const PAGE_SIZE = 20;
-const emptyForm = (officeId = "") => ({
+const emptyForm = () => ({
   ci: "",
   nombre: "",
-  office_id: officeId,
 });
 
 export default function PersonasPage() {
-  const { user } = useAuth();
-  const isSuperAdmin = user?.rol === "SuperAdmin";
   const [personas, setPersonas] = useState([]);
-  const [oficinas, setOficinas] = useState([]);
-  const [oficinaFiltro, setOficinaFiltro] = useState("");
   const [textoBuscar, setTextoBuscar] = useState("");
   const [open, setOpen] = useState(false);
   const [editingPersona, setEditingPersona] = useState(null);
@@ -44,39 +38,6 @@ export default function PersonasPage() {
   const [pagina, setPagina] = useState(1);
   const [totalPaginas, setTotalPaginas] = useState(1);
 
-  useEffect(() => {
-    if (!isSuperAdmin) return;
-    let active = true;
-    const fetchOficinas = async () => {
-      try {
-        const first = await apiClient.get("/oficinas", {
-          params: { pag: 1, tam: 100 },
-        });
-        const rest = await Promise.all(
-          Array.from(
-            { length: Math.max(0, (first.data.pages || 1) - 1) },
-            (_, index) =>
-              apiClient.get("/oficinas", {
-                params: { pag: index + 2, tam: 100 },
-              }),
-          ),
-        );
-        if (active) {
-          setOficinas([
-            ...first.data.items,
-            ...rest.flatMap((response) => response.data.items),
-          ]);
-        }
-      } catch {
-        if (active) toast.error("Error al cargar oficinas.");
-      }
-    };
-    fetchOficinas();
-    return () => {
-      active = false;
-    };
-  }, [isSuperAdmin]);
-
   const fetchPersonas = useCallback(async () => {
     try {
       const response = await apiClient.get("/personas", {
@@ -84,7 +45,6 @@ export default function PersonasPage() {
           pag: pagina,
           tam: PAGE_SIZE,
           textoBuscar: textoBuscar || undefined,
-          office_id: isSuperAdmin ? oficinaFiltro || undefined : undefined,
         },
       });
       setPersonas(response.data.items);
@@ -92,7 +52,7 @@ export default function PersonasPage() {
     } catch (error) {
       toast.error(formatApiError(error) || "Error al cargar personas.");
     }
-  }, [pagina, textoBuscar, oficinaFiltro, isSuperAdmin]);
+  }, [pagina, textoBuscar]);
 
   useEffect(() => {
     fetchPersonas();
@@ -106,9 +66,6 @@ export default function PersonasPage() {
         ci: formData.ci.trim(),
         nombre: formData.nombre.trim(),
       };
-      if (!editingPersona && isSuperAdmin) {
-        payload.office_id = formData.office_id;
-      }
 
       if (editingPersona) {
         await apiClient.put(`/personas/${editingPersona.id}`, payload);
@@ -143,7 +100,6 @@ export default function PersonasPage() {
     setFormData({
       ci: persona.ci,
       nombre: persona.nombre,
-      office_id: "",
     });
     setOpen(true);
   };
@@ -152,9 +108,9 @@ export default function PersonasPage() {
     setOpen(isOpen);
     if (!isOpen) {
       setEditingPersona(null);
-      setFormData(emptyForm(isSuperAdmin ? oficinaFiltro : ""));
+      setFormData(emptyForm());
     } else if (!editingPersona) {
-      setFormData(emptyForm(isSuperAdmin ? oficinaFiltro : ""));
+      setFormData(emptyForm());
     }
   };
 
@@ -178,11 +134,6 @@ export default function PersonasPage() {
     setPagina(1);
   };
 
-  const handleOficinaFiltro = (event) => {
-    setOficinaFiltro(event.target.value);
-    setPagina(1);
-  };
-
   return (
     <div className="space-y-6" data-testid="personas-page">
       <div className="flex items-end justify-between gap-4">
@@ -190,13 +141,8 @@ export default function PersonasPage() {
           <div className="section-eyebrow">Registro de personas</div>
           <h1 className="font-serif-display text-4xl mt-1">Personas</h1>
           <p className="text-sm text-[color:var(--institution-muted)] mt-1">
-            Registre personas que no figuran como estudiantes.
+            Clientes globales que pueden realizar operaciones en distintas oficinas.
           </p>
-          {!isSuperAdmin && user?.office_nombre && (
-            <p className="text-xs text-[color:var(--institution-muted)] mt-1">
-              Oficina: <b>{user.office_nombre}</b>
-            </p>
-          )}
         </div>
         <Dialog open={open} onOpenChange={handleOpenChange}>
           <DialogTrigger asChild>
@@ -219,38 +165,6 @@ export default function PersonasPage() {
               className="grid grid-cols-2 gap-4"
               data-testid="persona-form"
             >
-              {isSuperAdmin && !editingPersona ? (
-                <div className="space-y-1.5 col-span-2">
-                  <Label htmlFor="persona-office">Oficina</Label>
-                  <select
-                    id="persona-office"
-                    value={formData.office_id}
-                    onChange={(event) =>
-                      setFormData({ ...formData, office_id: event.target.value })
-                    }
-                    required
-                    data-testid="persona-office-select"
-                    className="h-10 w-full rounded-sm border border-input bg-background px-3 text-sm"
-                  >
-                    <option value="">Seleccione una oficina</option>
-                    {oficinas.map((oficina) => (
-                      <option key={oficina.id} value={oficina.id}>
-                        {oficina.nombre}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              ) : (
-                <div className="col-span-2 text-sm text-[color:var(--institution-muted)]">
-                  Oficina:{" "}
-                  <b>
-                    {editingPersona?.office_nombre ||
-                      user?.office_nombre ||
-                      oficinas.find((office) => office.id === oficinaFiltro)?.nombre ||
-                      "Seleccione una oficina"}
-                  </b>
-                </div>
-              )}
               <div className="space-y-1.5">
                 <Label htmlFor="persona-ci">C.I.</Label>
                 <Input
@@ -311,22 +225,6 @@ export default function PersonasPage() {
           className="max-w-md rounded-sm"
           data-testid="personas-search"
         />
-        {isSuperAdmin && (
-          <select
-            value={oficinaFiltro}
-            onChange={handleOficinaFiltro}
-            data-testid="personas-office-filter"
-            aria-label="Filtrar por oficina"
-            className="h-10 w-full max-w-xs rounded-sm border border-input bg-background px-3 text-sm"
-          >
-            <option value="">Todas las oficinas</option>
-            {oficinas.map((oficina) => (
-              <option key={oficina.id} value={oficina.id}>
-                {oficina.nombre}
-              </option>
-            ))}
-          </select>
-        )}
       </div>
 
       <div
@@ -342,11 +240,6 @@ export default function PersonasPage() {
               <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">
                 Nombre
               </TableHead>
-              {isSuperAdmin && (
-                <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">
-                  Oficina
-                </TableHead>
-              )}
               <TableHead className="text-right uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">
                 Acciones
               </TableHead>
@@ -357,9 +250,6 @@ export default function PersonasPage() {
               <TableRow key={persona.id} data-testid={`persona-row-${persona.id}`}>
                 <TableCell className="font-mono-num">{persona.ci}</TableCell>
                 <TableCell className="font-medium">{persona.nombre}</TableCell>
-                {isSuperAdmin && (
-                  <TableCell>{persona.office_nombre || "—"}</TableCell>
-                )}
                 <TableCell className="text-right whitespace-nowrap">
                   <Button
                     variant="ghost"
@@ -387,7 +277,7 @@ export default function PersonasPage() {
             {personas.length === 0 && (
               <TableRow>
                 <TableCell
-                  colSpan={isSuperAdmin ? 4 : 3}
+                  colSpan={3}
                   className="text-center py-12 text-sm text-[color:var(--institution-muted)]"
                 >
                   Sin personas registradas.
