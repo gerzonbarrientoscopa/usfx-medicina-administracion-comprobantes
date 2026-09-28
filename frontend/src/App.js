@@ -10,6 +10,7 @@ import LoginPage from "@/pages/LoginPage";
 import DashboardPage from "@/pages/DashboardPage";
 import EstudiantesPage from "@/pages/EstudiantesPage";
 import TiposPagosPage from "@/pages/TiposPagosPage";
+import AmbientesPage from "@/pages/AmbientesPage";
 import UsuariosPage from "@/pages/UsuariosPage";
 import AnularPagoPage from "@/pages/AnularPagoPage";
 import ReportesPage from "@/pages/ReportesPage";
@@ -60,6 +61,16 @@ function App() {
                             <ProtectedRoute roles={["Administrador"]}>
                                 <AppLayout>
                                     <TiposPagosPage />
+                                </AppLayout>
+                            </ProtectedRoute>
+                        }
+                    />
+                    <Route
+                        path="/ambientes"
+                        element={
+                            <ProtectedRoute roles={["Administrador"]}>
+                                <AppLayout>
+                                    <AmbientesPage />
                                 </AppLayout>
                             </ProtectedRoute>
                         }
