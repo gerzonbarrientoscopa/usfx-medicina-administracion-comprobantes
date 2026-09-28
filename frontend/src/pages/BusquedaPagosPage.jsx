@@ -58,6 +58,15 @@ const pagoItems = (pago) => {
     }];
 };
 
+const comprobanteItems = (pago) => pago.origen === "alquiler"
+    ? [{
+        tipo_pago_nombre: `${pago.ambiente_nombre || "Ambiente"} · ${pago.tarifa_nombre || "Alquiler"}`,
+        cantidad: pago.cantidad,
+        monto: pago.monto,
+        total: pago.total,
+    }]
+    : pagoItems(pago);
+
 export default function BusquedaPagosPage() {
     const { user } = useAuth();
     const {
@@ -393,10 +402,8 @@ export default function BusquedaPagosPage() {
                             {isSuperAdmin && <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Oficina</TableHead>}
                             <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Origen</TableHead>
                             <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Cliente / estudiante</TableHead>
-                            <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Concepto / ambiente</TableHead>
-                            <TableHead className="text-right uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Cantidad</TableHead>
-                            <TableHead className="text-right uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Monto</TableHead>
-                            <TableHead className="text-right uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Total</TableHead>
+                            <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Conceptos y detalle</TableHead>
+                            <TableHead className="text-right uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Total comprobante</TableHead>
                             <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Fecha</TableHead>
                             <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Registrado por</TableHead>
                             <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Estado</TableHead>
@@ -413,17 +420,25 @@ export default function BusquedaPagosPage() {
                                 <TableCell>{p.origen === "alquiler" ? "Alquiler" : "Estudiantil"}</TableCell>
                                 <TableCell>{p.origen === "alquiler" ? p.cliente_nombre : p.estudiante_nombre || "—"}</TableCell>
                                 <TableCell>
-                                    {p.origen === "alquiler" ? `${p.ambiente_nombre} · ${p.tarifa_nombre}` : pagoItems(p).length ? pagoItems(p).map((item, index) => (
-                                        <div key={`${item.id_tipo_pago || item.tipo_pago_nombre}-${index}`}>
-                                            {item.tipo_pago_nombre || "—"}
+                                    <div className="min-w-[420px]">
+                                        <div className="grid grid-cols-[minmax(120px,1fr)_64px_92px_92px] gap-3 border-b pb-1 text-[9px] uppercase tracking-wider text-[color:var(--institution-muted)]">
+                                            <span>Concepto / ambiente</span>
+                                            <span className="text-right">Cantidad</span>
+                                            <span className="text-right">Precio unit.</span>
+                                            <span className="text-right">Subtotal</span>
                                         </div>
-                                    )) : "—"}
-                                </TableCell>
-                                <TableCell className="text-right font-mono-num">
-                                    {p.origen === "alquiler" ? p.cantidad : pagoItems(p).map((item, index) => <div key={index}>{item.cantidad}</div>)}
-                                </TableCell>
-                                <TableCell className="text-right font-mono-num">
-                                    {p.origen === "alquiler" ? formatMoney(p.monto) : pagoItems(p).map((item, index) => <div key={index}>{formatMoney(item.monto)}</div>)}
+                                        {comprobanteItems(p).length ? comprobanteItems(p).map((item, index) => (
+                                            <div
+                                                key={`${item.id_tipo_pago || item.tipo_pago_nombre}-${index}`}
+                                                className="grid grid-cols-[minmax(120px,1fr)_64px_92px_92px] gap-3 border-b last:border-b-0 py-1.5 text-xs"
+                                            >
+                                                <span className="font-medium">{item.tipo_pago_nombre || "—"}</span>
+                                                <span className="text-right font-mono-num">{item.cantidad ?? "—"}</span>
+                                                <span className="text-right font-mono-num">{formatMoney(item.monto)}</span>
+                                                <span className="text-right font-mono-num">{formatMoney(item.total ?? Number(item.cantidad || 0) * Number(item.monto || 0))}</span>
+                                            </div>
+                                        )) : <div className="py-1.5 text-xs text-[color:var(--institution-muted)]">Sin conceptos.</div>}
+                                    </div>
                                 </TableCell>
                                 <TableCell className="text-right font-mono-num font-semibold">{formatMoney(p.total)}</TableCell>
                                 <TableCell className="font-mono-num">{p.fecha_pago}</TableCell>
@@ -466,14 +481,14 @@ export default function BusquedaPagosPage() {
                         ))}
                         {!loading && pagos.length === 0 && (
                             <TableRow>
-                                <TableCell colSpan={isSuperAdmin ? 12 : 11} className="text-center py-12 text-sm text-[color:var(--institution-muted)]">
+                                <TableCell colSpan={isSuperAdmin ? 10 : 9} className="text-center py-12 text-sm text-[color:var(--institution-muted)]">
                                     Sin resultados.
                                 </TableCell>
                             </TableRow>
                         )}
                         {loading && (
                             <TableRow>
-                                <TableCell colSpan={isSuperAdmin ? 12 : 11} className="text-center py-12 text-sm text-[color:var(--institution-muted)]">
+                                <TableCell colSpan={isSuperAdmin ? 10 : 9} className="text-center py-12 text-sm text-[color:var(--institution-muted)]">
                                     Buscando…
                                 </TableCell>
                             </TableRow>
