@@ -1376,6 +1376,10 @@ async def _rental_scope_record(rental_id: str, user: dict) -> dict:
     if not rental:
         raise HTTPException(status_code=404, detail="Alquiler no encontrado.")
     await office_scope(user, rental.get("office_id"))
+    office = await db.oficinas.find_one(
+        {"id": rental.get("office_id")}, {"_id": 0, "suboficina": 1}
+    )
+    rental["suboficina"] = (office or {}).get("suboficina", "") or ""
     return rental
 
 
@@ -1570,6 +1574,7 @@ async def _build_rental(user: dict, body: AlquilerCreate) -> dict:
         })
     return {
         "id": rental_id, "office_id": ambiente["office_id"], "office_nombre": office["nombre"],
+        "suboficina": office.get("suboficina", "") or "",
         "ambiente_id": ambiente["id"], "ambiente_nombre": ambiente["nombre"], "fecha": body.fecha,
         "tramos": tramos, "cliente_tipo": body.cliente_tipo, "cliente_id": payer["id"],
         "cliente_nombre": payer["nombre"], "cliente_ci": payer["ci"],
@@ -2674,7 +2679,18 @@ async def buscar_comprobantes(
         {"$addFields": {"origen": "estudiantil"}},
         {"$unionWith": {"coll": "alquileres", "pipeline": [
             {"$match": rentals},
-            {"$project": {"_id": 0, "intervals": 0}},
+            {"$lookup": {
+                "from": "oficinas",
+                "localField": "office_id",
+                "foreignField": "id",
+                "as": "_office",
+            }},
+            {"$addFields": {
+                "suboficina": {
+                    "$ifNull": [{"$arrayElemAt": ["$_office.suboficina", 0]}, ""]
+                }
+            }},
+            {"$project": {"_id": 0, "intervals": 0, "_office": 0}},
             {"$addFields": {"origen": "alquiler"}},
         ]}},
         {"$facet": {

@@ -389,6 +389,40 @@ def test_reserve_payment_immediate_payment_cancel_and_counter(mongo_rental_api):
     mongo_rental_api["loop"].run_until_complete(run())
 
 
+def test_comprobante_search_includes_rental_office_suboffice(mongo_rental_api):
+    async def run():
+        db = mongo_rental_api["db"]
+        await db.oficinas.update_one(
+            {"id": mongo_rental_api["office_a"]},
+            {"$set": {"suboficina": "Suboficina de prueba"}},
+        )
+        async with await _client(_actor()) as client:
+            tariff = await client.post(
+                f"{API}/tarifas-ambientes",
+                json=_tariff_payload(mongo_rental_api["ambiente_a"]),
+            )
+            assert tariff.status_code == 201, tariff.text
+            paid = await client.post(
+                f"{API}/alquileres",
+                json=_rental_payload(
+                    mongo_rental_api["ambiente_a"], tariff.json()["id"],
+                    mongo_rental_api["monday"], cobrar_ahora=True,
+                ),
+            )
+            assert paid.status_code == 201, paid.text
+            response = await client.get(
+                f"{API}/comprobantes", params={"q": paid.json()["cod_comprobante"]}
+            )
+            assert response.status_code == 200, response.text
+            rental_receipt = next(
+                item for item in response.json()["items"]
+                if item.get("origen") == "alquiler"
+            )
+            assert rental_receipt["suboficina"] == "Suboficina de prueba"
+
+    mongo_rental_api["loop"].run_until_complete(run())
+
+
 def test_rentals_and_tariffs_reject_cross_office_access(mongo_rental_api):
     async def run():
         async with await _client(_actor()) as client:
