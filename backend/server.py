@@ -12,7 +12,7 @@ from fastapi import FastAPI, APIRouter, HTTPException, Query, Depends, Request, 
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from starlette.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field, EmailStr, ConfigDict, field_validator
+from pydantic import BaseModel, Field, EmailStr, ConfigDict, field_validator, model_validator
 from motor.motor_asyncio import AsyncIOMotorClient
 from pymongo.errors import DuplicateKeyError
 from pathlib import Path
@@ -179,6 +179,57 @@ class PaginacionTiposPagos(BaseModel):
     page: int
     size: int
     pages: int
+
+
+class BloqueHorarioAmbiente(BaseModel):
+    dia: Literal["lunes", "martes", "miercoles", "jueves", "viernes", "sabado", "domingo"]
+    desde: str = Field(pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d$")
+    hasta: str = Field(pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d$")
+
+    @model_validator(mode="after")
+    def validate_time_range(self):
+        if self.desde >= self.hasta:
+            raise ValueError("La hora de fin debe ser posterior a la hora de inicio.")
+        return self
+
+
+class AmbienteBase(BaseModel):
+    nombre: str = Field(min_length=1, max_length=120)
+    descripcion: Optional[str] = Field(default="", max_length=500)
+    horarios: List[BloqueHorarioAmbiente] = Field(default_factory=list, max_length=42)
+    office_id: Optional[str] = None
+    office_nombre: Optional[str] = None
+
+    @model_validator(mode="after")
+    def validate_schedule(self):
+        by_day = {}
+        for block in self.horarios:
+            by_day.setdefault(block.dia, []).append(block)
+        for blocks in by_day.values():
+            ordered = sorted(blocks, key=lambda block: block.desde)
+            for previous, current in zip(ordered, ordered[1:]):
+                if current.desde < previous.hasta:
+                    raise ValueError("Los horarios del mismo día no pueden superponerse.")
+        return self
+
+
+class AmbienteCreate(AmbienteBase):
+    pass
+
+
+class Ambiente(AmbienteBase):
+    id: str
+    office_id: str
+    created_at: Optional[str] = None
+
+
+class PaginacionAmbientes(BaseModel):
+    items: List[Ambiente]
+    total: int
+    page: int
+    size: int
+    pages: int
+
 
 class PagoBase(BaseModel):
     id_estudiante: str
@@ -839,6 +890,108 @@ async def delete_tipo_pago(
     ):
         raise HTTPException(status_code=400, detail="No se puede eliminar: tiene pagos registrados.")
     await db.tipos_pagos.delete_one({"id": tipo_id, **scope})
+    return {"ok": True}
+
+
+# ----------------------------- CRUD Ambientes -----------------------------
+@api.get("/ambientes", response_model=PaginacionAmbientes)
+async def get_ambientes(
+    pag: int = Query(1, ge=1),
+    tam: int = Query(20, ge=1, le=100),
+    office_id: Optional[str] = None,
+    q: Optional[str] = None,
+    user: dict = Depends(require_roles("Administrador")),
+):
+    filt = await office_scope(user, office_id)
+    if q and q.strip():
+        filt["nombre"] = {"$regex": re.escape(q.strip()), "$options": "i"}
+    total = await db.ambientes.count_documents(filt)
+    cursor = db.ambientes.find(filt, {"_id": 0}).sort(
+        [("nombre_key", 1), ("nombre", 1)]
+    ).skip((pag - 1) * tam).limit(tam)
+    ambientes = await attach_office_names(await cursor.to_list(length=tam))
+    return {
+        "items": [Ambiente(**item) for item in ambientes],
+        "total": total,
+        "page": pag,
+        "size": tam,
+        "pages": max(1, (total + tam - 1) // tam),
+    }
+
+
+@api.post("/ambientes", response_model=Ambiente, status_code=201)
+async def create_ambiente(
+    ambiente: AmbienteCreate, user: dict = Depends(require_roles("Administrador"))
+):
+    office_id = await office_for_write(user, ambiente.office_id)
+    nombre = ambiente.nombre.strip()
+    if not nombre:
+        raise HTTPException(status_code=400, detail="Ingrese el nombre del ambiente.")
+    ambiente_dict = ambiente.model_dump(exclude={"office_id", "office_nombre"})
+    ambiente_dict.update(
+        {
+            "id": str(uuid.uuid4()),
+            "office_id": office_id,
+            "nombre": nombre,
+            "nombre_key": nombre.casefold(),
+            "created_at": iso(datetime.now(timezone.utc)),
+        }
+    )
+    try:
+        await db.ambientes.insert_one(ambiente_dict)
+    except DuplicateKeyError:
+        raise HTTPException(
+            status_code=400, detail="Ya existe un ambiente con ese nombre en esta oficina."
+        )
+    await attach_office_names([ambiente_dict])
+    return Ambiente(**ambiente_dict)
+
+
+@api.put("/ambientes/{ambiente_id}", response_model=Ambiente)
+async def update_ambiente(
+    ambiente_id: str,
+    ambiente: AmbienteCreate,
+    user: dict = Depends(require_roles("Administrador")),
+):
+    scope = await office_scope(user)
+    target = await db.ambientes.find_one(
+        {"id": ambiente_id, **scope}, {"_id": 0}
+    )
+    if not target:
+        raise HTTPException(status_code=404, detail="Ambiente no encontrado.")
+    if ambiente.office_id and ambiente.office_id != target["office_id"]:
+        raise HTTPException(
+            status_code=400, detail="No se puede cambiar la oficina del ambiente."
+        )
+    nombre = ambiente.nombre.strip()
+    if not nombre:
+        raise HTTPException(status_code=400, detail="Ingrese el nombre del ambiente.")
+    update = ambiente.model_dump(exclude={"office_id", "office_nombre"})
+    update.update({"nombre": nombre, "nombre_key": nombre.casefold()})
+    try:
+        await db.ambientes.update_one(
+            {"id": ambiente_id, **scope}, {"$set": update}
+        )
+    except DuplicateKeyError:
+        raise HTTPException(
+            status_code=400, detail="Ya existe un ambiente con ese nombre en esta oficina."
+        )
+    updated = await db.ambientes.find_one({"id": ambiente_id}, {"_id": 0})
+    await attach_office_names([updated])
+    return Ambiente(**updated)
+
+
+@api.delete("/ambientes/{ambiente_id}")
+async def delete_ambiente(
+    ambiente_id: str, user: dict = Depends(require_roles("Administrador"))
+):
+    scope = await office_scope(user)
+    target = await db.ambientes.find_one(
+        {"id": ambiente_id, **scope}, {"_id": 0}
+    )
+    if not target:
+        raise HTTPException(status_code=404, detail="Ambiente no encontrado.")
+    await db.ambientes.delete_one({"id": ambiente_id, **scope})
     return {"ok": True}
 
 
@@ -1794,6 +1947,16 @@ async def startup():
         unique=True,
         partialFilterExpression={"office_id": {"$type": "string"}, "nombre_key": {"$type": "string"}},
         name="type_name_per_office",
+    )
+    await db.ambientes.create_index("id", unique=True)
+    await db.ambientes.create_index(
+        [("office_id", 1), ("nombre_key", 1)],
+        unique=True,
+        partialFilterExpression={
+            "office_id": {"$type": "string"},
+            "nombre_key": {"$type": "string"},
+        },
+        name="ambiente_name_per_office",
     )
     await db.pagos.create_index([("office_id", 1), ("gestion", 1), ("cod_comprobante", 1)],
                                 unique=True,
