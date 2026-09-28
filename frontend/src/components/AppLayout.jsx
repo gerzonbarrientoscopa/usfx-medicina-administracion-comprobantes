@@ -13,6 +13,7 @@ import {
     LogOut,
     UserCog,
     Building2,
+    CalendarClock,
 } from "lucide-react";
 
 const NAV_BY_ROLE = {
@@ -23,8 +24,11 @@ const NAV_BY_ROLE = {
         { to: "/personas", icon: Users, label: "Personas" },
         { to: "/tipos-pagos", icon: Tags, label: "Tipos de Pago" },
         { to: "/ambientes", icon: Building2, label: "Ambientes" },
+        { to: "/tarifario-ambientes", icon: Tags, label: "Tarifario de Ambientes" },
         { to: "/usuarios", icon: UserCog, label: "Usuarios" },
         { section: "Operaciones" },
+        { to: "/registro", icon: Receipt, label: "Registro de Pago" },
+        { to: "/registro-alquiler", icon: CalendarClock, label: "Registro de Alquiler" },
         { to: "/anular", icon: FileX, label: "Anular Pago" },
         { to: "/reportes", icon: FileBarChart, label: "Reportes" },
         { to: "/buscar", icon: Search, label: "Búsqueda Pagos" },
@@ -33,6 +37,7 @@ const NAV_BY_ROLE = {
         { to: "/", icon: LayoutDashboard, label: "Panel General" },
         { section: "Caja" },
         { to: "/registro", icon: Receipt, label: "Registro de Pago" },
+        { to: "/registro-alquiler", icon: CalendarClock, label: "Registro de Alquiler" },
         { to: "/buscar", icon: Search, label: "Búsqueda Pagos" },
     ],
     Consultas: [
@@ -49,8 +54,10 @@ const NAV_BY_ROLE = {
         { to: "/personas", icon: Users, label: "Personas" },
         { to: "/tipos-pagos", icon: Tags, label: "Tipos de Pago" },
         { to: "/ambientes", icon: Building2, label: "Ambientes" },
+        { to: "/tarifario-ambientes", icon: Tags, label: "Tarifario de Ambientes" },
         { section: "Operaciones" },
         { to: "/registro", icon: Receipt, label: "Registro de Pago" },
+        { to: "/registro-alquiler", icon: CalendarClock, label: "Registro de Alquiler" },
         { to: "/buscar", icon: Search, label: "Búsqueda Pagos" },
         { to: "/anular", icon: FileX, label: "Anular Pago" },
         { to: "/reportes", icon: FileBarChart, label: "Reportes" },

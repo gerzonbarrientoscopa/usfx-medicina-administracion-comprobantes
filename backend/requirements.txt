@@ -28,12 +28,13 @@ certifi==2024.2.2
 tzdata>=2024.2
 
 # ASGI server dependencies
-h11==0.14.0
+h11==0.16.0
 click==8.1.7
 
 # TEST and formating dependencies
 pytest>=8.0.0
 requests>=2.31.0
+httpx==0.27.0
 black>=24.1.1
 isort>=5.13.2
 flake8>=7.0.0

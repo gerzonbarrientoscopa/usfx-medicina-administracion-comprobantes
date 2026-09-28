@@ -18,6 +18,8 @@ import ReportesPage from "@/pages/ReportesPage";
 import RegistroPagoPage from "@/pages/RegistroPagoPage";
 import BusquedaPagosPage from "@/pages/BusquedaPagosPage";
 import OficinasPage from "@/pages/OficinasPage";
+import TarifarioAmbientesPage from "@/pages/TarifarioAmbientesPage";
+import RegistroAlquilerPage from "@/pages/RegistroAlquilerPage";
 
 function withLayout(element) {
     return (
@@ -87,6 +89,16 @@ function App() {
                         }
                     />
                     <Route
+                        path="/tarifario-ambientes"
+                        element={
+                            <ProtectedRoute roles={["Administrador", "SuperAdmin"]}>
+                                <AppLayout>
+                                    <TarifarioAmbientesPage />
+                                </AppLayout>
+                            </ProtectedRoute>
+                        }
+                    />
+                    <Route
                         path="/usuarios"
                         element={
                             <ProtectedRoute roles={["Administrador"]}>
@@ -119,9 +131,19 @@ function App() {
                     <Route
                         path="/registro"
                         element={
-                            <ProtectedRoute roles={["Administrador", "Caja"]}>
+                            <ProtectedRoute roles={["Administrador", "Caja", "SuperAdmin"]}>
                                 <AppLayout>
                                     <RegistroPagoPage />
+                                </AppLayout>
+                            </ProtectedRoute>
+                        }
+                    />
+                    <Route
+                        path="/registro-alquiler"
+                        element={
+                            <ProtectedRoute roles={["Administrador", "Caja", "SuperAdmin"]}>
+                                <AppLayout>
+                                    <RegistroAlquilerPage />
                                 </AppLayout>
                             </ProtectedRoute>
                         }

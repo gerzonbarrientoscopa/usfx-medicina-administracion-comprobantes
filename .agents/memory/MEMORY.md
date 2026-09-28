@@ -1,1 +1,4 @@
 - [Dev-domain Python TLS](dev-domain-python-tls.md) — shell Python requests may reject the development proxy certificate even when the app works.
+- [Shared receipt sequence](rental-receipt-sequence.md) — student payments and rental receipts must never reuse a counter value, including after draft deletion.
+- [Rental booking consistency](rental-booking-consistency.md) — preserve occupancy on uncertain writes; provisional bookings protect against delayed cross-document commits.
+- [Cross-office rental clients](rental-client-policy.md) — students may rent outside their enrollment office, with exact-identifier lookup for non-superadmins.

@@ -3,6 +3,8 @@ import logging
 import re
 import itertools
 import string
+from contextlib import asynccontextmanager
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 import bcrypt
 import jwt
 import uuid
@@ -14,6 +16,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from starlette.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, EmailStr, ConfigDict, field_validator, model_validator
 from motor.motor_asyncio import AsyncIOMotorClient
+from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError
 from pathlib import Path
 from datetime import datetime, date, timezone, timedelta
@@ -248,6 +251,58 @@ class Ambiente(AmbienteBase):
     id: str
     office_id: str
     created_at: Optional[str] = None
+
+
+class TarifaAmbienteCreate(BaseModel):
+    ambiente_id: str
+    nombre: str = Field(min_length=1, max_length=120)
+    modalidad: Literal["hora", "manana", "tarde", "dia", "actividad"]
+    monto: Decimal = Field(gt=0)
+    descripcion: Optional[str] = ""
+    desde: Optional[str] = None
+    hasta: Optional[str] = None
+
+    @field_validator("nombre", mode="before")
+    @classmethod
+    def normalize_rental_tariff_name(cls, value):
+        return value.strip() if isinstance(value, str) else value
+
+    @field_validator("monto")
+    @classmethod
+    def currency_precision(cls, value):
+        if value.as_tuple().exponent < -2:
+            raise ValueError("El monto debe tener como máximo dos decimales.")
+        return value.quantize(Decimal("0.01"))
+
+    @model_validator(mode="after")
+    def validate_tariff_times(self):
+        valid_time = re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d$")
+        if self.modalidad in ("manana", "tarde"):
+            if not self.desde or not self.hasta or not valid_time.fullmatch(self.desde) or not valid_time.fullmatch(self.hasta):
+                raise ValueError("Indique un horario fijo válido HH:MM para esta modalidad.")
+            if self.desde >= self.hasta:
+                raise ValueError("La hora de fin debe ser posterior a la hora de inicio.")
+        elif self.desde is not None or self.hasta is not None:
+            raise ValueError("Esta modalidad no admite horarios fijos.")
+        return self
+
+
+class AlquilerCreate(BaseModel):
+    ambiente_id: str
+    tarifa_id: str
+    fecha: str
+    desde: Optional[str] = None
+    hasta: Optional[str] = None
+    cliente_tipo: Literal["persona", "estudiante"]
+    cliente_id: str
+    cliente_documento: Optional[str] = None
+    cobrar_ahora: bool
+    office_id: Optional[str] = None
+
+    @field_validator("cliente_documento", mode="before")
+    @classmethod
+    def normalize_client_document(cls, value):
+        return value.strip() if isinstance(value, str) else value
 
 
 class PaginacionAmbientes(BaseModel):
@@ -583,6 +638,8 @@ async def delete_office(
         db.tipos_pagos,
         db.ambientes,
         db.pagos,
+        db.tarifas_ambientes,
+        db.alquileres,
     ):
         if await collection.find_one({"office_id": office_id}, {"_id": 1}):
             raise HTTPException(
@@ -754,6 +811,24 @@ async def ensure_person_is_not_student(ci: str):
         )
 
 
+async def ensure_student_is_not_person(ci: str):
+    normalized_ci = ci.strip()
+    person = await db.personas.find_one(
+        {
+            "ci": {
+                "$regex": rf"^\s*{re.escape(normalized_ci)}\s*$",
+                "$options": "i",
+            }
+        },
+        {"_id": 1},
+    )
+    if person:
+        raise HTTPException(
+            status_code=400,
+            detail="Este C.I. ya está registrado como Persona y no puede agregarse como estudiante.",
+        )
+
+
 # ----------------------------- CRUD Estudiantes -----------------------------
 @api.get("/estudiantes", response_model=PaginacionEstudiantes)
 async def get_estudiantes(
@@ -795,6 +870,7 @@ async def create_estudiante(
     user: dict = Depends(require_roles("Administrador", "Caja")),
 ):
     office_id = await office_for_write(user, estudiante.office_id)
+    await ensure_student_is_not_person(estudiante.ci)
     if estudiante.cu and await db.estudiantes.find_one(
         {"office_id": office_id, "cu": estudiante.cu}
     ):
@@ -816,6 +892,7 @@ async def update_estudiante(
     target = await db.estudiantes.find_one({"id": est_id, **scope}, {"_id": 0})
     if not target:
         raise HTTPException(status_code=404, detail="Estudiante no encontrado.")
+    await ensure_student_is_not_person(estudiante.ci)
     if estudiante.office_id and estudiante.office_id != target["office_id"]:
         raise HTTPException(status_code=400, detail="No se puede cambiar la oficina de un estudiante.")
     if estudiante.cu and await db.estudiantes.find_one({
@@ -1037,7 +1114,7 @@ async def get_ambientes(
     tam: int = Query(20, ge=1, le=100),
     office_id: Optional[str] = None,
     q: Optional[str] = None,
-    user: dict = Depends(require_roles("Administrador")),
+    user: dict = Depends(require_roles("Administrador", "Caja")),
 ):
     filt = await office_scope(user, office_id)
     if q and q.strip():
@@ -1090,6 +1167,13 @@ async def update_ambiente(
     ambiente: AmbienteCreate,
     user: dict = Depends(require_roles("Administrador")),
 ):
+    async with _ambiente_lease(ambiente_id) as lease_owner:
+        return await _update_ambiente_under_lease(ambiente_id, ambiente, user, lease_owner)
+
+
+async def _update_ambiente_under_lease(
+    ambiente_id: str, ambiente: AmbienteCreate, user: dict, lease_owner: str
+):
     scope = await office_scope(user)
     target = await db.ambientes.find_one(
         {"id": ambiente_id, **scope}, {"_id": 0}
@@ -1105,14 +1189,31 @@ async def update_ambiente(
         raise HTTPException(status_code=400, detail="Ingrese el nombre del ambiente.")
     update = ambiente.model_dump(exclude={"office_id", "office_nombre"})
     update.update({"nombre": nombre, "nombre_key": nombre.casefold()})
+    proposed = {**target, **update}
+    active_rentals = db.alquileres.find(
+        {"ambiente_id": ambiente_id, "estado": {"$in": ["confirmando", "reservado", "procesando", "pagado"]}, "fecha": {"$gte": date.today().isoformat()}},
+        {"_id": 0, "fecha": 1, "tramos": 1},
+    )
+    async for rental in active_rentals:
+        blocks = _schedule_blocks(proposed, _validate_rental_date(rental["fecha"]))
+        if any(not _covered_by_schedule(blocks, tramo["desde"], tramo["hasta"]) for tramo in rental.get("tramos", [])):
+            raise HTTPException(status_code=400, detail="El cambio de horario invalidaría alquileres activos futuros.")
     try:
-        await db.ambientes.update_one(
-            {"id": ambiente_id, **scope}, {"$set": update}
+        write_result = await db.ambientes.update_one(
+            {
+                "id": ambiente_id,
+                **scope,
+                "_room_lease.owner": lease_owner,
+                "_room_lease.lease_until": {"$gt": datetime.now(timezone.utc)},
+            },
+            {"$set": update},
         )
     except DuplicateKeyError:
         raise HTTPException(
             status_code=400, detail="Ya existe un ambiente con ese nombre en esta oficina."
         )
+    if not write_result.matched_count:
+        raise HTTPException(status_code=409, detail="La exclusividad del ambiente expiró; vuelva a intentar.")
     updated = await db.ambientes.find_one({"id": ambiente_id}, {"_id": 0})
     await attach_office_names([updated])
     return Ambiente(**updated)
@@ -1122,14 +1223,792 @@ async def update_ambiente(
 async def delete_ambiente(
     ambiente_id: str, user: dict = Depends(require_roles("Administrador"))
 ):
+    async with _ambiente_lease(ambiente_id) as lease_owner:
+        return await _delete_ambiente_under_lease(ambiente_id, user, lease_owner)
+
+
+async def _delete_ambiente_under_lease(ambiente_id: str, user: dict, lease_owner: str):
     scope = await office_scope(user)
     target = await db.ambientes.find_one(
         {"id": ambiente_id, **scope}, {"_id": 0}
     )
     if not target:
         raise HTTPException(status_code=404, detail="Ambiente no encontrado.")
-    await db.ambientes.delete_one({"id": ambiente_id, **scope})
+    if await db.alquileres.find_one({"ambiente_id": ambiente_id, "estado": {"$in": ["confirmando", "reservado", "procesando", "pagado"]}}, {"_id": 1}):
+        raise HTTPException(status_code=400, detail="No se puede eliminar un ambiente con alquileres activos.")
+    if await db.tarifas_ambientes.find_one({"ambiente_id": ambiente_id}, {"_id": 1}):
+        raise HTTPException(status_code=400, detail="Elimine primero las tarifas asociadas al ambiente.")
+    deleted = await db.ambientes.delete_one({
+        "id": ambiente_id,
+        **scope,
+        "_room_lease.owner": lease_owner,
+        "_room_lease.lease_until": {"$gt": datetime.now(timezone.utc)},
+    })
+    if not deleted.deleted_count:
+        raise HTTPException(status_code=409, detail="La exclusividad del ambiente expiró; vuelva a intentar.")
+    await db.alquiler_ocupacion.delete_many({
+        "$or": [
+            {"ambiente_id": ambiente_id},
+            {"_id": {"$regex": f"^{re.escape(ambiente_id)}_"}},
+        ],
+    })
     return {"ok": True}
+
+
+_RENTAL_ROLES = ("Administrador", "Caja")
+_WEEKDAYS_ES = ("lunes", "martes", "miercoles", "jueves", "viernes", "sabado", "domingo")
+_ROOM_LEASE_SECONDS = 120
+_PAYMENT_LEASE_SECONDS = 120
+
+
+@asynccontextmanager
+async def _ambiente_lease(ambiente_id: str):
+    """Cross-process exclusive lock for a room's schedule and booking mutations."""
+    token = str(uuid.uuid4())
+    now = datetime.now(timezone.utc)
+    try:
+        acquired = await db.ambientes.find_one_and_update(
+            {
+                "id": ambiente_id,
+                "$or": [
+                    {"_room_lease.lease_until": {"$lte": now}},
+                    {"_room_lease.lease_until": {"$exists": False}},
+                ],
+            },
+            {
+                "$set": {
+                    "_room_lease.owner": token,
+                    "_room_lease.lease_until": now + timedelta(seconds=_ROOM_LEASE_SECONDS),
+                },
+                "$inc": {"_room_lease.fence": 1},
+            },
+            return_document=ReturnDocument.AFTER,
+        )
+    except DuplicateKeyError:
+        raise HTTPException(status_code=409, detail="El ambiente está siendo modificado o reservado.")
+    if not acquired or acquired.get("_room_lease", {}).get("owner") != token:
+        exists = await db.ambientes.find_one({"id": ambiente_id}, {"_id": 1})
+        if not exists:
+            raise HTTPException(status_code=404, detail="Ambiente no encontrado.")
+        raise HTTPException(status_code=409, detail="El ambiente está siendo modificado o reservado.")
+    try:
+        yield token
+    finally:
+        await db.ambientes.update_one(
+            {"id": ambiente_id, "_room_lease.owner": token},
+            {"$set": {
+                "_room_lease.owner": None,
+                "_room_lease.lease_until": datetime.now(timezone.utc),
+            }},
+        )
+
+
+async def _renew_ambiente_lease(ambiente_id: str, token: str):
+    now = datetime.now(timezone.utc)
+    renewed = await db.ambientes.update_one(
+        {
+            "id": ambiente_id,
+            "_room_lease.owner": token,
+            "_room_lease.lease_until": {"$gt": now},
+        },
+        {"$set": {
+            "_room_lease.lease_until": now + timedelta(seconds=_ROOM_LEASE_SECONDS),
+        }},
+    )
+    if not renewed.matched_count:
+        raise HTTPException(
+            status_code=409,
+            detail="La reserva perdió la exclusividad del ambiente; vuelva a intentarlo.",
+        )
+
+
+async def _insert_rental_provisional(rental: dict):
+    return await db.alquileres.insert_one(rental)
+
+
+async def _confirm_rental_provisional(rental_id: str, confirmation_started_at: str):
+    return await db.alquileres.update_one(
+        {
+            "id": rental_id,
+            "estado": "confirmando",
+            "confirmation_started_at": confirmation_started_at,
+        },
+        {
+            "$set": {"estado": "reservado"},
+            "$unset": {"confirmation_started_at": ""},
+        },
+    )
+
+
+def _minute_of_day(value: str) -> int:
+    if not isinstance(value, str) or not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", value):
+        raise HTTPException(status_code=400, detail="La hora debe tener formato HH:MM.")
+    return int(value[:2]) * 60 + int(value[3:])
+
+
+def _intervals_overlap(start: int, end: int, other_start: int, other_end: int) -> bool:
+    """Half-open interval comparison; adjacent bookings do not collide."""
+    return start < other_end and end > other_start
+
+
+def _schedule_blocks(ambiente: dict, rental_date: date) -> list:
+    day_name = _WEEKDAYS_ES[rental_date.weekday()]
+    return sorted(
+        [(block["desde"], block["hasta"]) for block in ambiente.get("horarios", []) if block.get("dia") == day_name],
+        key=lambda block: block[0],
+    )
+
+
+def _covered_by_schedule(blocks: list, start: str, end: str) -> bool:
+    start_min, end_min = _minute_of_day(start), _minute_of_day(end)
+    # Merge touching registered blocks so a continuous interval can span their boundary.
+    merged = []
+    for block_start, block_end in blocks:
+        if merged and block_start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], block_end))
+        else:
+            merged.append((block_start, block_end))
+    return any(_minute_of_day(a) <= start_min and _minute_of_day(b) >= end_min for a, b in merged)
+
+
+async def _rental_scope_record(rental_id: str, user: dict) -> dict:
+    rental = await db.alquileres.find_one({"id": rental_id}, {"_id": 0})
+    if not rental:
+        raise HTTPException(status_code=404, detail="Alquiler no encontrado.")
+    await office_scope(user, rental.get("office_id"))
+    return rental
+
+
+@api.get("/tarifas-ambientes")
+async def get_tarifas_ambientes(
+    ambiente_id: str,
+    user: dict = Depends(require_roles("Administrador", "Caja")),
+):
+    ambiente = await db.ambientes.find_one({"id": ambiente_id}, {"_id": 0})
+    if not ambiente:
+        raise HTTPException(status_code=404, detail="Ambiente no encontrado.")
+    await office_scope(user, ambiente["office_id"])
+    return await db.tarifas_ambientes.find({"ambiente_id": ambiente_id}, {"_id": 0}).sort("nombre", 1).to_list(500)
+
+
+@api.post("/tarifas-ambientes", status_code=201)
+async def create_tarifa_ambiente(
+    body: TarifaAmbienteCreate, user: dict = Depends(require_roles("Administrador"))
+):
+    ambiente = await db.ambientes.find_one({"id": body.ambiente_id}, {"_id": 0})
+    if not ambiente:
+        raise HTTPException(status_code=404, detail="Ambiente no encontrado.")
+    await office_scope(user, ambiente["office_id"])
+    doc = body.model_dump()
+    doc.update({"id": str(uuid.uuid4()), "office_id": ambiente["office_id"], "monto": float(body.monto), "created_at": iso(datetime.now(timezone.utc))})
+    await db.tarifas_ambientes.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api.put("/tarifas-ambientes/{tarifa_id}")
+async def update_tarifa_ambiente(
+    tarifa_id: str, body: TarifaAmbienteCreate, user: dict = Depends(require_roles("Administrador"))
+):
+    target = await db.tarifas_ambientes.find_one({"id": tarifa_id}, {"_id": 0})
+    if not target:
+        raise HTTPException(status_code=404, detail="Tarifa no encontrada.")
+    await office_scope(user, target["office_id"])
+    if body.ambiente_id != target["ambiente_id"]:
+        raise HTTPException(status_code=400, detail="No se puede cambiar el ambiente de una tarifa.")
+    update = body.model_dump()
+    update["monto"] = float(body.monto)
+    await db.tarifas_ambientes.update_one({"id": tarifa_id}, {"$set": update})
+    return await db.tarifas_ambientes.find_one({"id": tarifa_id}, {"_id": 0})
+
+
+@api.delete("/tarifas-ambientes/{tarifa_id}")
+async def delete_tarifa_ambiente(
+    tarifa_id: str, user: dict = Depends(require_roles("Administrador"))
+):
+    target = await db.tarifas_ambientes.find_one({"id": tarifa_id}, {"_id": 0})
+    if not target:
+        raise HTTPException(status_code=404, detail="Tarifa no encontrada.")
+    await office_scope(user, target["office_id"])
+    await db.tarifas_ambientes.delete_one({"id": tarifa_id})
+    return {"ok": True}
+
+
+@api.get("/alquileres/clientes")
+async def search_alquiler_clientes(q: str = "", user: dict = Depends(require_roles(*_RENTAL_ROLES))):
+    term = q.strip()
+    if len(term) < 2:
+        return []
+    pattern = re.escape(term)
+    personas = await db.personas.find(
+        {"$or": [{"ci": {"$regex": pattern, "$options": "i"}}, {"nombre": {"$regex": pattern, "$options": "i"}}]},
+        {"_id": 0, "id": 1, "nombre": 1, "ci": 1},
+    ).sort("nombre", 1).limit(20).to_list(20)
+    matches = [{"tipo": "persona", "id": item["id"], "nombre": item["nombre"], "ci": item["ci"]} for item in personas]
+
+    projection = {"_id": 0, "id": 1, "nombre": 1, "ci": 1, "cu": 1, "office_id": 1}
+    student_search = {"$or": [
+        {"ci": {"$regex": pattern, "$options": "i"}},
+        {"cu": {"$regex": pattern, "$options": "i"}},
+        {"nombre": {"$regex": pattern, "$options": "i"}},
+    ]}
+    if user.get("rol") == SUPER_ADMIN_ROLE:
+        students = await db.estudiantes.find(student_search, projection).sort("nombre", 1).limit(20).to_list(20)
+    else:
+        own_office_id = (await office_scope(user))["office_id"]
+        own_filter = {"$and": [{"office_id": own_office_id}, student_search]}
+        students = await db.estudiantes.find(own_filter, projection).sort("nombre", 1).limit(20).to_list(20)
+        remaining = 20 - len(students)
+        if len(term) >= 3 and remaining:
+            exact = {"$regex": rf"^\s*{pattern}\s*$", "$options": "i"}
+            cross_filter = {
+                "$and": [
+                    {"office_id": {"$exists": True, "$ne": own_office_id}},
+                    {"$or": [{"ci": exact}, {"cu": exact}]},
+                ]
+            }
+            cross_office_students = await db.estudiantes.find(
+                cross_filter, projection
+            ).sort("nombre", 1).limit(remaining).to_list(remaining)
+            students.extend(cross_office_students)
+    await attach_office_names(students)
+    for item in students:
+        entry = {
+            "tipo": "estudiante", "id": item["id"], "nombre": item["nombre"],
+            "ci": item["ci"], "office_nombre": item.get("office_nombre"),
+        }
+        if item.get("cu") is not None:
+            entry["cu"] = item.get("cu")
+        matches.append(entry)
+    return matches
+
+
+def _validate_rental_date(text: str) -> date:
+    try:
+        parsed = datetime.strptime(text, "%Y-%m-%d").date()
+        if parsed.isoformat() != text:
+            raise ValueError
+        return parsed
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="La fecha debe tener formato YYYY-MM-DD.")
+
+
+async def _build_rental(user: dict, body: AlquilerCreate) -> dict:
+    rental_day = _validate_rental_date(body.fecha)
+    ambiente = await db.ambientes.find_one({"id": body.ambiente_id}, {"_id": 0})
+    if not ambiente:
+        raise HTTPException(status_code=404, detail="Ambiente no encontrado.")
+    await office_scope(user, ambiente["office_id"])
+    tariff = await db.tarifas_ambientes.find_one({"id": body.tarifa_id, "ambiente_id": body.ambiente_id}, {"_id": 0})
+    if not tariff:
+        raise HTTPException(status_code=400, detail="La tarifa no pertenece al ambiente seleccionado.")
+    if body.office_id and body.office_id != ambiente["office_id"]:
+        raise HTTPException(status_code=400, detail="La oficina no coincide con el ambiente.")
+    payer_collection = db.personas if body.cliente_tipo == "persona" else db.estudiantes
+    payer_filter = {"id": body.cliente_id}
+    if body.cliente_tipo == "estudiante":
+        # Student ownership does not constrain rental venue ownership.
+        pass
+    payer = await payer_collection.find_one(payer_filter, {"_id": 0})
+    if not payer:
+        raise HTTPException(status_code=400, detail="El cliente seleccionado no existe.")
+    if (
+        body.cliente_tipo == "estudiante"
+        and user.get("rol") != SUPER_ADMIN_ROLE
+        and payer.get("office_id") != ambiente["office_id"]
+    ):
+        proof = (body.cliente_documento or "").strip().casefold()
+        valid_documents = {
+            str(payer.get("ci", "")).strip().casefold(),
+            str(payer.get("cu", "")).strip().casefold(),
+        }
+        valid_documents.discard("")
+        if not proof or proof not in valid_documents:
+            raise HTTPException(
+                status_code=400,
+                detail="Para un estudiante de otra oficina, confirme su C.I. o C.U.",
+            )
+    blocks = _schedule_blocks(ambiente, rental_day)
+    modalidad = tariff["modalidad"]
+    if modalidad in ("hora", "actividad"):
+        if not body.desde or not body.hasta:
+            raise HTTPException(status_code=400, detail="Indique las horas de inicio y fin.")
+        start_min, end_min = _minute_of_day(body.desde), _minute_of_day(body.hasta)
+        if start_min >= end_min:
+            raise HTTPException(status_code=400, detail="La hora de fin debe ser posterior al inicio.")
+        if not _covered_by_schedule(blocks, body.desde, body.hasta):
+            raise HTTPException(status_code=400, detail="El horario solicitado no está cubierto por un bloque disponible.")
+        tramos = [{"desde": body.desde, "hasta": body.hasta}]
+    elif modalidad in ("manana", "tarde"):
+        if body.desde is not None and body.desde != tariff["desde"] or body.hasta is not None and body.hasta != tariff["hasta"]:
+            raise HTTPException(status_code=400, detail="El horario debe coincidir con la tarifa.")
+        if not _covered_by_schedule(blocks, tariff["desde"], tariff["hasta"]):
+            raise HTTPException(status_code=400, detail="La tarifa no está cubierta por el horario disponible.")
+        tramos = [{"desde": tariff["desde"], "hasta": tariff["hasta"]}]
+    else:
+        if body.desde is not None or body.hasta is not None:
+            raise HTTPException(status_code=400, detail="La modalidad día no admite horas.")
+        if not blocks:
+            raise HTTPException(status_code=400, detail="El ambiente no tiene horario disponible ese día.")
+        tramos = [{"desde": a, "hasta": b} for a, b in blocks]
+    cents = int((Decimal(str(tariff["monto"])) * 100).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+    quantity = Decimal("1")
+    if modalidad == "hora":
+        minutes = _minute_of_day(tramos[0]["hasta"]) - _minute_of_day(tramos[0]["desde"])
+        quantity = Decimal(minutes) / Decimal(60)
+        total_cents = int((Decimal(cents) * quantity).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+    else:
+        total_cents = cents
+    office = await _office_exists(ambiente["office_id"], active=True)
+    rental_id = str(uuid.uuid4())
+    intervals = []
+    for tramo in tramos:
+        intervals.append({
+            "rental_id": rental_id,
+            "start": _minute_of_day(tramo["desde"]),
+            "end": _minute_of_day(tramo["hasta"]),
+        })
+    return {
+        "id": rental_id, "office_id": ambiente["office_id"], "office_nombre": office["nombre"],
+        "ambiente_id": ambiente["id"], "ambiente_nombre": ambiente["nombre"], "fecha": body.fecha,
+        "tramos": tramos, "cliente_tipo": body.cliente_tipo, "cliente_id": payer["id"],
+        "cliente_nombre": payer["nombre"], "cliente_ci": payer["ci"],
+        "cliente_cu": payer.get("cu") if body.cliente_tipo == "estudiante" else None,
+        "tarifa_id": tariff["id"], "tarifa_nombre": tariff["nombre"], "modalidad": modalidad,
+        "monto": cents / 100, "cantidad": float(quantity), "total": total_cents / 100,
+        "estado": "reservado", "cod_comprobante": None, "gestion": None,
+        "prefijo_comprobante": None, "comprobante_display": None, "fecha_pago": None,
+        "created_at": iso(datetime.now(timezone.utc)), "intervals": intervals,
+    }
+
+
+async def _claim_rental_intervals(rental: dict):
+    # Callers hold the per-room lease, so canceled entries and sufficiently old
+    # orphan claims can be reaped without racing an in-flight booking insert.
+    occupancy_id = f'{rental["ambiente_id"]}_{rental["fecha"]}'
+    current_occupancy = await db.alquiler_ocupacion.find_one(
+        {"_id": occupancy_id}, {"_id": 1, "intervals": 1}
+    )
+    if current_occupancy:
+        await _reap_stale_occupancy_claims(current_occupancy)
+    claimed_at = iso(datetime.now(timezone.utc))
+    for interval in rental["intervals"]:
+        interval["claimed_at"] = claimed_at
+    overlaps = [{"intervals": {"$elemMatch": {"start": {"$lt": interval["end"]}, "end": {"$gt": interval["start"]}}}} for interval in rental["intervals"]]
+    query = {"_id": occupancy_id, "$nor": overlaps}
+    try:
+        await db.alquiler_ocupacion.update_one(
+            query,
+            {"$setOnInsert": {"ambiente_id": rental["ambiente_id"], "fecha": rental["fecha"]}, "$push": {"intervals": {"$each": rental["intervals"]}}},
+            upsert=True,
+        )
+    except DuplicateKeyError:
+        raise HTTPException(status_code=409, detail="El horario solicitado ya está reservado.")
+
+
+async def _release_rental_intervals(rental: dict):
+    await db.alquiler_ocupacion.update_one(
+        {"_id": f'{rental["ambiente_id"]}_{rental["fecha"]}'},
+        {"$pull": {"intervals": {"rental_id": rental["id"]}}},
+    )
+
+
+def _claim_is_expired(claimed_at, cutoff: datetime) -> bool:
+    if isinstance(claimed_at, str):
+        try:
+            claimed_at = datetime.fromisoformat(claimed_at)
+        except ValueError:
+            return False
+    if not isinstance(claimed_at, datetime):
+        return False
+    if claimed_at.tzinfo is None:
+        claimed_at = claimed_at.replace(tzinfo=timezone.utc)
+    return claimed_at.astimezone(timezone.utc) <= cutoff
+
+
+async def _pull_occupancy_rental_claim(occupancy_id: str, rental_id: str):
+    await db.alquiler_ocupacion.update_one(
+        {"_id": occupancy_id},
+        {"$pull": {"intervals": {"rental_id": rental_id}}},
+    )
+
+
+async def _cancel_stale_confirmando(rental: dict, cutoff: datetime) -> bool:
+    started_at = rental.get("confirmation_started_at")
+    if not _claim_is_expired(started_at, cutoff):
+        return False
+    canceled = await db.alquileres.update_one(
+        {
+            "id": rental["id"],
+            "estado": "confirmando",
+            "confirmation_started_at": started_at,
+        },
+        {
+            "$set": {"estado": "cancelado"},
+            "$unset": {"confirmation_started_at": ""},
+        },
+    )
+    if canceled.modified_count:
+        await _release_rental_intervals(rental)
+        return True
+    return False
+
+
+async def _reap_stale_occupancy_claims(occupancy: dict):
+    intervals = occupancy.get("intervals", [])
+    grouped = {}
+    for interval in intervals:
+        rental_id = interval.get("rental_id")
+        if rental_id:
+            grouped.setdefault(rental_id, []).append(interval)
+    if not grouped:
+        return
+    rentals = await db.alquileres.find(
+        {"id": {"$in": list(grouped)}},
+        {
+            "_id": 0, "id": 1, "estado": 1, "confirmation_started_at": 1,
+            "ambiente_id": 1, "fecha": 1,
+        },
+    ).to_list(len(grouped))
+    rental_by_id = {rental["id"]: rental for rental in rentals}
+    cutoff = datetime.now(timezone.utc) - timedelta(seconds=_ROOM_LEASE_SECONDS + 30)
+    stale_ids = []
+    for rental_id, rental_intervals in grouped.items():
+        existing_rental = rental_by_id.get(rental_id)
+        state = existing_rental.get("estado") if existing_rental else None
+        if state == "confirmando" and await _cancel_stale_confirmando(existing_rental, cutoff):
+            stale_ids.append(rental_id)
+        elif state == "cancelado":
+            stale_ids.append(rental_id)
+        elif existing_rental is None and all(
+            _claim_is_expired(interval.get("claimed_at"), cutoff)
+            for interval in rental_intervals
+        ):
+            # Missing claimed_at is legacy/ambiguous and is intentionally
+            # preserved rather than risking deletion of an in-flight claim.
+            if all(interval.get("claimed_at") is not None for interval in rental_intervals):
+                stale_ids.append(rental_id)
+    for rental_id in stale_ids:
+        await _pull_occupancy_rental_claim(occupancy["_id"], rental_id)
+
+
+async def reconcile_rental_occupancy():
+    """Restore occupancy invariants after interrupted booking/payment work."""
+    now_iso = iso(datetime.now(timezone.utc))
+    await db.alquileres.update_many(
+        {
+            "estado": "procesando",
+            "$or": [
+                {"processing_lease_until": {"$lte": now_iso}},
+            ],
+        },
+        {
+            "$set": {"estado": "reservado"},
+            "$unset": {
+                "payment_token": "", "processing_lease_until": "",
+                "processing_started_at": "",
+            },
+        },
+    )
+    cutoff = datetime.now(timezone.utc) - timedelta(seconds=_ROOM_LEASE_SECONDS + 30)
+    async for provisional in db.alquileres.find(
+        {"estado": "confirmando"},
+        {
+            "_id": 0, "id": 1, "ambiente_id": 1, "fecha": 1,
+            "confirmation_started_at": 1,
+        },
+    ):
+        if not _claim_is_expired(provisional.get("confirmation_started_at"), cutoff):
+            continue
+        try:
+            async with _ambiente_lease(provisional["ambiente_id"]):
+                current = await db.alquileres.find_one(
+                    {"id": provisional["id"], "estado": "confirmando"},
+                    {
+                        "_id": 0, "id": 1, "ambiente_id": 1, "fecha": 1,
+                        "confirmation_started_at": 1,
+                    },
+                )
+                if current:
+                    await _cancel_stale_confirmando(current, cutoff)
+        except HTTPException as exc:
+            if exc.status_code == 404:
+                logger.info(
+                    "Se omite confirmación provisional de ambiente eliminado: %s",
+                    provisional["id"],
+                )
+                continue
+            if exc.status_code != 409:
+                raise
+    async for occupancy in db.alquiler_ocupacion.find(
+        {}, {"_id": 1, "ambiente_id": 1, "intervals": 1}
+    ):
+        ambiente_id = occupancy.get("ambiente_id") or occupancy["_id"].rsplit("_", 1)[0]
+        try:
+            async with _ambiente_lease(ambiente_id):
+                current_occupancy = await db.alquiler_ocupacion.find_one(
+                    {"_id": occupancy["_id"]},
+                    {"_id": 1, "intervals": 1},
+                )
+                if current_occupancy:
+                    await _reap_stale_occupancy_claims(current_occupancy)
+        except HTTPException as exc:
+            if exc.status_code == 404:
+                logger.info(
+                    "Se omite ocupación huérfana de ambiente eliminado: %s",
+                    occupancy["_id"],
+                )
+                continue
+            if exc.status_code != 409:
+                raise
+
+
+async def _finalize_rental_payment(rental_id: str, payment_token: str, update: dict):
+    return await db.alquileres.update_one(
+        {"id": rental_id, "estado": "procesando", "payment_token": payment_token},
+        {
+            "$set": update,
+            "$unset": {
+                "payment_token": "", "processing_lease_until": "",
+                "processing_started_at": "",
+            },
+        },
+    )
+
+
+async def _pay_rental(rental_id: str, user: dict) -> dict:
+    rental = await _rental_scope_record(rental_id, user)
+    if rental["estado"] == "pagado":
+        return rental
+    now_iso = iso(datetime.now(timezone.utc))
+    if rental["estado"] == "procesando":
+        lease_until = rental.get("processing_lease_until")
+        if not lease_until:
+            raise HTTPException(
+                status_code=409,
+                detail="El pago no tiene una expiración verificable y requiere recuperación segura.",
+            )
+        if lease_until > now_iso:
+            raise HTTPException(status_code=409, detail="El pago del alquiler ya está siendo procesado.")
+        stale_filter = {"id": rental_id, "estado": "procesando"}
+        stale_filter["processing_lease_until"] = lease_until
+        recovered = await db.alquileres.update_one(
+            stale_filter,
+            {
+                "$set": {"estado": "reservado"},
+                "$unset": {"payment_token": "", "processing_lease_until": "", "processing_started_at": ""},
+            },
+        )
+        if not recovered.modified_count:
+            latest = await db.alquileres.find_one({"id": rental_id}, {"_id": 0})
+            if latest and latest.get("estado") == "pagado":
+                return latest
+            raise HTTPException(status_code=409, detail="El pago del alquiler ya está siendo procesado.")
+    elif rental["estado"] != "reservado":
+        raise HTTPException(status_code=400, detail="Solo se puede pagar un alquiler reservado.")
+
+    payment_token = str(uuid.uuid4())
+    started_at = iso(datetime.now(timezone.utc))
+    claimed = await db.alquileres.update_one(
+        {"id": rental_id, "estado": "reservado"},
+        {"$set": {
+            "estado": "procesando",
+            "payment_token": payment_token,
+            "processing_started_at": started_at,
+            "processing_lease_until": iso(
+                datetime.now(timezone.utc) + timedelta(seconds=_PAYMENT_LEASE_SECONDS)
+            ),
+        }},
+    )
+    if not claimed.modified_count:
+        latest = await db.alquileres.find_one({"id": rental_id}, {"_id": 0})
+        if latest and latest.get("estado") == "pagado":
+            return latest
+        raise HTTPException(status_code=409, detail="El alquiler está siendo procesado.")
+    try:
+        year = datetime.now(timezone.utc).year
+        office = await _office_exists(rental["office_id"], active=True)
+        counter = await db.contadores.find_one_and_update(
+            {"_id": f'comprobante_{rental["office_id"]}_{year}'},
+            {"$inc": {"seq": 1}}, upsert=True, return_document=True,
+        )
+        code = f'{counter["seq"]:05d}'
+        paid_at = iso(datetime.now(timezone.utc))
+        update = {
+            "estado": "pagado", "cod_comprobante": code, "gestion": year,
+            "prefijo_comprobante": office["prefijo_comprobante"],
+            "comprobante_display": format_receipt_display(office["prefijo_comprobante"], code, year),
+            "fecha_pago": paid_at, "paid_by": user["id"],
+        }
+        # Counter allocation intentionally precedes the paid transition. A
+        # database failure can leave a skipped sequence; reusing it risks a
+        # duplicate receipt across Pagos and room rentals.
+        paid_result = await _finalize_rental_payment(rental_id, payment_token, update)
+        if not paid_result.modified_count:
+            raise RuntimeError("El alquiler dejó de estar disponible durante la emisión.")
+    except Exception as exc:
+        await db.alquileres.update_one(
+            {"id": rental_id, "estado": "procesando", "payment_token": payment_token},
+            {
+                "$set": {"estado": "reservado"},
+                "$unset": {
+                    "payment_token": "", "processing_lease_until": "",
+                    "processing_started_at": "",
+                },
+            },
+        )
+        if isinstance(exc, HTTPException):
+            raise exc
+        logging.exception("Fallo al emitir comprobante de alquiler %s", rental_id)
+        raise HTTPException(status_code=500, detail=f"No se pudo emitir el comprobante. La reserva {rental_id} sigue guardada.")
+    return await db.alquileres.find_one({"id": rental_id}, {"_id": 0})
+
+
+@api.get("/alquileres")
+async def get_alquileres(
+    ambiente_id: str, fecha_desde: str, fecha_hasta: str, office_id: Optional[str] = None,
+    user: dict = Depends(require_roles(*_RENTAL_ROLES)),
+):
+    start, end = _validate_rental_date(fecha_desde), _validate_rental_date(fecha_hasta)
+    if end < start or (end - start).days > 366:
+        raise HTTPException(status_code=400, detail="Rango de fechas inválido.")
+    ambiente = await db.ambientes.find_one({"id": ambiente_id}, {"_id": 0})
+    if not ambiente:
+        raise HTTPException(status_code=404, detail="Ambiente no encontrado.")
+    await office_scope(user, office_id or ambiente["office_id"])
+    if office_id and office_id != ambiente["office_id"]:
+        raise HTTPException(status_code=404, detail="Ambiente no encontrado en esa oficina.")
+    return await db.alquileres.find(
+        {
+            "ambiente_id": ambiente_id,
+            "fecha": {"$gte": fecha_desde, "$lte": fecha_hasta},
+            "estado": {"$ne": "confirmando"},
+        },
+        {"_id": 0, "intervals": 0},
+    ).sort([("fecha", 1), ("created_at", 1)]).to_list(None)
+
+
+@api.get("/alquileres/{rental_id}")
+async def get_alquiler(rental_id: str, user: dict = Depends(require_roles(*_RENTAL_ROLES))):
+    rental = await _rental_scope_record(rental_id, user)
+    if rental.get("estado") == "confirmando":
+        raise HTTPException(status_code=404, detail="Alquiler no encontrado.")
+    rental.pop("intervals", None)
+    return rental
+
+
+@api.post("/alquileres", status_code=201)
+async def create_alquiler(body: AlquilerCreate, user: dict = Depends(require_roles(*_RENTAL_ROLES))):
+    async with _ambiente_lease(body.ambiente_id) as lease_owner:
+        # Room schedule and active reservations are read only after acquiring
+        # the same lease used by schedule updates/deletes.
+        rental = await _build_rental(user, body)
+        confirmation_started_at = iso(datetime.now(timezone.utc))
+        rental["estado"] = "confirmando"
+        rental["confirmation_started_at"] = confirmation_started_at
+        try:
+            await _claim_rental_intervals(rental)
+            await _insert_rental_provisional(rental)
+            # Confirming records keep schedules and occupancy protected if the
+            # lease expires while the insert/confirmation flow is paused.
+            await _renew_ambiente_lease(body.ambiente_id, lease_owner)
+            confirmed = await _confirm_rental_provisional(
+                rental["id"], confirmation_started_at
+            )
+            if not confirmed.modified_count:
+                raise HTTPException(
+                    status_code=409,
+                    detail="La reserva perdió la exclusividad del ambiente; vuelva a intentarlo.",
+                )
+            rental["estado"] = "reservado"
+            rental.pop("confirmation_started_at", None)
+        except Exception as exc:
+            cancellation_won = False
+            try:
+                cancellation = await db.alquileres.update_one(
+                    {
+                        "id": rental["id"],
+                        "estado": "confirmando",
+                        "confirmation_started_at": confirmation_started_at,
+                    },
+                    {
+                        "$set": {"estado": "cancelado"},
+                        "$unset": {"confirmation_started_at": ""},
+                    },
+                )
+                cancellation_won = bool(cancellation.modified_count)
+            except Exception:
+                # The cancellation write can also have an unknown outcome;
+                # verify persisted state before deciding whether to release.
+                logging.exception("No se pudo confirmar la cancelación provisional %s", rental["id"])
+
+            may_release = cancellation_won
+            persisted = None
+            if not may_release:
+                try:
+                    persisted = await db.alquileres.find_one(
+                        {"id": rental["id"]}, {"_id": 0, "estado": 1}
+                    )
+                    may_release = (
+                        persisted is None or persisted.get("estado") == "cancelado"
+                    )
+                except Exception:
+                    logging.exception("No se pudo verificar el estado de la reserva %s", rental["id"])
+
+            if may_release:
+                try:
+                    await _release_rental_intervals(rental)
+                except Exception:
+                    logging.exception("No se pudieron liberar intervalos de reserva cancelada %s", rental["id"])
+                raise
+
+            # Conservatively retain occupancy whenever the record may still be
+            # active or its state cannot be verified.
+            logging.exception("Resultado incierto al confirmar reserva %s", rental["id"], exc_info=exc)
+            raise HTTPException(
+                status_code=500,
+                detail=f"No se pudo verificar la confirmación. Consulte la reserva {rental['id']} antes de reintentar.",
+            ) from exc
+    rental.pop("_id", None)
+    rental.pop("intervals", None)
+    if body.cobrar_ahora:
+        try:
+            paid = await _pay_rental(rental["id"], user)
+            paid.pop("intervals", None)
+            return paid
+        except HTTPException as exc:
+            raise HTTPException(status_code=exc.status_code, detail=f"{exc.detail} Reserva guardada: {rental['id']}.")
+    return rental
+
+
+@api.post("/alquileres/{rental_id}/pagar")
+async def pay_alquiler(rental_id: str, user: dict = Depends(require_roles(*_RENTAL_ROLES))):
+    rental = await _pay_rental(rental_id, user)
+    rental.pop("intervals", None)
+    return rental
+
+
+@api.post("/alquileres/{rental_id}/cancelar")
+async def cancel_alquiler(rental_id: str, user: dict = Depends(require_roles(*_RENTAL_ROLES))):
+    rental = await _rental_scope_record(rental_id, user)
+    if rental.get("estado") == "cancelado":
+        await _release_rental_intervals(rental)
+        return await db.alquileres.find_one({"id": rental_id}, {"_id": 0, "intervals": 0})
+    if rental.get("estado") != "reservado":
+        raise HTTPException(status_code=400, detail="Solo se puede cancelar un alquiler reservado.")
+    result = await db.alquileres.update_one(
+        {"id": rental_id, "estado": "reservado"}, {"$set": {"estado": "cancelado"}}
+    )
+    if not result.modified_count:
+        latest = await db.alquileres.find_one({"id": rental_id}, {"_id": 0})
+        if latest and latest.get("estado") == "cancelado":
+            await _release_rental_intervals(latest)
+            latest.pop("intervals", None)
+            return latest
+        raise HTTPException(status_code=400, detail="Solo se puede cancelar un alquiler reservado.")
+    await _release_rental_intervals(rental)
+    updated = await db.alquileres.find_one({"id": rental_id}, {"_id": 0, "intervals": 0})
+    return updated
 
 
 # ----------------------------- Pagos: comprobante preview -----------------------------
@@ -1559,43 +2438,9 @@ async def delete_pago_draft(
     )
     if not deleted.deleted_count:
         raise HTTPException(status_code=409, detail="El borrador ya no está disponible.")
-
-    correlativo_reutilizado = False
-    try:
-        codigo_descartado = int(pago["cod_comprobante"])
-        gestion = int(pago["gestion"])
-        counter_id = f"comprobante_{pago['office_id']}_{gestion}"
-        highest_rows = await db.pagos.aggregate(
-            [
-                {"$match": {"office_id": pago["office_id"], "gestion": gestion}},
-                {
-                    "$addFields": {
-                        "_receipt_seq": {
-                            "$convert": {
-                                "input": "$cod_comprobante",
-                                "to": "int",
-                                "onError": 0,
-                                "onNull": 0,
-                            }
-                        }
-                    }
-                },
-                {"$group": {"_id": None, "seq": {"$max": "$_receipt_seq"}}},
-            ]
-        ).to_list(1)
-        highest_existing = int(highest_rows[0]["seq"]) if highest_rows else 0
-        if highest_existing < codigo_descartado:
-            # Only rewind if this was still the latest allocated number.
-            # The compare-and-set keeps concurrent receipt creation safe.
-            result = await db.contadores.update_one(
-                {"_id": counter_id, "seq": codigo_descartado},
-                {"$set": {"seq": highest_existing}},
-            )
-            correlativo_reutilizado = result.modified_count > 0
-    except (KeyError, TypeError, ValueError):
-        logging.exception("No se pudo recuperar el correlativo del borrador %s", pago_id)
-
-    return {"ok": True, "correlativo_reutilizado": correlativo_reutilizado}
+    # Receipt numbers are append-only across Pago and alquileres. A discarded
+    # draft retains its allocated sequence so it can never collide later.
+    return {"ok": True, "correlativo_reutilizado": False}
 
 
 @api.get("/pagos/{pago_id}", response_model=Pago)
@@ -2008,7 +2853,7 @@ async def ensure_office_receipt_prefixes():
 
 
 async def reconcile_payment_counters():
-    """Set stored receipt counters to the highest code that still exists."""
+    """Raise stale counters to extant receipt maxima; never rewind at startup."""
     counters = await db.contadores.find(
         {"_id": {"$regex": "^comprobante_"}}
     ).to_list(None)
@@ -2039,12 +2884,23 @@ async def reconcile_payment_counters():
             ]
         ).to_list(1)
         highest_existing = int(highest_rows[0]["seq"]) if highest_rows else 0
+        rental_rows = await db.alquileres.aggregate(
+            [
+                {"$match": {"office_id": office_id, "gestion": gestion, "estado": "pagado"}},
+                {"$addFields": {"_receipt_seq": {"$convert": {"input": "$cod_comprobante", "to": "int", "onError": 0, "onNull": 0}}}},
+                {"$group": {"_id": None, "seq": {"$max": "$_receipt_seq"}}},
+            ]
+        ).to_list(1)
+        highest_existing = max(highest_existing, int(rental_rows[0]["seq"]) if rental_rows else 0)
         current_seq = int(counter.get("seq", 0) or 0)
-        if current_seq == highest_existing:
+        if current_seq >= highest_existing:
             continue
 
         result = await db.contadores.update_one(
-            {"_id": counter_id, "seq": counter.get("seq")},
+            {
+                "_id": counter_id,
+                "seq": {"$eq": counter.get("seq"), "$lt": highest_existing},
+            },
             {"$set": {"seq": highest_existing}},
         )
         if result.modified_count:
@@ -2118,6 +2974,18 @@ async def startup():
         },
         name="ambiente_name_per_office",
     )
+    await db.tarifas_ambientes.create_index("id", unique=True)
+    await db.tarifas_ambientes.create_index([("office_id", 1), ("ambiente_id", 1)])
+    await db.alquileres.create_index("id", unique=True)
+    await db.alquileres.create_index(
+        [("office_id", 1), ("gestion", 1), ("cod_comprobante", 1)],
+        unique=True,
+        partialFilterExpression={"estado": "pagado"},
+        name="rental_receipt_per_office_year",
+    )
+    await db.alquileres.create_index([("ambiente_id", 1), ("fecha", 1), ("estado", 1)])
+    # MongoDB creates a unique _id index automatically for every collection.
+    await reconcile_rental_occupancy()
     await db.pagos.create_index([("office_id", 1), ("gestion", 1), ("cod_comprobante", 1)],
                                 unique=True,
                                 partialFilterExpression={"office_id": {"$type": "string"}},
