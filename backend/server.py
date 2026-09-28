@@ -155,6 +155,36 @@ class PaginacionEstudiantes(BaseModel):
     pages: int
 
 
+class PersonaBase(BaseModel):
+    ci: str = Field(min_length=1, max_length=30)
+    nombre: str = Field(min_length=1, max_length=200)
+    office_id: Optional[str] = None
+    office_nombre: Optional[str] = None
+
+    @field_validator("ci", "nombre", mode="before")
+    @classmethod
+    def normalize_person_text(cls, value):
+        return value.strip() if isinstance(value, str) else value
+
+
+class PersonaCreate(PersonaBase):
+    pass
+
+
+class Persona(PersonaBase):
+    id: str
+    office_id: str
+    created_at: Optional[str] = None
+
+
+class PaginacionPersonas(BaseModel):
+    items: List[Persona]
+    total: int
+    page: int
+    size: int
+    pages: int
+
+
 class TipoPagoBase(BaseModel):
     nombre: str
     monto: float
@@ -550,7 +580,14 @@ async def delete_office(
     office_id: str, _: dict = Depends(require_roles(SUPER_ADMIN_ROLE))
 ):
     await _office_exists(office_id)
-    for collection in (db.usuarios, db.estudiantes, db.tipos_pagos, db.pagos):
+    for collection in (
+        db.usuarios,
+        db.estudiantes,
+        db.personas,
+        db.tipos_pagos,
+        db.ambientes,
+        db.pagos,
+    ):
         if await collection.find_one({"office_id": office_id}, {"_id": 1}):
             raise HTTPException(
                 status_code=400,
