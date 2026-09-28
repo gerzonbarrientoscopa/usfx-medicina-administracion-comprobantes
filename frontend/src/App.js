@@ -9,6 +9,7 @@ import { Toaster } from "@/components/ui/sonner";
 import LoginPage from "@/pages/LoginPage";
 import DashboardPage from "@/pages/DashboardPage";
 import EstudiantesPage from "@/pages/EstudiantesPage";
+import PersonasPage from "@/pages/PersonasPage";
 import TiposPagosPage from "@/pages/TiposPagosPage";
 import AmbientesPage from "@/pages/AmbientesPage";
 import UsuariosPage from "@/pages/UsuariosPage";
@@ -51,6 +52,16 @@ function App() {
                             <ProtectedRoute roles={["Administrador"]}>
                                 <AppLayout>
                                     <EstudiantesPage />
+                                </AppLayout>
+                            </ProtectedRoute>
+                        }
+                    />
+                    <Route
+                        path="/personas"
+                        element={
+                            <ProtectedRoute roles={["Administrador"]}>
+                                <AppLayout>
+                                    <PersonasPage />
                                 </AppLayout>
                             </ProtectedRoute>
                         }

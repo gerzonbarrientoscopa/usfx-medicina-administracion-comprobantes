@@ -740,6 +740,24 @@ async def delete_user(
     return {"ok": True}
 
 
+async def ensure_person_is_not_student(ci: str):
+    normalized_ci = ci.strip()
+    student = await db.estudiantes.find_one(
+        {
+            "ci": {
+                "$regex": rf"^\s*{re.escape(normalized_ci)}\s*$",
+                "$options": "i",
+            }
+        },
+        {"_id": 1},
+    )
+    if student:
+        raise HTTPException(
+            status_code=400,
+            detail="Esta persona está registrada como estudiante y no puede agregarse aquí.",
+        )
+
+
 # ----------------------------- CRUD Estudiantes -----------------------------
 @api.get("/estudiantes", response_model=PaginacionEstudiantes)
 async def get_estudiantes(
@@ -828,6 +846,109 @@ async def delete_estudiante(
             status_code=400, detail="No se puede eliminar: tiene pagos registrados."
         )
     await db.estudiantes.delete_one({"id": est_id, **scope})
+    return {"ok": True}
+
+
+# ----------------------------- CRUD Personas -----------------------------
+@api.get("/personas", response_model=PaginacionPersonas)
+async def get_personas(
+    pag: int = Query(1, ge=1),
+    tam: int = Query(20, ge=1, le=100),
+    textoBuscar: Optional[str] = None,
+    office_id: Optional[str] = None,
+    user: dict = Depends(require_roles("Administrador")),
+):
+    filt = await office_scope(user, office_id)
+    if textoBuscar and textoBuscar.strip():
+        search = re.escape(textoBuscar.strip())
+        filt["$or"] = [
+            {"ci": {"$regex": search, "$options": "i"}},
+            {"nombre": {"$regex": search, "$options": "i"}},
+        ]
+    total = await db.personas.count_documents(filt)
+    cursor = db.personas.find(filt, {"_id": 0}).sort(
+        [("nombre", 1), ("ci", 1)]
+    ).skip((pag - 1) * tam).limit(tam)
+    personas = await attach_office_names(await cursor.to_list(length=tam))
+    return {
+        "items": [Persona(**item) for item in personas],
+        "total": total,
+        "page": pag,
+        "size": tam,
+        "pages": max(1, (total + tam - 1) // tam),
+    }
+
+
+@api.post("/personas", response_model=Persona, status_code=201)
+async def create_persona(
+    persona: PersonaCreate, user: dict = Depends(require_roles("Administrador"))
+):
+    office_id = await office_for_write(user, persona.office_id)
+    await ensure_person_is_not_student(persona.ci)
+    persona_dict = persona.model_dump(exclude={"office_id", "office_nombre"})
+    persona_dict.update(
+        {
+            "id": str(uuid.uuid4()),
+            "office_id": office_id,
+            "ci_key": persona.ci.casefold(),
+            "created_at": iso(datetime.now(timezone.utc)),
+        }
+    )
+    try:
+        await db.personas.insert_one(persona_dict)
+    except DuplicateKeyError:
+        raise HTTPException(
+            status_code=400,
+            detail="Ya existe una persona con este C.I. en la oficina.",
+        )
+    await attach_office_names([persona_dict])
+    return Persona(**persona_dict)
+
+
+@api.put("/personas/{persona_id}", response_model=Persona)
+async def update_persona(
+    persona_id: str,
+    persona: PersonaCreate,
+    user: dict = Depends(require_roles("Administrador")),
+):
+    scope = await office_scope(user)
+    target = await db.personas.find_one(
+        {"id": persona_id, **scope}, {"_id": 0}
+    )
+    if not target:
+        raise HTTPException(status_code=404, detail="Persona no encontrada.")
+    if persona.office_id and persona.office_id != target["office_id"]:
+        raise HTTPException(
+            status_code=400, detail="No se puede cambiar la oficina de la persona."
+        )
+    await ensure_person_is_not_student(persona.ci)
+    update = persona.model_dump(exclude={"office_id", "office_nombre"})
+    update["ci_key"] = persona.ci.casefold()
+    try:
+        await db.personas.update_one(
+            {"id": persona_id, **scope}, {"$set": update}
+        )
+    except DuplicateKeyError:
+        raise HTTPException(
+            status_code=400,
+            detail="Ya existe una persona con este C.I. en la oficina.",
+        )
+    updated = await db.personas.find_one({"id": persona_id}, {"_id": 0})
+    await attach_office_names([updated])
+    return Persona(**updated)
+
+
+@api.delete("/personas/{persona_id}")
+async def delete_persona(
+    persona_id: str, user: dict = Depends(require_roles("Administrador"))
+):
+    scope = await office_scope(user)
+    target = await db.personas.find_one(
+        {"id": persona_id, **scope}, {"_id": 0}
+    )
+    if not target:
+        raise HTTPException(status_code=404, detail="Persona no encontrada.")
+    await db.personas.delete_one({"id": persona_id, **scope})
     return {"ok": True}
 
 
@@ -1972,6 +2093,16 @@ async def startup():
     await db.estudiantes.create_index("id", unique=True)
     await db.estudiantes.create_index("ci")
     await db.estudiantes.create_index("office_id")
+    await db.personas.create_index("id", unique=True)
+    await db.personas.create_index(
+        [("office_id", 1), ("ci_key", 1)],
+        unique=True,
+        partialFilterExpression={
+            "office_id": {"$type": "string"},
+            "ci_key": {"$type": "string"},
+        },
+        name="person_ci_per_office",
+    )
     await db.estudiantes.create_index(
         [("office_id", 1), ("cu", 1)],
         unique=True,
