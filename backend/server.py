@@ -1717,6 +1717,54 @@ async def ensure_office_receipt_prefixes():
         )
 
 
+async def reconcile_payment_counters():
+    """Set stored receipt counters to the highest code that still exists."""
+    counters = await db.contadores.find(
+        {"_id": {"$regex": "^comprobante_"}}
+    ).to_list(None)
+    for counter in counters:
+        counter_id = counter.get("_id", "")
+        suffix = counter_id.removeprefix("comprobante_")
+        office_id, separator, year_text = suffix.rpartition("_")
+        if not separator or not office_id or not year_text.isdigit():
+            continue
+
+        gestion = int(year_text)
+        highest_rows = await db.pagos.aggregate(
+            [
+                {"$match": {"office_id": office_id, "gestion": gestion}},
+                {
+                    "$addFields": {
+                        "_receipt_seq": {
+                            "$convert": {
+                                "input": "$cod_comprobante",
+                                "to": "int",
+                                "onError": 0,
+                                "onNull": 0,
+                            }
+                        }
+                    }
+                },
+                {"$group": {"_id": None, "seq": {"$max": "$_receipt_seq"}}},
+            ]
+        ).to_list(1)
+        highest_existing = int(highest_rows[0]["seq"]) if highest_rows else 0
+        current_seq = int(counter.get("seq", 0) or 0)
+        if current_seq == highest_existing:
+            continue
+
+        result = await db.contadores.update_one(
+            {"_id": counter_id, "seq": counter.get("seq")},
+            {"$set": {"seq": highest_existing}},
+        )
+        if result.modified_count:
+            logger.info(
+                "Correlativo de comprobantes reconciliado para oficina %s, gestión %s.",
+                office_id,
+                gestion,
+            )
+
+
 @app.on_event("startup")
 async def startup():
     await ensure_office_receipt_prefixes()
@@ -1756,6 +1804,7 @@ async def startup():
     await db.pagos.create_index("created_by")
     await db.pagos.create_index("id_estudiante")
     await db.pagos.create_index("id_tipo_pago")
+    await reconcile_payment_counters()
 
     admin = await db.usuarios.find_one({"email": SUPER_ADMIN_EMAIL})
     if admin is None:
