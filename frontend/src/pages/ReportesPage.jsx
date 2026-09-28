@@ -151,6 +151,21 @@ export default function ReportesPage() {
     }, [officeId]);
 
     const reportOfficeName = data?.office_nombre || officeName;
+    const reportRows = [
+        ...(data?.pagos || []).map((pago) => ({ ...pago, origen: "Estudiantil" })),
+        ...(data?.alquileres || []).map((alquiler) => ({
+            ...alquiler,
+            origen: "Alquiler",
+            estudiante_nombre: alquiler.cliente_nombre,
+            items: [{
+                tipo_pago_nombre: `${alquiler.ambiente_nombre} · ${alquiler.tarifa_nombre}`,
+                cantidad: alquiler.cantidad,
+                monto: alquiler.monto,
+                total: alquiler.total,
+            }],
+            anulado: false,
+        })),
+    ].sort((a, b) => a.fecha_pago.localeCompare(b.fecha_pago));
 
     const buildPDF = (modo) => {
         if (!data) return;
@@ -178,7 +193,7 @@ export default function ReportesPage() {
         doc.text(`Periodo: ${formatPeriodo(data)}`, W / 2, 114, { align: "center" });
 
         if (modo === "todos") {
-            const rows = data.pagos.flatMap((pago) => {
+            const rows = reportRows.flatMap((pago) => {
                 const items = pagoItems(pago);
                 const group = items.length ? items : [null];
                 return group.map((item, index) => {
@@ -187,7 +202,7 @@ export default function ReportesPage() {
                         first ? groupedPdfCell(value, group.length) : "";
                     return [
                         span(formatComprobante(pago)),
-                        span(pago.estudiante_nombre || ""),
+                        span(`${pago.origen}: ${pago.estudiante_nombre || ""}`),
                         span(formatDate(pago.fecha_pago)),
                         item ? reportConcept(item) : "Sin conceptos",
                         span(pago.office_nombre || reportOfficeName || ""),
@@ -198,7 +213,7 @@ export default function ReportesPage() {
             });
             autoTable(doc, {
                 startY: 134,
-                head: [["Comprobante", "Estudiante", "Fecha", "Concepto", "Oficina", "Válido (Bs.)", "Anulado (Bs.)"]],
+                head: [["Comprobante", "Origen / cliente", "Fecha", "Concepto", "Oficina", "Válido (Bs.)", "Anulado (Bs.)"]],
                 body: rows,
                 styles: { fontSize: 9, cellPadding: 5 },
                 headStyles: { fillColor: [122, 32, 53], textColor: 255 },
@@ -208,6 +223,8 @@ export default function ReportesPage() {
             autoTable(doc, {
                 startY: finalY,
                 body: [
+                    ["", "", "", "ESTUDIANTILES", "", formatMoney(data.totales.estudiantiles), ""],
+                    ["", "", "", "ALQUILERES", "", formatMoney(data.totales.alquileres), ""],
                     ["", "", "", "TOTAL VÁLIDOS", "", formatMoney(data.totales.validos), ""],
                     ["", "", "", "TOTAL ANULADOS", "", "", formatMoney(data.totales.anulados)],
                     ["", "", "", "DIFERENCIA (Válidos − Anulados)", "", formatMoney(data.totales.diferencia), ""],
@@ -217,7 +234,7 @@ export default function ReportesPage() {
                 theme: "grid",
             });
         } else {
-            const filtered = data.pagos.filter((p) => (modo === "validos" ? !p.anulado : p.anulado));
+            const filtered = reportRows.filter((p) => (modo === "validos" ? !p.anulado : p.anulado));
             const rows = filtered.flatMap((pago) => {
                 const items = pagoItems(pago);
                 const group = items.length ? items : [null];
@@ -227,7 +244,7 @@ export default function ReportesPage() {
                         first ? groupedPdfCell(value, group.length) : "";
                     return [
                         span(formatComprobante(pago)),
-                        span(pago.estudiante_nombre || ""),
+                        span(`${pago.origen}: ${pago.estudiante_nombre || ""}`),
                         span(formatDate(pago.fecha_pago)),
                         item ? reportConcept(item) : "Sin conceptos",
                         span(pago.office_nombre || reportOfficeName || ""),
@@ -238,7 +255,7 @@ export default function ReportesPage() {
             });
             autoTable(doc, {
                 startY: 134,
-                head: [["Comprobante", "Estudiante", "Fecha", "Concepto", "Oficina", "Cant.", "Total (Bs.)"]],
+                head: [["Comprobante", "Origen / cliente", "Fecha", "Concepto", "Oficina", "Cant.", "Total (Bs.)"]],
                 body: rows,
                 styles: { fontSize: 9, cellPadding: 5 },
                 headStyles: { fillColor: [122, 32, 53], textColor: 255 },
@@ -248,7 +265,11 @@ export default function ReportesPage() {
             const finalY = doc.lastAutoTable.finalY + 10;
             autoTable(doc, {
                 startY: finalY,
-                body: [["", "", "", "", "", "TOTAL", formatMoney(total)]],
+                body: modo === "validos" ? [
+                    ["", "", "", "", "", "ESTUDIANTILES", formatMoney(data.totales.estudiantiles)],
+                    ["", "", "", "", "", "ALQUILERES", formatMoney(data.totales.alquileres)],
+                    ["", "", "", "", "", "TOTAL", formatMoney(total)],
+                ] : [["", "", "", "", "", "TOTAL", formatMoney(total)]],
                 styles: { fontSize: 11, fontStyle: "bold", cellPadding: 6 },
                 columnStyles: { 6: { halign: "right" } },
                 theme: "grid",
@@ -268,12 +289,13 @@ export default function ReportesPage() {
         if (!data) return;
         let rows = [];
         if (modo === "todos") {
-            rows = data.pagos.flatMap((pago) => {
+            rows = reportRows.flatMap((pago) => {
                 const items = pagoItems(pago);
                 const group = items.length ? items : [null];
                 return group.map((item, index) => ({
                     Comprobante: index === 0 ? formatComprobante(pago) : "",
-                    Estudiante: index === 0 ? pago.estudiante_nombre || "" : "",
+                    Origen: index === 0 ? pago.origen : "",
+                    Cliente: index === 0 ? pago.estudiante_nombre || "" : "",
                     Fecha: index === 0 ? formatDate(pago.fecha_pago) : "",
                     Concepto: item?.tipo_pago_nombre || "Sin conceptos",
                     Cantidad: item?.cantidad ?? "",
@@ -284,17 +306,20 @@ export default function ReportesPage() {
                 }));
             });
             rows.push({});
+            rows.push({ Comprobante: "ESTUDIANTILES", Valido: data.totales.estudiantiles });
+            rows.push({ Comprobante: "ALQUILERES", Valido: data.totales.alquileres });
             rows.push({ Comprobante: "TOTAL VÁLIDOS", Valido: data.totales.validos });
             rows.push({ Comprobante: "TOTAL ANULADOS", Anulado: data.totales.anulados });
             rows.push({ Comprobante: "DIFERENCIA", Valido: data.totales.diferencia });
         } else {
-            const filtered = data.pagos.filter((p) => (modo === "validos" ? !p.anulado : p.anulado));
+            const filtered = reportRows.filter((p) => (modo === "validos" ? !p.anulado : p.anulado));
             rows = filtered.flatMap((pago) => {
                 const items = pagoItems(pago);
                 const group = items.length ? items : [null];
                 return group.map((item, index) => ({
                     Comprobante: index === 0 ? formatComprobante(pago) : "",
-                    Estudiante: index === 0 ? pago.estudiante_nombre || "" : "",
+                    Origen: index === 0 ? pago.origen : "",
+                    Cliente: index === 0 ? pago.estudiante_nombre || "" : "",
                     Fecha: index === 0 ? formatDate(pago.fecha_pago) : "",
                     Concepto: item?.tipo_pago_nombre || "Sin conceptos",
                     Oficina: index === 0 ? pago.office_nombre || reportOfficeName || "" : "",
@@ -304,6 +329,10 @@ export default function ReportesPage() {
                 }));
             });
             rows.push({});
+            if (modo === "validos") {
+                rows.push({ Comprobante: "ESTUDIANTILES", Total: data.totales.estudiantiles });
+                rows.push({ Comprobante: "ALQUILERES", Total: data.totales.alquileres });
+            }
             rows.push({
                 Comprobante: "TOTAL",
                 Total: modo === "validos" ? data.totales.validos : data.totales.anulados,
@@ -476,6 +505,8 @@ export default function ReportesPage() {
                                             Bs. {formatMoney(data.totales.validos)}
                                         </div>
                                         <div className="text-xs text-[color:var(--institution-muted)]">{data.totales.count_validos} comprobantes</div>
+                                        <div className="text-xs text-[color:var(--institution-muted)]">Estudiantiles: Bs. {formatMoney(data.totales.estudiantiles)}</div>
+                                        <div className="text-xs text-[color:var(--institution-muted)]">Alquileres: Bs. {formatMoney(data.totales.alquileres)} ({data.alquileres.length})</div>
                                     </div>
                                     <div>
                                         <div className="section-eyebrow">Total Anulados</div>
@@ -498,7 +529,7 @@ export default function ReportesPage() {
                                     <TableHeader>
                                         <TableRow style={{ backgroundColor: "var(--institution-cream)" }}>
                                             <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Comprobante</TableHead>
-                                            <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Estudiante</TableHead>
+                                            <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Origen / cliente</TableHead>
                                             <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Fecha</TableHead>
                                             <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Concepto</TableHead>
                                             <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Oficina</TableHead>
@@ -507,7 +538,7 @@ export default function ReportesPage() {
                                         </TableRow>
                                     </TableHeader>
                                     <TableBody>
-                                        {data.pagos.flatMap((pago) => {
+                                        {reportRows.flatMap((pago) => {
                                             const items = pagoItems(pago);
                                             const group = items.length ? items : [null];
                                             return group.map((item, index) => {
@@ -521,7 +552,7 @@ export default function ReportesPage() {
                                                         )}
                                                         {first && (
                                                             <TableCell rowSpan={group.length} className="align-middle">
-                                                                {pago.estudiante_nombre}
+                                                                {pago.origen} · {pago.estudiante_nombre}
                                                             </TableCell>
                                                         )}
                                                         {first && (
@@ -558,13 +589,16 @@ export default function ReportesPage() {
                                                 );
                                             });
                                         })}
-                                        {data.pagos.length > 0 && (
+                                        {reportRows.length > 0 && (
                                             <>
                                                 <TableRow style={{ backgroundColor: "var(--institution-cream)" }}>
                                                     <TableCell colSpan={5} className="text-right uppercase text-xs tracking-widest text-[color:var(--institution-muted)] font-semibold">
                                                         Totales
                                                     </TableCell>
-                                                    <TableCell className="text-right font-mono-num font-semibold">{formatMoney(data.totales.validos)}</TableCell>
+                                                    <TableCell className="text-right font-mono-num font-semibold">
+                                                        {formatMoney(data.totales.validos)}
+                                                        <div className="text-xs font-normal">Estudiantiles: {formatMoney(data.totales.estudiantiles)} · Alquileres: {formatMoney(data.totales.alquileres)}</div>
+                                                    </TableCell>
                                                     <TableCell className="text-right font-mono-num font-semibold">{formatMoney(data.totales.anulados)}</TableCell>
                                                 </TableRow>
                                                 <TableRow>
@@ -577,7 +611,7 @@ export default function ReportesPage() {
                                                 </TableRow>
                                             </>
                                         )}
-                                        {data.pagos.length === 0 && (
+                                        {reportRows.length === 0 && (
                                             <TableRow>
                                                 <TableCell colSpan={7} className="text-center py-10 text-sm text-[color:var(--institution-muted)]">
                                                     Sin pagos en el periodo seleccionado.

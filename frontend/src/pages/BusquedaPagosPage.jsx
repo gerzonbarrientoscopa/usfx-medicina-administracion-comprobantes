@@ -46,6 +46,7 @@ import { Printer, Search, Pencil, ChevronsUpDown, Check, ChevronLeft, ChevronRig
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { printComprobante } from "@/components/ComprobantePrint";
+import { printAlquilerComprobante } from "@/components/AlquilerComprobantePrint";
 
 const pagoItems = (pago) => {
     if (Array.isArray(pago.items) && pago.items.length) return pago.items;
@@ -159,7 +160,7 @@ export default function BusquedaPagosPage() {
             if (desde) params.fecha_desde = desde;
             if (hasta) params.fecha_hasta = hasta;
             if (!resetOfficeFilters && createdBy && createdBy !== "all") params.created_by = createdBy;
-            const { data } = await apiClient.get("/pagos", { params });
+            const { data } = await apiClient.get("/comprobantes", { params });
             if (requestId !== searchRequest.current || officeIdRef.current !== officeAtStart) return null;
             setPagos(data.items);
             setPagina(data.page);
@@ -283,7 +284,7 @@ export default function BusquedaPagosPage() {
                 <div className="section-eyebrow">Consultas</div>
                 <h1 className="font-serif-display text-4xl mt-1">Búsqueda de Pagos</h1>
                 <p className="text-sm text-[color:var(--institution-muted)] mt-1">
-                    Busque por código (ej. MED-00001 / 2026), nombre de estudiante, tipo de pago, rango de fechas o usuario que registró.
+                    Busque comprobantes estudiantiles y de alquiler por código, cliente, ambiente, concepto, fechas o usuario que cobró.
                 </p>
             </div>
 
@@ -319,7 +320,7 @@ export default function BusquedaPagosPage() {
                         />
                     </div>
                     <div className="space-y-1.5">
-                        <Label className="text-xs uppercase tracking-widest text-[color:var(--institution-muted)]">Tipo de pago</Label>
+                        <Label className="text-xs uppercase tracking-widest text-[color:var(--institution-muted)]">Tipo de pago estudiantil</Label>
                         <Select value={tipo} onValueChange={setTipo}>
                             <SelectTrigger className="rounded-sm" data-testid="busq-tipo-select">
                                 <SelectValue placeholder="Todos" />
@@ -335,7 +336,7 @@ export default function BusquedaPagosPage() {
                         </Select>
                     </div>
                     <div className="space-y-1.5">
-                        <Label className="text-xs uppercase tracking-widest text-[color:var(--institution-muted)]">Registrado por</Label>
+                        <Label className="text-xs uppercase tracking-widest text-[color:var(--institution-muted)]">Cobrado / registrado por</Label>
                         <Select value={createdBy} onValueChange={setCreatedBy}>
                             <SelectTrigger className="rounded-sm" data-testid="busq-user-select">
                                 <SelectValue placeholder="Todos" />
@@ -390,8 +391,9 @@ export default function BusquedaPagosPage() {
                         <TableRow style={{ backgroundColor: "var(--institution-cream)" }}>
                             <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Código</TableHead>
                             {isSuperAdmin && <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Oficina</TableHead>}
-                            <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Estudiante</TableHead>
-                            <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Tipo de pago</TableHead>
+                            <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Origen</TableHead>
+                            <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Cliente / estudiante</TableHead>
+                            <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Concepto / ambiente</TableHead>
                             <TableHead className="text-right uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Cantidad</TableHead>
                             <TableHead className="text-right uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Monto</TableHead>
                             <TableHead className="text-right uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Total</TableHead>
@@ -408,24 +410,25 @@ export default function BusquedaPagosPage() {
                                     {formatComprobante(p)}
                                 </TableCell>
                                 {isSuperAdmin && <TableCell>{p.office_nombre || "—"}</TableCell>}
-                                <TableCell>{p.estudiante_nombre || "—"}</TableCell>
+                                <TableCell>{p.origen === "alquiler" ? "Alquiler" : "Estudiantil"}</TableCell>
+                                <TableCell>{p.origen === "alquiler" ? p.cliente_nombre : p.estudiante_nombre || "—"}</TableCell>
                                 <TableCell>
-                                    {pagoItems(p).length ? pagoItems(p).map((item, index) => (
+                                    {p.origen === "alquiler" ? `${p.ambiente_nombre} · ${p.tarifa_nombre}` : pagoItems(p).length ? pagoItems(p).map((item, index) => (
                                         <div key={`${item.id_tipo_pago || item.tipo_pago_nombre}-${index}`}>
                                             {item.tipo_pago_nombre || "—"}
                                         </div>
                                     )) : "—"}
                                 </TableCell>
                                 <TableCell className="text-right font-mono-num">
-                                    {pagoItems(p).map((item, index) => <div key={index}>{item.cantidad}</div>)}
+                                    {p.origen === "alquiler" ? p.cantidad : pagoItems(p).map((item, index) => <div key={index}>{item.cantidad}</div>)}
                                 </TableCell>
                                 <TableCell className="text-right font-mono-num">
-                                    {pagoItems(p).map((item, index) => <div key={index}>{formatMoney(item.monto)}</div>)}
+                                    {p.origen === "alquiler" ? formatMoney(p.monto) : pagoItems(p).map((item, index) => <div key={index}>{formatMoney(item.monto)}</div>)}
                                 </TableCell>
                                 <TableCell className="text-right font-mono-num font-semibold">{formatMoney(p.total)}</TableCell>
                                 <TableCell className="font-mono-num">{p.fecha_pago}</TableCell>
                                 <TableCell className="text-xs text-[color:var(--institution-muted)]">
-                                    {p.created_by_name || "—"}
+                                    {p.origen === "alquiler" ? (users.find((u) => u.id === p.paid_by)?.nombre || "—") : p.created_by_name || "—"}
                                     {p.edited_by_name && (
                                         <div className="text-[10px] italic">editado por {p.edited_by_name}</div>
                                     )}
@@ -438,7 +441,7 @@ export default function BusquedaPagosPage() {
                                     )}
                                 </TableCell>
                                 <TableCell className="text-right whitespace-nowrap">
-                                    {canEdit && !p.anulado && pagoItems(p).length <= 1 && (
+                                    {p.origen !== "alquiler" && canEdit && !p.anulado && pagoItems(p).length <= 1 && (
                                         <Button
                                             size="sm"
                                             variant="ghost"
@@ -452,7 +455,7 @@ export default function BusquedaPagosPage() {
                                     <Button
                                         size="sm"
                                         variant="outline"
-                                        onClick={() => printComprobante(p)}
+                                        onClick={() => p.origen === "alquiler" ? printAlquilerComprobante(p) : printComprobante(p)}
                                         className="rounded-sm"
                                         data-testid={`reimprimir-btn-${p.id}`}
                                     >
@@ -463,14 +466,14 @@ export default function BusquedaPagosPage() {
                         ))}
                         {!loading && pagos.length === 0 && (
                             <TableRow>
-                                <TableCell colSpan={isSuperAdmin ? 11 : 10} className="text-center py-12 text-sm text-[color:var(--institution-muted)]">
+                                <TableCell colSpan={isSuperAdmin ? 12 : 11} className="text-center py-12 text-sm text-[color:var(--institution-muted)]">
                                     Sin resultados.
                                 </TableCell>
                             </TableRow>
                         )}
                         {loading && (
                             <TableRow>
-                                <TableCell colSpan={isSuperAdmin ? 11 : 10} className="text-center py-12 text-sm text-[color:var(--institution-muted)]">
+                                <TableCell colSpan={isSuperAdmin ? 12 : 11} className="text-center py-12 text-sm text-[color:var(--institution-muted)]">
                                     Buscando…
                                 </TableCell>
                             </TableRow>

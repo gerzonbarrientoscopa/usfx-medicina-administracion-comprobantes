@@ -2583,7 +2583,113 @@ async def get_pagos(
         "pages": total_paginas,
     }
 
-
+@api.get("/comprobantes")
+async def buscar_comprobantes(
+    q: Optional[str] = None,
+    id_tipo_pago: Optional[str] = None,
+    fecha_desde: Optional[str] = None,
+    fecha_hasta: Optional[str] = None,
+    created_by: Optional[str] = None,
+    office_id: Optional[str] = None,
+    pag: int = Query(1, ge=1),
+    tam: int = Query(20, ge=1, le=100),
+    user: dict = Depends(get_current_user),
+):
+    if fecha_desde and fecha_hasta and fecha_desde > fecha_hasta:
+        raise HTTPException(status_code=400, detail="La fecha inicial no puede ser posterior a la fecha final.")
+    for value in (fecha_desde, fecha_hasta):
+        if value:
+            try:
+                date.fromisoformat(value)
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Fecha inválida. Use YYYY-MM-DD.")
+    scope = await office_scope(user, office_id)
+    students = {**scope, "estado": {"$ne": "borrador"}}
+    rentals = {**scope, "estado": "pagado"}
+    if fecha_desde or fecha_hasta:
+        dates = {}
+        if fecha_desde:
+            dates["$gte"] = fecha_desde
+        if fecha_hasta:
+            # Rental payment timestamps are ISO datetimes, student dates are YYYY-MM-DD.
+            dates["$lt"] = (date.fromisoformat(fecha_hasta) + timedelta(days=1)).isoformat()
+        students["fecha_pago"] = dates
+        rentals["fecha_pago"] = dates
+    if created_by:
+        students["created_by"] = created_by
+        rentals["paid_by"] = created_by
+    if id_tipo_pago:
+        students["$and"] = [{"$or": [
+            {"id_tipo_pago": id_tipo_pago}, {"items.id_tipo_pago": id_tipo_pago},
+        ]}]
+        # Student payment concepts do not apply to room rentals.
+        rentals["id"] = {"$exists": False}
+    term = q.strip() if q else ""
+    if term:
+        escaped = re.escape(term)
+        receipt = re.fullmatch(
+            r"(?:(?P<prefix>[A-Za-z]{3})\s*-\s*)?"
+            r"(?P<code>\d{1,5})(?:\s*/\s*(?P<year>\d{4}))?", term,
+        )
+        if receipt:
+            code = {"cod_comprobante": receipt["code"].zfill(5)}
+            if receipt["year"]:
+                code["gestion"] = int(receipt["year"])
+            if receipt["prefix"]:
+                code["prefijo_comprobante"] = receipt["prefix"].upper()
+            student_or, rental_or = [code], [code]
+        else:
+            student_or = [{"cod_comprobante": {"$regex": escaped, "$options": "i"}}]
+            rental_or = [{"cod_comprobante": {"$regex": escaped, "$options": "i"}}]
+        est_ids = [e["id"] async for e in db.estudiantes.find(
+            {**scope, "$or": [
+                {"nombre": {"$regex": escaped, "$options": "i"}},
+                {"ci": {"$regex": escaped, "$options": "i"}},
+                {"cu": {"$regex": escaped, "$options": "i"}},
+            ]}, {"_id": 0, "id": 1},
+        )]
+        if est_ids:
+            student_or.append({"id_estudiante": {"$in": est_ids}})
+        tp_ids = [t["id"] async for t in db.tipos_pagos.find(
+            {**scope, "nombre": {"$regex": escaped, "$options": "i"}},
+            {"_id": 0, "id": 1},
+        )]
+        if tp_ids:
+            student_or.extend([
+                {"id_tipo_pago": {"$in": tp_ids}},
+                {"items.id_tipo_pago": {"$in": tp_ids}},
+            ])
+        rental_or.extend([
+            {"cliente_nombre": {"$regex": escaped, "$options": "i"}},
+            {"cliente_ci": {"$regex": escaped, "$options": "i"}},
+            {"cliente_cu": {"$regex": escaped, "$options": "i"}},
+            {"ambiente_nombre": {"$regex": escaped, "$options": "i"}},
+            {"tarifa_nombre": {"$regex": escaped, "$options": "i"}},
+        ])
+        students.setdefault("$and", []).append({"$or": student_or})
+        rentals["$or"] = rental_or
+    pipeline = [
+        {"$match": students},
+        *_PAGO_HYDRATE_PIPELINE,
+        {"$addFields": {"origen": "estudiantil"}},
+        {"$unionWith": {"coll": "alquileres", "pipeline": [
+            {"$match": rentals},
+            {"$project": {"_id": 0, "intervals": 0}},
+            {"$addFields": {"origen": "alquiler"}},
+        ]}},
+        {"$facet": {
+            "count": [{"$count": "total"}],
+            "items": [
+                {"$sort": {"fecha_pago": -1, "id": 1}},
+                {"$skip": (pag - 1) * tam},
+                {"$limit": tam},
+            ],
+        }},
+    ]
+    result = (await db.pagos.aggregate(pipeline).to_list(1))[0]
+    total = result["count"][0]["total"] if result["count"] else 0
+    return {"items": result["items"], "total": total, "page": pag, "size": tam,
+            "pages": (total + tam - 1) // tam if total else 1}
 @api.put("/pagos/{pago_id}", response_model=Pago)
 async def update_pago(
     pago_id: str, body: PagoCreate, user: dict = Depends(require_roles("Administrador", "Caja"))
@@ -2721,6 +2827,12 @@ async def reportes(
     user: dict = Depends(require_roles("Administrador")),
 ):
     d, h = _periodo_to_range(periodo, desde, hasta)
+    try:
+        start_date, end_date = date.fromisoformat(d), date.fromisoformat(h)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Fecha inválida. Use YYYY-MM-DD.")
+    if end_date < start_date:
+        raise HTTPException(status_code=400, detail="La fecha inicial no puede ser posterior a la fecha final.")
     scope = await office_scope(user, office_id)
     filt = {
         **scope,
@@ -2740,7 +2852,16 @@ async def reportes(
 
     validos = [p for p in pagos if not p.get("anulado")]
     anulados = [p for p in pagos if p.get("anulado")]
-    total_validos = sum(float(p["total"]) for p in validos)
+    rental_filter = {**scope, "estado": "pagado",
+                     "fecha_pago": {"$gte": d, "$lt": (end_date + timedelta(days=1)).isoformat()}}
+    if created_by:
+        rental_filter["paid_by"] = created_by
+    alquileres = await db.alquileres.find(
+        rental_filter, {"_id": 0, "intervals": 0}
+    ).sort("fecha_pago", 1).to_list(None)
+    total_estudiantil = sum(float(p["total"]) for p in validos)
+    total_alquileres = sum(float(a["total"]) for a in alquileres)
+    total_validos = total_estudiantil + total_alquileres
     total_anulados = sum(float(p["total"]) for p in anulados)
     selected_office = (
         await db.oficinas.find_one({"id": scope["office_id"]}, {"_id": 0, "nombre": 1})
@@ -2752,11 +2873,14 @@ async def reportes(
         "office_id": scope.get("office_id"),
         "office_nombre": selected_office["nombre"] if selected_office else "Todas las oficinas",
         "pagos": pagos,
+        "alquileres": alquileres,
         "totales": {
             "validos": total_validos,
+            "estudiantiles": total_estudiantil,
+            "alquileres": total_alquileres,
             "anulados": total_anulados,
             "diferencia": total_validos - total_anulados,
-            "count_validos": len(validos),
+            "count_validos": len(validos) + len(alquileres),
             "count_anulados": len(anulados),
         },
     }
