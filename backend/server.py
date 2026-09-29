@@ -3027,10 +3027,36 @@ async def ensure_office_receipt_prefixes():
 
 
 async def reconcile_payment_counters():
-    """Raise stale counters to extant receipt maxima; never rewind at startup."""
+    """Migrate legacy counters and raise scoped counters to receipt maxima."""
     counters = await db.contadores.find(
         {"_id": {"$regex": "^comprobante_"}}
     ).to_list(None)
+    legacy_counters = []
+    for counter in counters:
+        legacy_year = counter.get("_id", "").removeprefix("comprobante_")
+        try:
+            legacy_seq = int(counter.get("seq", 0) or 0)
+        except (TypeError, ValueError):
+            continue
+        if legacy_year.isdigit() and legacy_seq > 0:
+            legacy_counters.append((int(legacy_year), legacy_seq))
+
+    if legacy_counters:
+        offices = await db.oficinas.find({}, {"_id": 0, "id": 1}).to_list(None)
+        for gestion, legacy_seq in legacy_counters:
+            for office in offices:
+                counter_id = f"comprobante_{office['id']}_{gestion}"
+                await db.contadores.update_one(
+                    {"_id": counter_id},
+                    {"$max": {"seq": legacy_seq}},
+                    upsert=True,
+                )
+        # Include newly initialized office-scoped counters in the usual
+        # reconciliation against extant student-payment and rental receipts.
+        counters = await db.contadores.find(
+            {"_id": {"$regex": "^comprobante_"}}
+        ).to_list(None)
+
     for counter in counters:
         counter_id = counter.get("_id", "")
         suffix = counter_id.removeprefix("comprobante_")
