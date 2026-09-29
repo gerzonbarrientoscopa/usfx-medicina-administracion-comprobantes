@@ -3,8 +3,8 @@ name: Shared receipt sequence
 description: Why rental and student payment receipts use an append-only shared counter
 ---
 
-**Rule:** Never rewind a receipt counter when a payment draft is discarded or a rental payment fails. Gaps are acceptable; reusing a number is not.
+**Rule:** A discarded student-payment draft may return its number only if an atomic compare-and-decrement confirms it is still the latest shared allocation. Never rewind past a newer receipt; failed rental payments keep their allocated number consumed.
 
-**Why:** A rental may have allocated a number but not yet persisted its paid state while another payment draft is deleted. Rewinding based only on visible receipts can issue that number again across the two receipt collections.
+**Why:** Student payments and rentals share one counter per office/year. A newer allocation may be in flight and not yet visible in its receipt collection, so reading existing receipts and setting the counter backward can issue duplicates.
 
-**How to apply:** Preserve monotonic allocation and only reconcile counters upward. When changing either payment flow, test a concurrent rental allocation and student-payment draft deletion together.
+**How to apply:** Reclaim a draft's number only with an atomic `seq == draft_code` condition after deletion. Keep startup reconciliation upward-only, and test both tail reuse during a rental allocation and deletion of an older draft after a newer receipt.

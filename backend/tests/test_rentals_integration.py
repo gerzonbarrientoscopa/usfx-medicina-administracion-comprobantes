@@ -1256,7 +1256,7 @@ def test_payment_failure_keeps_reservation_and_does_not_reuse_receipt_number(mon
     mongo_rental_api["loop"].run_until_complete(run())
 
 
-def test_concurrent_rental_and_deleted_pago_draft_keep_shared_counter_append_only(mongo_rental_api, monkeypatch):
+def test_concurrent_rental_and_deleted_pago_draft_reuses_only_current_tail(mongo_rental_api, monkeypatch):
     async def run():
         db = mongo_rental_api["db"]
         year = datetime.now(timezone.utc).year
@@ -1310,7 +1310,7 @@ def test_concurrent_rental_and_deleted_pago_draft_keep_shared_counter_append_onl
             draft_code = draft.json()["cod_comprobante"]
             deleted = await client.delete(f'{API}/pagos/{draft.json()["id"]}/borrador')
             assert deleted.status_code == 200
-            assert deleted.json()["correlativo_reutilizado"] is False
+            assert deleted.json()["correlativo_reutilizado"] is True
 
             finish_payment.set()
             paid_rental_response = await rental_payment_task
@@ -1329,7 +1329,7 @@ def test_concurrent_rental_and_deleted_pago_draft_keep_shared_counter_append_onl
                 },
             )
             assert next_pago.status_code == 201, next_pago.text
-            assert int(next_pago.json()["cod_comprobante"]) > int(draft_code)
+            assert next_pago.json()["cod_comprobante"] == draft_code
             rental_receipts = await db.alquileres.find(
                 {"estado": "pagado"}, {"_id": 0, "cod_comprobante": 1}
             ).to_list(None)
@@ -1342,6 +1342,62 @@ def test_concurrent_rental_and_deleted_pago_draft_keep_shared_counter_append_onl
                 "_id": f'comprobante_{mongo_rental_api["office_a"]}_{year}'
             })
             assert counter["seq"] == int(next_pago.json()["cod_comprobante"])
+
+    mongo_rental_api["loop"].run_until_complete(run())
+
+
+def test_discarding_nonlatest_draft_does_not_rewind_past_newer_receipt(mongo_rental_api):
+    async def run():
+        db = mongo_rental_api["db"]
+        year = datetime.now(timezone.utc).year
+        await db.estudiantes.insert_one({
+            "id": "counter-student-b", "office_id": mongo_rental_api["office_a"],
+            "ci": "COUNTER-CI-B", "cu": "COUNTER-CU-B", "nombre": "Counter Test B",
+            "gestion": year,
+        })
+        await db.tipos_pagos.insert_one({
+            "id": "counter-type-b", "office_id": mongo_rental_api["office_a"],
+            "nombre": "Counter concept B", "nombre_key": "counter concept b",
+            "monto": 5.0, "descripcion": "", "inicio": f"{year}-01-01",
+        })
+        async with await _client(_actor()) as client:
+            draft = await client.post(
+                f"{API}/pagos",
+                json={
+                    "id_estudiante": "counter-student-b",
+                    "fecha_pago": date.today().isoformat(),
+                    "office_id": mongo_rental_api["office_a"],
+                },
+            )
+            assert draft.status_code == 201, draft.text
+            issued = await client.post(
+                f"{API}/pagos",
+                json={
+                    "id_estudiante": "counter-student-b",
+                    "fecha_pago": date.today().isoformat(),
+                    "office_id": mongo_rental_api["office_a"],
+                    "id_tipo_pago": "counter-type-b",
+                    "cantidad": 1,
+                },
+            )
+            assert issued.status_code == 201, issued.text
+            assert int(issued.json()["cod_comprobante"]) == int(draft.json()["cod_comprobante"]) + 1
+
+            deleted = await client.delete(f'{API}/pagos/{draft.json()["id"]}/borrador')
+            assert deleted.status_code == 200
+            assert deleted.json()["correlativo_reutilizado"] is False
+            next_receipt = await client.post(
+                f"{API}/pagos",
+                json={
+                    "id_estudiante": "counter-student-b",
+                    "fecha_pago": date.today().isoformat(),
+                    "office_id": mongo_rental_api["office_a"],
+                    "id_tipo_pago": "counter-type-b",
+                    "cantidad": 1,
+                },
+            )
+            assert next_receipt.status_code == 201, next_receipt.text
+            assert int(next_receipt.json()["cod_comprobante"]) == int(issued.json()["cod_comprobante"]) + 1
 
     mongo_rental_api["loop"].run_until_complete(run())
 

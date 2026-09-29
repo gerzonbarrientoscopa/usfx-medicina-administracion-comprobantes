@@ -2443,9 +2443,43 @@ async def delete_pago_draft(
     )
     if not deleted.deleted_count:
         raise HTTPException(status_code=409, detail="El borrador ya no está disponible.")
-    # Receipt numbers are append-only across Pago and alquileres. A discarded
-    # draft retains its allocated sequence so it can never collide later.
-    return {"ok": True, "correlativo_reutilizado": False}
+
+    # Return the sequence only when this draft is still the latest allocation.
+    # The compare-and-decrement shares the same atomic counter used by rentals,
+    # so any newer payment/rental allocation makes this update miss instead of
+    # rewinding past a number that may already be in flight.
+    correlativo_reutilizado = False
+    try:
+        draft_seq = int(pago.get("cod_comprobante", ""))
+        receipt_filter = {
+            "office_id": pago["office_id"],
+            "gestion": pago["gestion"],
+            "cod_comprobante": pago["cod_comprobante"],
+        }
+        existing_payment = await db.pagos.find_one(
+            {**receipt_filter, "id": {"$ne": pago_id}}, {"_id": 1}
+        )
+        existing_rental = await db.alquileres.find_one(
+            {**receipt_filter, "estado": "pagado"}, {"_id": 1}
+        )
+        if draft_seq > 0 and not existing_payment and not existing_rental:
+            counter_id = (
+                f"comprobante_{pago['office_id']}_{pago['gestion']}"
+            )
+            counter_update = await db.contadores.update_one(
+                {"_id": counter_id, "seq": draft_seq},
+                {"$inc": {"seq": -1}},
+            )
+            correlativo_reutilizado = bool(counter_update.modified_count)
+    except (KeyError, TypeError, ValueError):
+        # Legacy drafts without a well-formed allocation cannot safely rewind.
+        correlativo_reutilizado = False
+    except Exception:
+        logger.exception(
+            "No se pudo devolver el correlativo del borrador descartado %s",
+            pago_id,
+        )
+    return {"ok": True, "correlativo_reutilizado": correlativo_reutilizado}
 
 
 @api.get("/pagos/{pago_id}", response_model=Pago)
