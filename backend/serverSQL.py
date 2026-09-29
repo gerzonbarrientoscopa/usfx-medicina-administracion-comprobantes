@@ -295,10 +295,19 @@ async def rental_clients(q:str="",u=Depends(current)):
     oid=await office(u); like="%"+q+"%"
     return await sql("SELECT TOP 50 N'persona' tipo,id,nombre,ci FROM personas WHERE nombre LIKE ? OR ci LIKE ? UNION ALL SELECT N'estudiante',id,nombre,ci FROM estudiantes WHERE office_id=? AND (nombre LIKE ? OR ci LIKE ? OR cu LIKE ?)",(like,like,oid,like,like,like))
 @api.get("/alquileres")
-async def rentals(pag:int=1,tam:int=20,office_id:Optional[str]=None,u=Depends(current)):
-    oid=await office(u,office_id); total=(await sql("SELECT COUNT(*) n FROM alquileres WHERE office_id=?",(oid,),one=True))["n"]; rows=await sql("SELECT * FROM alquileres WHERE office_id=? ORDER BY created_at DESC OFFSET ? ROWS FETCH NEXT ? ROWS ONLY",(oid,(pag-1)*tam,tam)); return page(rows,total,pag,tam)
+async def rentals(ambiente_id:str,fecha_desde:str,fecha_hasta:str,office_id:Optional[str]=None,u=Depends(roles("Administrador","Caja","Consultas"))):
+    try: start=datetime.strptime(fecha_desde,"%Y-%m-%d").date(); end=datetime.strptime(fecha_hasta,"%Y-%m-%d").date()
+    except ValueError: raise HTTPException(400,"La fecha debe tener formato YYYY-MM-DD.")
+    if end<start or (end-start).days>366: raise HTTPException(400,"Rango de fechas inválido.")
+    oid=await office(u,office_id); room=await sql("SELECT office_id FROM ambientes WHERE id=?",(ambiente_id,),one=True)
+    if not room or room["office_id"]!=oid: raise HTTPException(404,"Ambiente no encontrado en esa oficina.")
+    rows=await sql("SELECT * FROM alquileres WHERE ambiente_id=? AND fecha>=? AND fecha<=? AND estado<>N'confirmando' ORDER BY fecha,created_at",(ambiente_id,fecha_desde,fecha_hasta))
+    return [await hydrate_rental(x) for x in rows]
 @api.get("/alquileres/{rid}")
-async def rental(rid:str,u=Depends(current)): return await sql("SELECT * FROM alquileres WHERE id=? AND office_id=?",(rid,await office(u)),one=True)
+async def rental(rid:str,u=Depends(current)):
+    r=await sql("SELECT * FROM alquileres WHERE id=? AND office_id=?",(rid,await office(u)),one=True)
+    if not r or r["estado"]=="confirmando": raise HTTPException(404,"Alquiler no encontrado.")
+    return await hydrate_rental(r)
 @api.post("/alquileres",status_code=201)
 async def create_rental(b:AlquilerCreate,u=Depends(roles("Administrador","Caja"))):
     oid=await office(u,b.office_id,True); room=await sql("SELECT office_id FROM ambientes WHERE id=?",(b.ambiente_id,),one=True)
@@ -316,32 +325,38 @@ async def create_rental(b:AlquilerCreate,u=Depends(roles("Administrador","Caja")
     if b.hasta: minutes(b.hasta)
     if b.desde and b.hasta and minutes(b.desde)>=minutes(b.hasta): raise HTTPException(400,"La hora de fin debe ser posterior al inicio.")
     quantity=Decimal(1)
-    if tariff["modalidad"]=="hora":
+    if tariff["modalidad"] in ("hora","actividad"):
         if not b.desde or not b.hasta: raise HTTPException(400,"Indique las horas de inicio y fin.")
-        quantity=(Decimal(minutes(b.hasta)-minutes(b.desde))/Decimal(60))
+        quantity=(Decimal(minutes(b.hasta)-minutes(b.desde))/Decimal(60)) if tariff["modalidad"]=="hora" else Decimal(1)
         if not covered(blocks,b.desde,b.hasta): raise HTTPException(400,"El horario solicitado no está cubierto por un bloque disponible.")
     elif tariff["modalidad"] in ("manana","tarde") and (b.desde is not None and b.desde!=str(tariff["desde"])[:5] or b.hasta is not None and b.hasta!=str(tariff["hasta"])[:5]): raise HTTPException(400,"El horario debe coincidir con la tarifa.")
     elif tariff["modalidad"] in ("manana","tarde"):
         if not covered(blocks,str(tariff["desde"])[:5],str(tariff["hasta"])[:5]): raise HTTPException(400,"La tarifa no está cubierta por el horario disponible.")
+        b.desde=str(tariff["desde"])[:5]; b.hasta=str(tariff["hasta"])[:5]
     elif tariff["modalidad"]=="dia" and (b.desde or b.hasta): raise HTTPException(400,"La modalidad día no admite horas.")
     elif tariff["modalidad"]=="dia":
         if not blocks: raise HTTPException(400,"El ambiente no tiene horario disponible ese día.")
-        b.desde=min(x["desde"] for x in blocks); b.hasta=max(x["hasta"] for x in blocks)
+    tramos=([{"desde":b.desde,"hasta":b.hasta}] if tariff["modalidad"]!="dia" else blocks)
     total=(Decimal(str(tariff["monto"]))*quantity).quantize(Decimal("0.01"))
-    ident=str(uuid.uuid4()); estado="procesando" if b.cobrar_ahora else "reservado"; gestion=int(b.fecha[:4])
+    ident=str(uuid.uuid4()); estado="confirmando"; gestion=int(b.fecha[:4])
     # The room/date application lock and serializable transaction are mandatory: see Tablas.Sql.
-    start=b.desde or "00:00"; end=b.hasta or "23:59"
     def reserve():
         with _connect() as cn:
             c=cn.cursor(); c.execute("EXEC sp_getapplock @Resource=?,@LockMode='Exclusive',@LockOwner='Transaction',@LockTimeout=5000",(f"room:{b.ambiente_id}:{b.fecha}",))
-            c.execute("SELECT id FROM ocupacion_intervalos WITH (UPDLOCK,HOLDLOCK) WHERE ambiente_id=? AND fecha=? AND desde<? AND hasta>?",(b.ambiente_id,b.fecha,end,start))
-            if c.fetchone(): raise HTTPException(409,"El ambiente ya está ocupado en ese horario.")
-            c.execute("INSERT INTO alquileres(id,office_id,ambiente_id,tarifa_id,fecha,cliente_tipo,cliente_id,cliente_documento,cliente_nombre,cliente_ci,cliente_cu,estado,total,cantidad,monto,gestion) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",(ident,oid,b.ambiente_id,b.tarifa_id,b.fecha,b.cliente_tipo,b.cliente_id,b.cliente_documento,payer["nombre"],payer["ci"],payer.get("cu"),estado,total,quantity,tariff["monto"],gestion))
+            c.execute("INSERT INTO alquileres(id,office_id,ambiente_id,tarifa_id,fecha,cliente_tipo,cliente_id,cliente_documento,cliente_nombre,cliente_ci,cliente_cu,estado,total,cantidad,monto,gestion,confirmation_started_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",(ident,oid,b.ambiente_id,b.tarifa_id,b.fecha,b.cliente_tipo,b.cliente_id,b.cliente_documento,payer["nombre"],payer["ci"],payer.get("cu"),estado,total,quantity,tariff["monto"],gestion,datetime.now(timezone.utc)))
             c.execute("INSERT INTO ambiente_ocupacion(ambiente_id,fecha) SELECT ?,? WHERE NOT EXISTS(SELECT 1 FROM ambiente_ocupacion WHERE ambiente_id=? AND fecha=?)",(b.ambiente_id,b.fecha,b.ambiente_id,b.fecha))
-            c.execute("INSERT INTO ocupacion_intervalos(ambiente_id,fecha,alquiler_id,desde,hasta) VALUES(?,?,?,?,?)",(b.ambiente_id,b.fecha,ident,start,end))
-            c.execute("INSERT INTO alquiler_tramos(alquiler_id,desde,hasta) VALUES(?,?,?)",(ident,start,end))
+            for tramo in tramos:
+                start,end=tramo["desde"],tramo["hasta"]
+                c.execute("SELECT id FROM ocupacion_intervalos WITH (UPDLOCK,HOLDLOCK) WHERE ambiente_id=? AND fecha=? AND desde<? AND hasta>?",(b.ambiente_id,b.fecha,end,start))
+                if c.fetchone(): raise HTTPException(409,"El horario solicitado ya está reservado.")
+                c.execute("INSERT INTO ocupacion_intervalos(ambiente_id,fecha,alquiler_id,desde,hasta) VALUES(?,?,?,?,?)",(b.ambiente_id,b.fecha,ident,start,end))
+                c.execute("INSERT INTO alquiler_tramos(alquiler_id,desde,hasta) VALUES(?,?,?)",(ident,start,end))
+            c.execute("UPDATE alquileres SET estado=N'reservado',confirmation_started_at=NULL WHERE id=? AND estado=N'confirmando'",(ident,))
             cn.commit()
-    await tx(reserve); return await hydrate_rental(await sql("SELECT * FROM alquileres WHERE id=?",(ident,),one=True))
+    await tx(reserve)
+    result=await hydrate_rental(await sql("SELECT * FROM alquileres WHERE id=?",(ident,),one=True))
+    if b.cobrar_ahora: return await pay_rental(ident,u)
+    return result
 @api.post("/alquileres/{rid}/pagar")
 async def pay_rental(rid:str,u=Depends(roles("Administrador","Caja"))):
     oid=await office(u)
@@ -349,6 +364,11 @@ async def pay_rental(rid:str,u=Depends(roles("Administrador","Caja"))):
         with _connect() as cn:
             c=cn.cursor(); c.execute("SELECT * FROM alquileres WITH(UPDLOCK,HOLDLOCK) WHERE id=? AND office_id=?",(rid,oid)); r=c.fetchone()
             if not r: raise HTTPException(404,"Alquiler no encontrado.")
+            # Idempotent transition: a repeated request returns the paid row
+            # and never allocates a second shared receipt.
+            c.execute("SELECT estado FROM alquileres WHERE id=? AND office_id=?",(rid,oid)); state=c.fetchone()[0]
+            if state=="pagado": return
+            if state!="reservado": raise HTTPException(400,"Solo se puede pagar un alquiler reservado.")
             year=datetime.now(timezone.utc).year; code,prefix=allocate_receipt(c,oid,year,"alquiler",rid)
             c.execute("UPDATE alquileres SET estado=N'pagado',gestion=?,cod_comprobante=?,prefijo_comprobante=?,comprobante_display=?,paid_by=?,fecha_pago=SYSUTCDATETIME() WHERE id=?",(year,code,prefix,f"{prefix}-{code} / {year}",u["id"],rid)); cn.commit()
     await tx(pay); return await hydrate_rental(await sql("SELECT * FROM alquileres WHERE id=?",(rid,),one=True))
@@ -455,6 +475,7 @@ async def reconcile_startup():
     for table in required:
         if not await sql("SELECT OBJECT_ID(?,N'U') id",(f"dbo.{table}",),one=True): raise RuntimeError(f"Falta la tabla dbo.{table}; ejecute backend/Tablas.Sql.")
     await sql("UPDATE alquileres SET estado=N'reservado',payment_token=NULL,processing_lease_until=NULL,processing_started_at=NULL WHERE estado=N'procesando' AND processing_lease_until<=SYSUTCDATETIME()",write=True)
+    await sql("UPDATE alquileres SET estado=N'cancelado',confirmation_started_at=NULL WHERE estado=N'confirmando' AND confirmation_started_at<DATEADD(minute,-30,SYSUTCDATETIME())",write=True)
     await sql("DELETE i FROM ocupacion_intervalos i LEFT JOIN alquileres a ON a.id=i.alquiler_id WHERE a.id IS NULL OR a.estado=N'cancelado'",write=True)
     email=os.getenv("SUPER_ADMIN_EMAIL",SUPER_ADMIN_EMAIL).lower(); password=os.getenv("ADMIN_PASSWORD"); name=os.getenv("ADMIN_NAME","Administrador")
     if password and not await sql("SELECT id FROM usuarios WHERE email_key=?",(email,),one=True):
