@@ -1470,3 +1470,23 @@ def test_startup_receipt_reconciliation_never_decreases_counter(mongo_rental_api
         assert counter["seq"] == 50
 
     mongo_rental_api["loop"].run_until_complete(run())
+
+
+def test_legacy_global_receipt_counter_is_migrated_upward(mongo_rental_api):
+    async def run():
+        db = mongo_rental_api["db"]
+        year = datetime.now(timezone.utc).year
+        legacy_counter_id = f"comprobante_{year}"
+        await db.contadores.insert_one({"_id": legacy_counter_id, "seq": 6})
+
+        await server.reconcile_payment_counters()
+
+        for office_id in (mongo_rental_api["office_a"], mongo_rental_api["office_b"]):
+            scoped_counter = await db.contadores.find_one(
+                {"_id": f"comprobante_{office_id}_{year}"}
+            )
+            assert scoped_counter["seq"] == 6
+        legacy_counter = await db.contadores.find_one({"_id": legacy_counter_id})
+        assert legacy_counter["seq"] == 6
+
+    mongo_rental_api["loop"].run_until_complete(run())
