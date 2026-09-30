@@ -216,6 +216,27 @@ def minutes(text):
     return int(text[:2]) * 60 + int(text[3:])
 
 
+def normalize_hhmm(value):
+    if isinstance(value, time):
+        if value.second or value.microsecond:
+            raise HTTPException(400, "La hora debe tener formato HH:MM.")
+        value = value.strftime("%H:%M")
+    elif isinstance(value, str) and re.fullmatch(
+        r"(?:[01]\d|2[0-3]):[0-5]\d:00", value
+    ):
+        value = value[:5]
+    minutes(value)
+    return value
+
+
+def format_tariff_times(tariff):
+    if tariff:
+        for field in ("desde", "hasta"):
+            if isinstance(tariff.get(field), time):
+                tariff[field] = tariff[field].strftime("%H:%M")
+    return tariff
+
+
 def validate_blocks(blocks):
     by = {}
     for b in blocks:
@@ -1304,10 +1325,11 @@ async def tariffs(ambiente_id: str, u=Depends(roles("Administrador", "Caja"))):
     if not room:
         raise HTTPException(404, "Ambiente no encontrado.")
     await office_scope_sql(u, room["office_id"])
-    return await sql(
+    rows = await sql(
         "SELECT * FROM tarifas_ambientes WHERE ambiente_id=? ORDER BY nombre",
         (ambiente_id,),
     )
+    return [format_tariff_times(row) for row in rows]
 
 
 @api.post("/tarifas-ambientes", status_code=201)
@@ -1334,7 +1356,9 @@ async def create_tariff(b: TarifaCreate, u=Depends(roles("Administrador"))):
         ),
         write=True,
     )
-    return await sql("SELECT * FROM tarifas_ambientes WHERE id=?", (ident,), one=True)
+    return format_tariff_times(
+        await sql("SELECT * FROM tarifas_ambientes WHERE id=?", (ident,), one=True)
+    )
 
 
 @api.put("/tarifas-ambientes/{tid}")
@@ -1363,7 +1387,9 @@ async def update_tariff(tid: str, b: TarifaCreate, u=Depends(roles("Administrado
         ),
         write=True,
     )
-    return await sql("SELECT * FROM tarifas_ambientes WHERE id=?", (tid,), one=True)
+    return format_tariff_times(
+        await sql("SELECT * FROM tarifas_ambientes WHERE id=?", (tid,), one=True)
+    )
 
 
 @api.delete("/tarifas-ambientes/{tid}")
@@ -1503,46 +1529,49 @@ async def create_rental(b: AlquilerCreate, u=Depends(roles("Administrador", "Caj
         (b.ambiente_id,),
     )
     blocks = day_blocks(schedules, WEEKDAYS[rental_date.weekday()])
-    if b.desde:
-        minutes(b.desde)
-    if b.hasta:
-        minutes(b.hasta)
-    if b.desde and b.hasta and minutes(b.desde) >= minutes(b.hasta):
+    start = normalize_hhmm(b.desde) if b.desde else None
+    end = normalize_hhmm(b.hasta) if b.hasta else None
+    tariff_start = (
+        normalize_hhmm(tariff["desde"]) if tariff.get("desde") is not None else None
+    )
+    tariff_end = (
+        normalize_hhmm(tariff["hasta"]) if tariff.get("hasta") is not None else None
+    )
+    if start and end and minutes(start) >= minutes(end):
         raise HTTPException(400, "La hora de fin debe ser posterior al inicio.")
     quantity = Decimal(1)
     if tariff["modalidad"] in ("hora", "actividad"):
-        if not b.desde or not b.hasta:
+        if not start or not end:
             raise HTTPException(400, "Indique las horas de inicio y fin.")
         quantity = (
-            (Decimal(minutes(b.hasta) - minutes(b.desde)) / Decimal(60))
+            (Decimal(minutes(end) - minutes(start)) / Decimal(60))
             if tariff["modalidad"] == "hora"
             else Decimal(1)
         )
-        if not covered(blocks, b.desde, b.hasta):
+        if not covered(blocks, start, end):
             raise HTTPException(
                 400, "El horario solicitado no está cubierto por un bloque disponible."
             )
     elif tariff["modalidad"] in ("manana", "tarde") and (
-        b.desde is not None
-        and b.desde != str(tariff["desde"])[:5]
-        or b.hasta is not None
-        and b.hasta != str(tariff["hasta"])[:5]
+        start is not None
+        and start != tariff_start
+        or end is not None
+        and end != tariff_end
     ):
         raise HTTPException(400, "El horario debe coincidir con la tarifa.")
     elif tariff["modalidad"] in ("manana", "tarde"):
-        if not covered(blocks, str(tariff["desde"])[:5], str(tariff["hasta"])[:5]):
+        if not covered(blocks, tariff_start, tariff_end):
             raise HTTPException(
                 400, "La tarifa no está cubierta por el horario disponible."
             )
-        b.desde = str(tariff["desde"])[:5]
-        b.hasta = str(tariff["hasta"])[:5]
+        start, end = tariff_start, tariff_end
     elif tariff["modalidad"] == "dia" and (b.desde or b.hasta):
         raise HTTPException(400, "La modalidad día no admite horas.")
     elif tariff["modalidad"] == "dia":
         if not blocks:
             raise HTTPException(400, "El ambiente no tiene horario disponible ese día.")
     tramos = (
-        [{"desde": b.desde, "hasta": b.hasta}]
+        [{"desde": start, "hasta": end}]
         if tariff["modalidad"] != "dia"
         else blocks
     )
@@ -2324,6 +2353,8 @@ async def receipts(
         merged.append(row)
     for row in rental_rows:
         row = await hydrate_rental(row)
+        if isinstance(row.get("fecha_pago"), str):
+            row["fecha_pago"] = row["fecha_pago"][:10]
         row["origen"] = "alquiler"
         merged.append(row)
     merged.sort(
