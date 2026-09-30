@@ -37,4 +37,5 @@ test("incluye la fecha de generación y el nombre del sistema en el pie", () => 
 
   expect(html).toMatch(/Generado: \d{2}\/\d{2}\/\d{4} \d{1,2}:\d{2}:\d{2} [ap]\.\s*m\./i);
   expect(html).toContain("<br />Sistema de Comprobantes USFX");
+  expect(html).toMatch(/\.meta\{[^}]*text-align:left/);
 });

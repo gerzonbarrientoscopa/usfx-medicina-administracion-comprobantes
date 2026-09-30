@@ -1,5 +1,5 @@
-import { formatComprobante } from "@/lib/receipt";
-import { formatDate } from "@/lib/dateFormat";
+import { formatComprobante } from "../lib/receipt";
+import { formatDate } from "../lib/dateFormat";
 
 const INSTITUTION = {
     linea1: "Universidad Mayor, Real y Pontificia de San Francisco Xavier",
@@ -82,7 +82,7 @@ export function buildComprobanteHTML(pago) {
   .footer { margin-top: 36px; display: flex; justify-content: space-between; align-items: flex-end; }
   .sign { width: 220px; text-align: center; font-size: 11px; color: #636369; }
   .sign .line { border-top: 1px solid #1c1c1e; padding-top: 4px; }
-  .meta { font-size: 10px; color: #636369; text-align: right; }
+  .meta { font-size: 10px; color: #636369; text-align: left; }
   .void-stamp { position: absolute; top: 40%; left: 50%; transform: translate(-50%, -50%) rotate(-18deg); font-family: "Cormorant Garamond", serif; font-size: 90px; color: rgba(208, 0, 0, 0.18); border: 8px solid rgba(208, 0, 0, 0.25); padding: 6px 32px; letter-spacing: 0.08em; pointer-events: none; }
   .receipt-wrap { position: relative; }
   @media print {
