@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { apiClient, formatApiError, formatMoney } from "@/lib/api";
+import { toISODate } from "@/lib/dateFormat";
 import { useAuth } from "@/contexts/AuthContext";
 import { useOfficeScope } from "@/hooks/useOfficeScope";
 import { formatComprobante } from "@/lib/receipt";
@@ -241,7 +242,7 @@ export default function BusquedaPagosPage() {
             id_estudiante: p.id_estudiante,
             id_tipo_pago: p.id_tipo_pago,
             cantidad: String(p.cantidad),
-            fecha_pago: p.fecha_pago,
+            fecha_pago: toISODate(p.fecha_pago),
         });
         const requestId = ++editOptionsRequest.current;
         setEditOpen(true);

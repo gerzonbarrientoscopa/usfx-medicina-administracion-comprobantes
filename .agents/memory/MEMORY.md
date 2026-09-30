@@ -2,3 +2,4 @@
 - [Shared receipt sequence](rental-receipt-sequence.md) — deleted drafts reclaim only the latest unused number; shared payment/rental allocation stays concurrency-safe.
 - [Rental booking consistency](rental-booking-consistency.md) — preserve occupancy on uncertain writes; provisional bookings protect against delayed cross-document commits.
 - [Cross-office rental clients](rental-client-policy.md) — students may rent outside their enrollment office, with exact-identifier lookup for non-superadmins.
+- [SQL Server local-only workflow](sqlserver-local-only.md) — never import, test, execute, or connect to `serverSQL.py` in Replit; the user runs it locally.

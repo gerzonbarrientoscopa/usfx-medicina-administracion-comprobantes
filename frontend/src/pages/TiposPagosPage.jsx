@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { apiClient, formatApiError, formatMoney } from "@/lib/api";
+import { toISODate } from "@/lib/dateFormat";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -150,8 +151,8 @@ export default function TiposPagosPage() {
       nombre: tipo.nombre,
       monto: tipo.monto,
       descripcion: tipo.descripcion || "",
-      inicio: tipo.inicio,
-      fin: tipo.fin || "",
+      inicio: toISODate(tipo.inicio),
+      fin: toISODate(tipo.fin) || "",
       office_id: "",
     });
     setOpen(true);

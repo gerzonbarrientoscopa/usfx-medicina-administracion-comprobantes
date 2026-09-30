@@ -20,3 +20,14 @@ test("omite la suboficina vacía", () => {
 
   expect(html).not.toContain('class="suboffice"');
 });
+
+test("muestra las fechas de alquiler en formato dd/mm/yyyy", () => {
+  const html = buildAlquilerComprobanteHTML({
+    id: "rental-3",
+    fecha: "2026-09-03",
+    fecha_pago: "03/09/2026",
+  });
+
+  expect(html).toContain('<strong>03/09/2026</strong>');
+  expect(html).toContain('<strong>03/09/2026</strong>');
+});

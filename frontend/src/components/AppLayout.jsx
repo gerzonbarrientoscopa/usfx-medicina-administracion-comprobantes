@@ -1,6 +1,7 @@
 import React from "react";
 import { Link, NavLink, useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
+import { formatDate } from "@/lib/dateFormat";
 import {
     LayoutDashboard,
     Users,
@@ -169,12 +170,7 @@ export function AppLayout({ children }) {
                         </div>
                     </div>
                     <div className="text-xs text-[color:var(--institution-muted)]">
-                        {new Date().toLocaleDateString("es-BO", {
-                            weekday: "long",
-                            day: "numeric",
-                            month: "long",
-                            year: "numeric",
-                        })}
+                        {formatDate(new Date())}
                     </div>
                 </header>
                 <div className="p-8">{children}</div>

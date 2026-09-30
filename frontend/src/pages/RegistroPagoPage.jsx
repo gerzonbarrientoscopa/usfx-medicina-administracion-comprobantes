@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { apiClient, formatApiError, formatMoney } from "@/lib/api";
+import { formatDate } from "@/lib/dateFormat";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -417,7 +418,7 @@ export default function RegistroPagoPage() {
                             <Row label="Oficina" value={officeName || "—"} />
                             <Row label="Estudiante" value={selectedEst ? `${selectedEst.nombre}` : "—"} />
                             <Row label="C.I." value={selectedEst?.ci || "—"} />
-                            <Row label="Fecha de pago" value={pago?.fecha_pago || fechaPago} />
+                            <Row label="Fecha de pago" value={formatDate(pago?.fecha_pago || fechaPago)} />
                         </div>
 
                         {!pago ? (

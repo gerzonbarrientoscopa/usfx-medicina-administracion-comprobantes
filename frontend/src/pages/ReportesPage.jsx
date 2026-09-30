@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { apiClient, formatApiError, formatMoney } from "@/lib/api";
+import { formatDate, toISODate } from "@/lib/dateFormat";
 import { formatComprobante } from "@/lib/receipt";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -49,13 +50,6 @@ const MESES = [
     "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre",
 ];
 
-const formatDate = (value) => {
-    if (!value) return "";
-    const [year, month, day] = value.substring(0, 10).split("-");
-    if (!year || !month || !day) return value;
-    return `${day}/${month}/${year}`;
-};
-
 const pagoItems = (pago) => {
     if (Array.isArray(pago.items) && pago.items.length) return pago.items;
     if (!pago.id_tipo_pago && !pago.tipo_pago_nombre) return [];
@@ -81,7 +75,7 @@ const formatPeriodo = (reporte) => {
     if (!reporte) return "";
     if (reporte.periodo === "diario") return formatDate(reporte.desde);
     if (reporte.periodo === "mensual") {
-        const monthIndex = Number(reporte.desde?.substring(5, 7)) - 1;
+        const monthIndex = Number(toISODate(reporte.desde).substring(5, 7)) - 1;
         return MESES[monthIndex] || formatDate(reporte.desde);
     }
     return `${formatDate(reporte.desde)} - ${formatDate(reporte.hasta)}`;
@@ -165,7 +159,7 @@ export default function ReportesPage() {
             }],
             anulado: false,
         })),
-    ].sort((a, b) => a.fecha_pago.localeCompare(b.fecha_pago));
+    ].sort((a, b) => toISODate(a.fecha_pago).localeCompare(toISODate(b.fecha_pago)));
 
     const buildPDF = (modo) => {
         if (!data) return;
@@ -350,7 +344,10 @@ export default function ReportesPage() {
         );
         const wb = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(wb, ws, "Reporte");
-        XLSX.writeFile(wb, `reporte_${modo}_${data.desde}_${data.hasta}.xlsx`);
+        XLSX.writeFile(
+            wb,
+            `reporte_${modo}_${toISODate(data.desde)}_${toISODate(data.hasta)}.xlsx`,
+        );
     };
 
     return (

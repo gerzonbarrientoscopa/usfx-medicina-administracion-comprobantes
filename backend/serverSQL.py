@@ -26,11 +26,65 @@ from fastapi import (
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, Field, EmailStr, ConfigDict
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
 
+
+def _format_response_date(value, field):
+    if not isinstance(field, str):
+        return value
+    date_only = (
+        field == "fecha"
+        or field.startswith("fecha_")
+        or field in {"desde", "hasta", "inicio", "fin"}
+        or field.endswith("_date")
+    )
+    date_time = field.endswith(("_at", "_until"))
+    if not date_only and not date_time:
+        return value
+
+    raw = value.isoformat() if isinstance(value, (datetime, date)) else value
+    if not isinstance(raw, str):
+        return value
+    match = re.match(r"^(\d{4})-(\d{2})-(\d{2})(.*)$", raw)
+    if not match:
+        return value
+    year, month, day, suffix = match.groups()
+    try:
+        date(int(year), int(month), int(day))
+    except ValueError:
+        return value
+    formatted = f"{day}/{month}/{year}"
+    if date_time and suffix:
+        return formatted + suffix.replace("T", " ", 1)
+    return formatted
+
+
+def _format_response_dates(value):
+    if isinstance(value, dict):
+        return {
+            key: _format_response_dates(_format_response_date(item, key))
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_format_response_dates(item) for item in value]
+    return value
+
+
+class DateFormattedJSONResponse(JSONResponse):
+    def render(self, content):
+        return super().render(_format_response_dates(content))
+
+
 load_dotenv()
-app = FastAPI(title="Comprobantes USFX (SQL Server)")
-api = APIRouter(prefix="/api")
+app = FastAPI(
+    title="Comprobantes USFX (SQL Server)",
+    default_response_class=DateFormattedJSONResponse,
+)
+api = APIRouter(
+    prefix="/api",
+    default_response_class=DateFormattedJSONResponse,
+)
 security = HTTPBearer()
 JWT_SECRET_KEY = os.getenv("JWT_SECRET") or os.getenv("SESSION_SECRET")
 if not JWT_SECRET_KEY:

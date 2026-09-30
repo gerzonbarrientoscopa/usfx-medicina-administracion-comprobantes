@@ -23,6 +23,52 @@ from datetime import datetime, date, timezone, timedelta
 from typing import List, Optional, Literal
 
 
+def _format_response_date(value, field):
+    if not isinstance(field, str):
+        return value
+    date_only = (
+        field == "fecha"
+        or field.startswith("fecha_")
+        or field in {"desde", "hasta", "inicio", "fin"}
+        or field.endswith("_date")
+    )
+    date_time = field.endswith(("_at", "_until"))
+    if not date_only and not date_time:
+        return value
+
+    raw = value.isoformat() if isinstance(value, (datetime, date)) else value
+    if not isinstance(raw, str):
+        return value
+    match = re.match(r"^(\d{4})-(\d{2})-(\d{2})(.*)$", raw)
+    if not match:
+        return value
+    year, month, day, suffix = match.groups()
+    try:
+        date(int(year), int(month), int(day))
+    except ValueError:
+        return value
+    formatted = f"{day}/{month}/{year}"
+    if date_time and suffix:
+        return formatted + suffix.replace("T", " ", 1)
+    return formatted
+
+
+def _format_response_dates(value):
+    if isinstance(value, dict):
+        return {
+            key: _format_response_dates(_format_response_date(item, key))
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_format_response_dates(item) for item in value]
+    return value
+
+
+class DateFormattedJSONResponse(JSONResponse):
+    def render(self, content):
+        return super().render(_format_response_dates(content))
+
+
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
 
@@ -45,8 +91,14 @@ client = AsyncIOMotorClient(MONGO_URL)
 db = client[DB_NAME]
 
 # ----------------------------- APP -----------------------------
-app = FastAPI(title="Comprobantes USFX")
-api = APIRouter(prefix="/api")
+app = FastAPI(
+    title="Comprobantes USFX",
+    default_response_class=DateFormattedJSONResponse,
+)
+api = APIRouter(
+    prefix="/api",
+    default_response_class=DateFormattedJSONResponse,
+)
 # Security
 security = HTTPBearer()
 

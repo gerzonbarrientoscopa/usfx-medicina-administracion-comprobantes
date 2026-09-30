@@ -1,4 +1,5 @@
 import { formatComprobante } from "@/lib/receipt";
+import { formatDate } from "@/lib/dateFormat";
 
 const INSTITUTION = {
     linea1: "Universidad Mayor, Real y Pontificia de San Francisco Xavier",
@@ -18,10 +19,12 @@ const escapeHTML = (value) =>
     );
 
 export function buildComprobanteHTML(pago) {
-    const fecha = escapeHTML((pago.fecha_pago || "").substring(0, 10));
+    const fecha = escapeHTML(formatDate(pago.fecha_pago));
     const moneyFmt = (n) =>
         Number(n || 0).toLocaleString("es-BO", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    const generadoEn = escapeHTML(new Date().toLocaleString("es-BO"));
+    const generadoEn = escapeHTML(
+        `${formatDate(new Date())} ${new Date().toLocaleTimeString("es-BO")}`,
+    );
     const codigo = escapeHTML(formatComprobante(pago));
     const estudianteNombre = escapeHTML(pago.estudiante_nombre);
     const estudianteCi = escapeHTML(pago.estudiante_ci);
