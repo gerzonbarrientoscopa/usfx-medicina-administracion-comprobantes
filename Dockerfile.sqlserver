@@ -1,0 +1,12 @@
+FROM mcr.microsoft.com/mssql/server:2025-latest
+
+# Cambiamos temporalmente a root para configurar los límites de memoria interna
+USER root
+
+# Ajustamos las variables de entorno para forzar un consumo ultra liviano
+# 1536 MB (1.5GB) es el mínimo estricto que acepta SQL Server para levantar correctamente
+RUN /opt/mssql/bin/mssql-conf set memory.memorylimitmb 1536 \
+    && /opt/mssql/bin/mssql-conf set telemetry.customerfeedback false
+
+# Volvemos al usuario seguro de mssql
+USER mssql

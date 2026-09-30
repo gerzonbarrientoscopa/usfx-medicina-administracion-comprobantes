@@ -1,37 +1,51 @@
 version: "3.9"
 
-services:
-  mongo:
-    image: mongo:7
-    container_name: usfx_mongo
-    restart: unless-stopped
-    ports:
-      - "27017:27017"
-    volumes:
-      - mongo_data:/data/db
-    healthcheck:
-      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
+services:  
+  sqlserver:
+      build:
+        context: .
+        dockerfile: Dockerfile.sqlserver
+      container_name: usfx_comprobantes_sqlserver
+      restart: unless-stopped
+      ports:
+        - "1433:1433"
+      environment:
+        - ACCEPT_EULA=Y
+        - MSSQL_SA_PASSWORD=${SQL_PASSWORD:-TuPasswordSeguro123!} # Clave fuerte requerida por SQL Server
+        - MSSQL_PID=Developer
+      volumes:
+        - mssql_data:/var/opt/mssql
+      # Límite estricto de recursos por Docker para no colapsar tu PC
+      deploy:
+        resources:
+          limits:
+            cpus: '1.5'
+            memory: 1800M
+      healthcheck:
+        test: ["CMD", "/opt/mssql-tools18/bin/sqlcmd", "-C", "-Q", "SELECT 1"]
+        interval: 15s
+        timeout: 5s
+        retries: 3
   backend:
     build:
       context: .
       dockerfile: Dockerfile.backend
-    container_name: usfx_backend
+    container_name: usfx_comprobantes_backend
     restart: unless-stopped
     depends_on:
-      mongo:
-        condition: service_healthy
+      sqlserver:
+        condition: service_healthy    
     environment:
-      MONGO_URL: "mongodb://mongo:27017"
-      DB_NAME: "comprobantes_usfx"
+      SQL_HOST: "sqlserver"
+      SQL_PORT: "1433"
+      SQL_USER: "sa"
+      SQL_PASSWORD: "${SQL_PASSWORD:-TuPasswordSeguro123!}"
+      SQL_DB_NAME: "comprobantes_sql_usfx"
       CORS_ORIGINS: "http://localhost:3000,http://localhost"
       JWT_SECRET: "${JWT_SECRET:-change-me-in-production-please}"
-      ADMIN_EMAIL: "${ADMIN_EMAIL:?Set ADMIN_EMAIL before starting}"
-      ADMIN_PASSWORD: "${ADMIN_PASSWORD:?Set ADMIN_PASSWORD before starting}"
-      ADMIN_NAME: "${ADMIN_NAME:?Set ADMIN_NAME before starting}"
+      ADMIN_EMAIL: "${ADMIN_EMAIL:-}"
+      ADMIN_PASSWORD: "${ADMIN_PASSWORD:-}"
+      ADMIN_NAME: "${ADMIN_NAME:-}"
     ports:
       - "8001:8001"
 
@@ -49,5 +63,5 @@ services:
       - "3000:80"
 
 volumes:
-  mongo_data:
+  mssql_data:
     driver: local
