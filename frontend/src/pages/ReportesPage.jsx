@@ -3,6 +3,7 @@ import { apiClient, formatApiError, formatMoney } from "@/lib/api";
 import { formatDate, toISODate } from "@/lib/dateFormat";
 import { formatComprobante } from "@/lib/receipt";
 import { reportConceptRows } from "@/lib/reportConceptRows";
+import { buildReportPdfRows } from "@/lib/reportPdfRows";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -176,21 +177,19 @@ export default function ReportesPage() {
         doc.text(`Periodo: ${formatPeriodo(data)}`, W / 2, 114, { align: "center" });
 
         if (modo === "todos") {
-            const rows = reportRows.flatMap((pago) => {
-                const concepts = reportConceptRows(pago);
-                return concepts.map(({ item, index, amount }) => {
-                    const span = (value) =>
-                        index === 0 ? groupedPdfCell(value, concepts.length) : "";
-                    return [
-                        span(formatComprobante(pago)),
-                        span(`${pago.origen}: ${pago.estudiante_nombre || ""}`),
-                        span(formatDate(pago.fecha_pago)),
-                        item ? reportConcept(item, amount) : "Sin conceptos",
-                        pago.anulado ? "" : formatMoney(amount),
-                        pago.anulado ? formatMoney(amount) : "",
-                    ];
-                });
-            });
+            const rows = buildReportPdfRows(
+                reportRows,
+                (pago, rowSpan) => [
+                    groupedPdfCell(formatComprobante(pago), rowSpan),
+                    groupedPdfCell(`${pago.origen}: ${pago.estudiante_nombre || ""}`, rowSpan),
+                    groupedPdfCell(formatDate(pago.fecha_pago), rowSpan),
+                ],
+                (pago, { item, amount }) => [
+                    item ? reportConcept(item, amount) : "Sin conceptos",
+                    pago.anulado ? "" : formatMoney(amount),
+                    pago.anulado ? formatMoney(amount) : "",
+                ],
+            );
             autoTable(doc, {
                 startY: 134,
                 head: [["Comprobante", "Origen / cliente", "Fecha", "Concepto", "Válido (Bs.)", "Anulado (Bs.)"]],
@@ -215,21 +214,19 @@ export default function ReportesPage() {
             });
         } else {
             const filtered = reportRows.filter((p) => (modo === "validos" ? !p.anulado : p.anulado));
-            const rows = filtered.flatMap((pago) => {
-                const concepts = reportConceptRows(pago);
-                return concepts.map(({ item, index, amount }) => {
-                    const span = (value) =>
-                        index === 0 ? groupedPdfCell(value, concepts.length) : "";
-                    return [
-                        span(formatComprobante(pago)),
-                        span(`${pago.origen}: ${pago.estudiante_nombre || ""}`),
-                        span(formatDate(pago.fecha_pago)),
-                        item ? reportConcept(item, amount) : "Sin conceptos",
-                        item?.cantidad ?? "",
-                        formatMoney(amount),
-                    ];
-                });
-            });
+            const rows = buildReportPdfRows(
+                filtered,
+                (pago, rowSpan) => [
+                    groupedPdfCell(formatComprobante(pago), rowSpan),
+                    groupedPdfCell(`${pago.origen}: ${pago.estudiante_nombre || ""}`, rowSpan),
+                    groupedPdfCell(formatDate(pago.fecha_pago), rowSpan),
+                ],
+                (_pago, { item, amount }) => [
+                    item ? reportConcept(item, amount) : "Sin conceptos",
+                    item?.cantidad ?? "",
+                    formatMoney(amount),
+                ],
+            );
             autoTable(doc, {
                 startY: 134,
                 head: [["Comprobante", "Origen / cliente", "Fecha", "Concepto", "Cant.", "Total (Bs.)"]],
