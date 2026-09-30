@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { apiClient, formatApiError, formatMoney } from "@/lib/api";
 import { formatDate, toISODate } from "@/lib/dateFormat";
 import { formatComprobante } from "@/lib/receipt";
+import { reportConceptRows } from "@/lib/reportConceptRows";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -50,26 +51,8 @@ const MESES = [
     "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre",
 ];
 
-const pagoItems = (pago) => {
-    if (Array.isArray(pago.items) && pago.items.length) return pago.items;
-    if (!pago.id_tipo_pago && !pago.tipo_pago_nombre) return [];
-    return [{
-        id_tipo_pago: pago.id_tipo_pago,
-        tipo_pago_nombre: pago.tipo_pago_nombre || "",
-        cantidad: pago.cantidad,
-        monto: pago.monto,
-        total: pago.total,
-    }];
-};
-
-const groupedPdfCell = (content, rowSpan) => ({
-    content,
-    rowSpan,
-    styles: { valign: "middle" },
-});
-
-const reportConcept = (item) =>
-    `${item.tipo_pago_nombre || "Concepto"}\nCant.: ${item.cantidad} · Bs. ${formatMoney(item.total)}`;
+const reportConcept = (item, amount = item.total) =>
+    `${item.tipo_pago_nombre || "Concepto"}\nCant.: ${item.cantidad} · Bs. ${formatMoney(amount)}`;
 
 const formatPeriodo = (reporte) => {
     if (!reporte) return "";
@@ -188,22 +171,15 @@ export default function ReportesPage() {
 
         if (modo === "todos") {
             const rows = reportRows.flatMap((pago) => {
-                const items = pagoItems(pago);
-                const group = items.length ? items : [null];
-                return group.map((item, index) => {
-                    const first = index === 0;
-                    const span = (value) =>
-                        first ? groupedPdfCell(value, group.length) : "";
-                    return [
-                        span(formatComprobante(pago)),
-                        span(`${pago.origen}: ${pago.estudiante_nombre || ""}`),
-                        span(formatDate(pago.fecha_pago)),
-                        item ? reportConcept(item) : "Sin conceptos",
-                        span(pago.office_nombre || reportOfficeName || ""),
-                        span(pago.anulado ? "" : formatMoney(pago.total)),
-                        span(pago.anulado ? formatMoney(pago.total) : ""),
-                    ];
-                });
+                return reportConceptRows(pago).map(({ item, amount }) => [
+                    formatComprobante(pago),
+                    `${pago.origen}: ${pago.estudiante_nombre || ""}`,
+                    formatDate(pago.fecha_pago),
+                    item ? reportConcept(item, amount) : "Sin conceptos",
+                    pago.office_nombre || reportOfficeName || "",
+                    pago.anulado ? "" : formatMoney(amount),
+                    pago.anulado ? formatMoney(amount) : "",
+                ]);
             });
             autoTable(doc, {
                 startY: 134,
@@ -230,22 +206,15 @@ export default function ReportesPage() {
         } else {
             const filtered = reportRows.filter((p) => (modo === "validos" ? !p.anulado : p.anulado));
             const rows = filtered.flatMap((pago) => {
-                const items = pagoItems(pago);
-                const group = items.length ? items : [null];
-                return group.map((item, index) => {
-                    const first = index === 0;
-                    const span = (value) =>
-                        first ? groupedPdfCell(value, group.length) : "";
-                    return [
-                        span(formatComprobante(pago)),
-                        span(`${pago.origen}: ${pago.estudiante_nombre || ""}`),
-                        span(formatDate(pago.fecha_pago)),
-                        item ? reportConcept(item) : "Sin conceptos",
-                        span(pago.office_nombre || reportOfficeName || ""),
-                        item?.cantidad ?? "",
-                        span(formatMoney(pago.total)),
-                    ];
-                });
+                return reportConceptRows(pago).map(({ item, amount }) => [
+                    formatComprobante(pago),
+                    `${pago.origen}: ${pago.estudiante_nombre || ""}`,
+                    formatDate(pago.fecha_pago),
+                    item ? reportConcept(item, amount) : "Sin conceptos",
+                    pago.office_nombre || reportOfficeName || "",
+                    item?.cantidad ?? "",
+                    formatMoney(amount),
+                ]);
             });
             autoTable(doc, {
                 startY: 134,
@@ -284,19 +253,18 @@ export default function ReportesPage() {
         let rows = [];
         if (modo === "todos") {
             rows = reportRows.flatMap((pago) => {
-                const items = pagoItems(pago);
-                const group = items.length ? items : [null];
-                return group.map((item, index) => ({
-                    Comprobante: index === 0 ? formatComprobante(pago) : "",
-                    Origen: index === 0 ? pago.origen : "",
-                    Cliente: index === 0 ? pago.estudiante_nombre || "" : "",
-                    Fecha: index === 0 ? formatDate(pago.fecha_pago) : "",
+                return reportConceptRows(pago).map(({ item, amount }) => ({
+                    Comprobante: formatComprobante(pago),
+                    Origen: pago.origen,
+                    Cliente: pago.estudiante_nombre || "",
+                    Fecha: formatDate(pago.fecha_pago),
                     Concepto: item?.tipo_pago_nombre || "Sin conceptos",
                     Cantidad: item?.cantidad ?? "",
-                    Importe_concepto: item?.total ?? "",
-                    Oficina: index === 0 ? pago.office_nombre || reportOfficeName || "" : "",
-                    Valido: index === 0 && !pago.anulado ? pago.total : "",
-                    Anulado: index === 0 && pago.anulado ? pago.total : "",
+                    Importe_concepto: item ? amount : "",
+                    Oficina: pago.office_nombre || reportOfficeName || "",
+                    Valido: !pago.anulado ? amount : "",
+                    Anulado: pago.anulado ? amount : "",
+                    Total_comprobante: pago.total ?? amount,
                 }));
             });
             rows.push({});
@@ -308,18 +276,16 @@ export default function ReportesPage() {
         } else {
             const filtered = reportRows.filter((p) => (modo === "validos" ? !p.anulado : p.anulado));
             rows = filtered.flatMap((pago) => {
-                const items = pagoItems(pago);
-                const group = items.length ? items : [null];
-                return group.map((item, index) => ({
-                    Comprobante: index === 0 ? formatComprobante(pago) : "",
-                    Origen: index === 0 ? pago.origen : "",
-                    Cliente: index === 0 ? pago.estudiante_nombre || "" : "",
-                    Fecha: index === 0 ? formatDate(pago.fecha_pago) : "",
+                return reportConceptRows(pago).map(({ item, amount }) => ({
+                    Comprobante: formatComprobante(pago),
+                    Origen: pago.origen,
+                    Cliente: pago.estudiante_nombre || "",
+                    Fecha: formatDate(pago.fecha_pago),
                     Concepto: item?.tipo_pago_nombre || "Sin conceptos",
-                    Oficina: index === 0 ? pago.office_nombre || reportOfficeName || "" : "",
+                    Oficina: pago.office_nombre || reportOfficeName || "",
                     Cantidad: item?.cantidad ?? "",
-                    Importe_concepto: item?.total ?? "",
-                    Total_comprobante: index === 0 ? pago.total : "",
+                    Importe_concepto: item ? amount : "",
+                    Total_comprobante: pago.total ?? amount,
                 }));
             });
             rows.push({});
@@ -535,57 +501,40 @@ export default function ReportesPage() {
                                         </TableRow>
                                     </TableHeader>
                                     <TableBody>
-                                        {reportRows.flatMap((pago) => {
-                                            const items = pagoItems(pago);
-                                            const group = items.length ? items : [null];
-                                            return group.map((item, index) => {
-                                                const first = index === 0;
-                                                return (
-                                                    <TableRow key={`${pago.id}-${item?.id || index}`}>
-                                                        {first && (
-                                                            <TableCell rowSpan={group.length} className="font-mono-num align-middle">
-                                                                {formatComprobante(pago)}
-                                                            </TableCell>
-                                                        )}
-                                                        {first && (
-                                                            <TableCell rowSpan={group.length} className="align-middle">
-                                                                {pago.origen} · {pago.estudiante_nombre}
-                                                            </TableCell>
-                                                        )}
-                                                        {first && (
-                                                            <TableCell rowSpan={group.length} className="font-mono-num align-middle">
-                                                                {formatDate(pago.fecha_pago)}
-                                                            </TableCell>
-                                                        )}
-                                                        <TableCell>
-                                                            {item ? (
-                                                                <>
-                                                                    <div>{item.tipo_pago_nombre || "Concepto"}</div>
-                                                                    <div className="text-xs text-[color:var(--institution-muted)]">
-                                                                        {item.cantidad} × Bs. {formatMoney(item.monto)} = Bs. {formatMoney(item.total)}
-                                                                    </div>
-                                                                </>
-                                                            ) : "Sin conceptos"}
-                                                        </TableCell>
-                                                        {first && (
-                                                            <TableCell rowSpan={group.length} className="align-middle">
-                                                                {pago.office_nombre || reportOfficeName}
-                                                            </TableCell>
-                                                        )}
-                                                        {first && (
-                                                            <TableCell rowSpan={group.length} className="text-right font-mono-num align-middle">
-                                                                {pago.anulado ? "—" : formatMoney(pago.total)}
-                                                            </TableCell>
-                                                        )}
-                                                        {first && (
-                                                            <TableCell rowSpan={group.length} className="text-right font-mono-num align-middle">
-                                                                {pago.anulado ? formatMoney(pago.total) : "—"}
-                                                            </TableCell>
-                                                        )}
-                                                    </TableRow>
-                                                );
-                                            });
-                                        })}
+                                        {reportRows.flatMap((pago) =>
+                                            reportConceptRows(pago).map(({ item, index, amount }) => (
+                                                <TableRow key={`${pago.id}-${item?.id || index}`}>
+                                                    <TableCell className="font-mono-num align-middle">
+                                                        {formatComprobante(pago)}
+                                                    </TableCell>
+                                                    <TableCell className="align-middle">
+                                                        {pago.origen} · {pago.estudiante_nombre}
+                                                    </TableCell>
+                                                    <TableCell className="font-mono-num align-middle">
+                                                        {formatDate(pago.fecha_pago)}
+                                                    </TableCell>
+                                                    <TableCell>
+                                                        {item ? (
+                                                            <>
+                                                                <div>{item.tipo_pago_nombre || "Concepto"}</div>
+                                                                <div className="text-xs text-[color:var(--institution-muted)]">
+                                                                    {item.cantidad} × Bs. {formatMoney(item.monto)} = Bs. {formatMoney(amount)}
+                                                                </div>
+                                                            </>
+                                                        ) : "Sin conceptos"}
+                                                    </TableCell>
+                                                    <TableCell className="align-middle">
+                                                        {pago.office_nombre || reportOfficeName}
+                                                    </TableCell>
+                                                    <TableCell className="text-right font-mono-num align-middle">
+                                                        {pago.anulado ? "—" : formatMoney(amount)}
+                                                    </TableCell>
+                                                    <TableCell className="text-right font-mono-num align-middle">
+                                                        {pago.anulado ? formatMoney(amount) : "—"}
+                                                    </TableCell>
+                                                </TableRow>
+                                            ))
+                                        )}
                                         {reportRows.length > 0 && (
                                             <>
                                                 <TableRow style={{ backgroundColor: "var(--institution-cream)" }}>
