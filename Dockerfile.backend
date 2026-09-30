@@ -8,13 +8,24 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
-# System deps required by bcrypt / cryptography
+# Deps del sistema para bcrypt/cryptography Y requerimientos obligatorios para pyodbc
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     curl \
+    gnupg \
+    unixodbc \
+    unixodbc-dev \
     && rm -rf /var/lib/apt/lists/*
 
-COPY backend/requirements.txt ./requirements.txt
+# Instalar el Driver Oficial de Microsoft ODBC 18 para SQL Server en Linux Debian/Slim
+RUN curl -fsSL https://microsoft.com | gpg --dearmor -o /usr/share/keyrings/microsoft-prod.gpg \
+    && curl -fsSL https://microsoft.com > /etc/apt/sources.get.d/mssql-release.list \
+    && apt-get update \
+    && ACCEPT_EULA=Y apt-get install -y --no-install-recommends msodbcsql18 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copiar el nuevo archivo de requerimientos para SQL Server
+COPY backend/requirements-sql.txt ./requirements.txt
 RUN pip install --upgrade pip && pip install -r requirements.txt
 
 COPY backend/ ./

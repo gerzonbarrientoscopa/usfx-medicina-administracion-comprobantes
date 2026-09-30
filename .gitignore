@@ -58,6 +58,7 @@ __pycache__/
 *pyc*
 venv/
 .venv/
+venvsql
 
 # Development tools
 chainlit.md
