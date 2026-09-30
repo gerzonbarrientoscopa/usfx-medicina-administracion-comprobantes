@@ -31,3 +31,10 @@ test("muestra las fechas de alquiler en formato dd/mm/yyyy", () => {
   expect(html).toContain('<strong>03/09/2026</strong>');
   expect(html).toContain('<strong>03/09/2026</strong>');
 });
+
+test("incluye la fecha de generación y el nombre del sistema en el pie", () => {
+  const html = buildAlquilerComprobanteHTML({ id: "rental-4" });
+
+  expect(html).toMatch(/Generado: \d{2}\/\d{2}\/\d{4} \d{1,2}:\d{2}:\d{2} [ap]\.\s*m\./i);
+  expect(html).toContain("<br />Sistema de Comprobantes USFX");
+});
