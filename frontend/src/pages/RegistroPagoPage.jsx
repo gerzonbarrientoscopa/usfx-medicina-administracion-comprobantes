@@ -398,11 +398,11 @@ export default function RegistroPagoPage() {
                         </Button>
                     </div>
 
-                    {/* Right column - preview/data */}
-                    <div
-                        className="border rounded-sm p-6 space-y-4 relative"
-                        style={{ borderColor: "var(--institution-border)", backgroundColor: "var(--institution-cream)" }}
-                    >
+                    {pago && (
+                        <div
+                            className="border rounded-sm p-6 space-y-4 relative"
+                            style={{ borderColor: "var(--institution-border)", backgroundColor: "var(--institution-cream)" }}
+                        >
                         <div className="flex items-center justify-between">
                             <div className="section-eyebrow">Comprobante N°</div>
                             <div
@@ -410,7 +410,7 @@ export default function RegistroPagoPage() {
                                 style={{ color: "var(--institution-burgundy)" }}
                                 data-testid="comprobante-display"
                             >                                
-                                {pago ? formatComprobante(pago) : "—"}
+                                {formatComprobante(pago)}
                             </div>
                         </div>
 
@@ -418,15 +418,9 @@ export default function RegistroPagoPage() {
                             <Row label="Oficina" value={officeName || "—"} />
                             <Row label="Estudiante" value={selectedEst ? `${selectedEst.nombre}` : "—"} />
                             <Row label="C.I." value={selectedEst?.ci || "—"} />
-                            <Row label="Fecha de pago" value={formatDate(pago?.fecha_pago || fechaPago)} />
+                            <Row label="Fecha de pago" value={formatDate(pago.fecha_pago || fechaPago)} />
                         </div>
 
-                        {!pago ? (
-                            <p className="border-t pt-4 text-sm text-[color:var(--institution-muted)]" style={{ borderColor: "var(--institution-border)" }}>
-                                Seleccione un estudiante y genere el comprobante para comenzar a añadir conceptos.
-                            </p>
-                        ) : (
-                            <>
                                 <div className="space-y-3 border-t pt-4" style={{ borderColor: "var(--institution-border)" }}>
                                     <Label className="text-xs uppercase tracking-widest text-[color:var(--institution-muted)]">
                                         Añadir concepto de pago
@@ -573,9 +567,8 @@ export default function RegistroPagoPage() {
                                         <X size={14} className="mr-2" /> Descartar borrador
                                     </Button>
                                 </div>
-                            </>
-                        )}
-                    </div>
+                        </div>
+                    )}
                 </CardContent>
             </Card>
 
