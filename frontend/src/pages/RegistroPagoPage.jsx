@@ -288,7 +288,7 @@ export default function RegistroPagoPage() {
             </div>
 
             <Card className="rounded-sm border-[color:var(--institution-border)] shadow-none">
-                <CardContent className="p-8 grid grid-cols-1 lg:grid-cols-2 gap-8">
+                <CardContent className="p-8 grid grid-cols-1 gap-8">
                     {/* Left column - selectors */}
                     <div className="space-y-5">
                         {isSuperAdmin ? (

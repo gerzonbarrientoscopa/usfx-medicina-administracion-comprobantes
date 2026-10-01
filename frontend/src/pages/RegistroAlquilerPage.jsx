@@ -244,7 +244,7 @@ export default function RegistroAlquilerPage() {
     </header>
 
     {isSuperAdmin && !officeId ? <div className="rounded-sm border bg-white p-10 text-center" style={{ borderColor: "var(--institution-border)" }}><CalendarDays className="mx-auto mb-3 text-[color:var(--institution-muted)]"/><h2 className="font-serif-display text-2xl">Seleccione oficina</h2><p className="mt-1 text-sm text-[color:var(--institution-muted)]">La agenda y el catálogo corresponden a una oficina.</p></div> :
-    <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_350px]">
+     <div className="grid grid-cols-1 items-start gap-5">
       <section className="min-w-0 space-y-4">
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="space-y-1.5"><Label htmlFor="alquiler-ambiente">Ambiente</Label><select id="alquiler-ambiente" value={ambienteId} onChange={(e) => { setAmbienteId(e.target.value); setTarifaId(""); setTarifas([]); setReservas([]); setDate(""); setStart(""); setEnd(""); setLastSaved(null); }} disabled={catalogLoading} className="h-10 w-full rounded-sm border border-input bg-white px-3 text-sm"><option value="">{catalogLoading ? "Cargando ambientes…" : "Seleccione un ambiente"}</option>{ambientes.map((a) => <option key={a.id} value={a.id}>{a.nombre}</option>)}</select></div>
