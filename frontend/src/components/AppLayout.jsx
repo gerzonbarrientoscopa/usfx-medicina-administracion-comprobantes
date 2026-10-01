@@ -39,6 +39,7 @@ const NAV_BY_ROLE = {
         { section: "Caja" },
         { to: "/registro", icon: Receipt, label: "Registro de Pago" },
         { to: "/registro-alquiler", icon: CalendarClock, label: "Registro de Alquiler" },
+        { to: "/anular", icon: FileX, label: "Anular Pago" },
         { to: "/buscar", icon: Search, label: "Búsqueda Pagos" },
     ],
     Consultas: [

@@ -6,6 +6,8 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useOfficeScope } from "@/hooks/useOfficeScope";
 import { formatComprobante } from "@/lib/receipt";
+import { useAuth } from "@/contexts/AuthContext";
+import { canAnnulPayment } from "@/lib/paymentAnnulmentPolicy";
 import {
     Table,
     TableBody,
@@ -30,6 +32,7 @@ import {
 } from "@/components/ui/alert-dialog";
 
 export default function AnularPagoPage() {
+    const { user } = useAuth();
     const {
         isSuperAdmin, offices, selectedOfficeId, setSelectedOfficeId, officeParams, officeName,
     } = useOfficeScope();
@@ -90,6 +93,11 @@ export default function AnularPagoPage() {
                 <p className="text-sm text-[color:var(--institution-muted)] mt-1">
                     La anulación no elimina el registro: queda almacenado con estado anulado para fines de auditoría.
                 </p>
+                {user?.rol === "Caja" && (
+                    <p className="text-sm text-[color:var(--institution-muted)] mt-1">
+                        Caja solo puede anular sus propios comprobantes el día de la fecha impresa.
+                    </p>
+                )}
             </div>
 
             <Card className="rounded-sm border-[color:var(--institution-border)] shadow-none">
@@ -183,10 +191,13 @@ export default function AnularPagoPage() {
                                             <Button
                                                 size="sm"
                                                 variant="outline"
-                                                disabled={pago.anulado}
+                                                disabled={!canAnnulPayment(pago, user)}
                                                 className="rounded-sm"
                                                 data-testid={`anular-btn-${pago.id}`}
-                                                style={!pago.anulado ? { color: "var(--institution-danger)", borderColor: "var(--institution-danger)" } : {}}
+                                                style={canAnnulPayment(pago, user) ? { color: "var(--institution-danger)", borderColor: "var(--institution-danger)" } : {}}
+                                                title={user?.rol === "Caja" && !canAnnulPayment(pago, user)
+                                                    ? "Solo puede anular sus propios comprobantes el día de la fecha impresa."
+                                                    : undefined}
                                             >
                                                 <Ban size={12} className="mr-1" />
                                                 {pago.anulado ? "Anulado" : "Anular"}

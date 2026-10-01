@@ -111,7 +111,7 @@ function App() {
                     <Route
                         path="/anular"
                         element={
-                            <ProtectedRoute roles={["Administrador"]}>
+                            <ProtectedRoute roles={["Administrador", "Caja"]}>
                                 <AppLayout>
                                     <AnularPagoPage />
                                 </AppLayout>
