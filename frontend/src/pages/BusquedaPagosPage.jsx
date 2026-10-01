@@ -450,7 +450,7 @@ export default function BusquedaPagosPage() {
                                     )}
                                 </TableCell>
                                 <TableCell>
-                                    {p.anulado ? (
+                                    {p.anulado || (p.origen === "alquiler" && p.estado === "cancelado") ? (
                                         <span className="pill pill-void" data-testid={`pago-status-${p.id}`}>Anulado</span>
                                     ) : (
                                         <span className="pill pill-valid" data-testid={`pago-status-${p.id}`}>Válido</span>

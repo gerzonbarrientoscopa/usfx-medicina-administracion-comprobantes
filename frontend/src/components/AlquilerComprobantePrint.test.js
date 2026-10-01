@@ -1,4 +1,7 @@
-import { buildAlquilerComprobanteHTML } from "./AlquilerComprobantePrint";
+import {
+  buildAlquilerComprobanteHTML,
+  printAlquilerComprobante,
+} from "./AlquilerComprobantePrint";
 
 test("incluye la suboficina en el encabezado y escapa el texto", () => {
   const html = buildAlquilerComprobanteHTML({
@@ -38,4 +41,38 @@ test("incluye la fecha de generación y el nombre del sistema en el pie", () => 
   expect(html).toMatch(/Generado: \d{2}\/\d{2}\/\d{4} \d{1,2}:\d{2}:\d{2} [ap]\.\s*m\./i);
   expect(html).toContain("<br />Sistema de Comprobantes USFX");
   expect(html).toMatch(/\.meta\{[^}]*text-align:left/);
+});
+
+test("marca como anulado el comprobante de un alquiler cancelado", () => {
+  const html = buildAlquilerComprobanteHTML({
+    id: "rental-5",
+    estado: "cancelado",
+    cod_comprobante: "00014",
+  });
+
+  expect(html).toContain('<div class="void-stamp" aria-label="Comprobante anulado">ANULADO</div>');
+});
+
+test("permite reimprimir un alquiler cancelado si conserva su comprobante", () => {
+  const printWindow = {
+    document: {
+      open: jest.fn(),
+      write: jest.fn(),
+      close: jest.fn(),
+    },
+    focus: jest.fn(),
+  };
+
+  expect(printAlquilerComprobante({
+    id: "rental-6",
+    estado: "cancelado",
+    cod_comprobante: "00014",
+  }, printWindow)).toBe(true);
+  expect(printWindow.document.write).toHaveBeenCalledWith(
+    expect.stringContaining("Comprobante anulado"),
+  );
+});
+
+test("no permite imprimir una reserva cancelada sin comprobante", () => {
+  expect(printAlquilerComprobante({ id: "rental-7", estado: "cancelado" }, {})).toBe(false);
 });
