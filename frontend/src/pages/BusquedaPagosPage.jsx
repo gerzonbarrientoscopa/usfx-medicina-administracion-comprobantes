@@ -299,10 +299,10 @@ export default function BusquedaPagosPage() {
             </div>
 
             <Card className="rounded-sm border-[color:var(--institution-border)] shadow-none">
-                <CardContent className="p-6 grid grid-cols-1 md:grid-cols-6 gap-4">
+                <CardContent className="p-6 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-6 gap-4">
                     {isSuperAdmin && (
-                        <div className="space-y-1.5 md:col-span-2">
-                            <Label className="text-xs uppercase tracking-widest text-[color:var(--institution-muted)]">Oficina</Label>
+                        <div className="min-w-0 space-y-1.5 md:col-span-2">
+                            <Label className="flex min-h-8 items-end text-xs uppercase tracking-widest leading-4 text-[color:var(--institution-muted)]">Oficina</Label>
                             <Select
                                 value={selectedOfficeId || "all"}
                                 onValueChange={(value) => setSelectedOfficeId(value === "all" ? "" : value)}
@@ -319,8 +319,8 @@ export default function BusquedaPagosPage() {
                             </Select>
                         </div>
                     )}
-                    <div className="space-y-1.5 md:col-span-2">
-                        <Label className="text-xs uppercase tracking-widest text-[color:var(--institution-muted)]">Búsqueda</Label>
+                    <div className="min-w-0 space-y-1.5 md:col-span-2">
+                        <Label className="flex min-h-8 items-end text-xs uppercase tracking-widest leading-4 text-[color:var(--institution-muted)]">Búsqueda</Label>
                         <Input
                             placeholder="Código, estudiante, tipo…"
                             value={q}
@@ -329,8 +329,8 @@ export default function BusquedaPagosPage() {
                             data-testid="busq-q-input"
                         />
                     </div>
-                    <div className="space-y-1.5">
-                        <Label className="text-xs uppercase tracking-widest text-[color:var(--institution-muted)]">Tipo de pago estudiantil</Label>
+                    <div className="min-w-0 space-y-1.5">
+                        <Label className="flex min-h-8 items-end text-xs uppercase tracking-widest leading-4 text-[color:var(--institution-muted)]">Tipo de pago estudiantil</Label>
                         <Select value={tipo} onValueChange={setTipo}>
                             <SelectTrigger className="rounded-sm" data-testid="busq-tipo-select">
                                 <SelectValue placeholder="Todos" />
@@ -345,8 +345,8 @@ export default function BusquedaPagosPage() {
                             </SelectContent>
                         </Select>
                     </div>
-                    <div className="space-y-1.5">
-                        <Label className="text-xs uppercase tracking-widest text-[color:var(--institution-muted)]">Cobrado / registrado por</Label>
+                    <div className="min-w-0 space-y-1.5">
+                        <Label className="flex min-h-8 items-end text-xs uppercase tracking-widest leading-4 text-[color:var(--institution-muted)]">Cobrado / registrado por</Label>
                         <Select value={createdBy} onValueChange={setCreatedBy}>
                             <SelectTrigger className="rounded-sm" data-testid="busq-user-select">
                                 <SelectValue placeholder="Todos" />
@@ -361,27 +361,27 @@ export default function BusquedaPagosPage() {
                             </SelectContent>
                         </Select>
                     </div>
-                    <div className="space-y-1.5">
-                        <Label className="text-xs uppercase tracking-widest text-[color:var(--institution-muted)]">Desde</Label>
+                    <div className="min-w-0 space-y-1.5">
+                        <Label className="flex min-h-8 items-end text-xs uppercase tracking-widest leading-4 text-[color:var(--institution-muted)]">Desde</Label>
                         <Input
                             type="date"
                             value={desde}
                             onChange={(e) => setDesde(e.target.value)}
-                            className="rounded-sm"
+                            className="busqueda-date-input min-w-0 rounded-sm px-2"
                             data-testid="busq-desde-input"
                         />
                     </div>
-                    <div className="space-y-1.5">
-                        <Label className="text-xs uppercase tracking-widest text-[color:var(--institution-muted)]">Hasta</Label>
+                    <div className="min-w-0 space-y-1.5">
+                        <Label className="flex min-h-8 items-end text-xs uppercase tracking-widest leading-4 text-[color:var(--institution-muted)]">Hasta</Label>
                         <Input
                             type="date"
                             value={hasta}
                             onChange={(e) => setHasta(e.target.value)}
-                            className="rounded-sm"
+                            className="busqueda-date-input min-w-0 rounded-sm px-2"
                             data-testid="busq-hasta-input"
                         />
                     </div>
-                    <div className="md:col-span-6 flex justify-end">
+                    <div className="flex justify-end md:col-span-2 xl:col-span-6">
                         <Button
                             onClick={() => buscar(1)}
                             disabled={loading}
