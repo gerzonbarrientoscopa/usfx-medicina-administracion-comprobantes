@@ -376,9 +376,32 @@ def test_reserve_payment_immediate_payment_cancel_and_counter(mongo_rental_api):
             cancelled = await client.post(f'{API}/alquileres/{cancellable["id"]}/cancelar')
             assert cancelled.status_code == 200
             assert cancelled.json()["estado"] == "cancelado"
+
+            occupancy_id = f'{mongo_rental_api["ambiente_a"]}_{fecha}'
+            await mongo_rental_api["db"].alquiler_ocupacion.update_one(
+                {"_id": occupancy_id},
+                {
+                    "$push": {
+                        "intervals": {
+                            "rental_id": cancellable["id"],
+                            "start": 11 * 60,
+                            "end": 12 * 60,
+                            "claimed_at": server.iso(datetime.now(timezone.utc)),
+                        }
+                    }
+                },
+                upsert=True,
+            )
             cancellation_retry = await client.post(f'{API}/alquileres/{cancellable["id"]}/cancelar')
             assert cancellation_retry.status_code == 200
             assert cancellation_retry.json()["estado"] == "cancelado"
+            occupancy = await mongo_rental_api["db"].alquiler_ocupacion.find_one(
+                {"_id": occupancy_id}, {"_id": 0, "intervals": 1}
+            )
+            assert not any(
+                interval["rental_id"] == cancellable["id"]
+                for interval in (occupancy or {}).get("intervals", [])
+            )
             reused_slot = await client.post(
                 f"{API}/alquileres",
                 json=_rental_payload(mongo_rental_api["ambiente_a"], tariff_id, fecha, "11:00", "12:00"),

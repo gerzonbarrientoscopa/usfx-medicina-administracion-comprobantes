@@ -2073,24 +2073,21 @@ async def pay_alquiler(rental_id: str, user: dict = Depends(require_roles(*_RENT
 @api.post("/alquileres/{rental_id}/cancelar")
 async def cancel_alquiler(rental_id: str, user: dict = Depends(require_roles(*_RENTAL_ROLES))):
     rental = await _rental_scope_record(rental_id, user)
-    if rental.get("estado") == "cancelado":
-        await _release_rental_intervals(rental)
-        return await db.alquileres.find_one({"id": rental_id}, {"_id": 0, "intervals": 0})
-    if rental.get("estado") != "reservado":
-        raise HTTPException(status_code=400, detail="Solo se puede cancelar un alquiler reservado.")
-    result = await db.alquileres.update_one(
-        {"id": rental_id, "estado": "reservado"}, {"$set": {"estado": "cancelado"}}
-    )
-    if not result.modified_count:
-        latest = await db.alquileres.find_one({"id": rental_id}, {"_id": 0})
-        if latest and latest.get("estado") == "cancelado":
-            await _release_rental_intervals(latest)
-            latest.pop("intervals", None)
-            return latest
-        raise HTTPException(status_code=400, detail="Solo se puede cancelar un alquiler reservado.")
+    if rental.get("estado") != "cancelado":
+        if rental.get("estado") != "reservado":
+            raise HTTPException(status_code=400, detail="Solo se puede cancelar un alquiler reservado.")
+        result = await db.alquileres.update_one(
+            {"id": rental_id, "estado": "reservado"}, {"$set": {"estado": "cancelado"}}
+        )
+        if not result.modified_count:
+            latest = await db.alquileres.find_one({"id": rental_id}, {"_id": 0})
+            if not latest or latest.get("estado") != "cancelado":
+                raise HTTPException(status_code=400, detail="Solo se puede cancelar un alquiler reservado.")
+            rental = latest
+
+    # Also clear any leftover claims on retries of an already-canceled rental.
     await _release_rental_intervals(rental)
-    updated = await db.alquileres.find_one({"id": rental_id}, {"_id": 0, "intervals": 0})
-    return updated
+    return await db.alquileres.find_one({"id": rental_id}, {"_id": 0, "intervals": 0})
 
 
 # ----------------------------- Pagos: comprobante preview -----------------------------

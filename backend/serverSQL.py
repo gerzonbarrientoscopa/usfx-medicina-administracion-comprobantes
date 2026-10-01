@@ -1789,20 +1789,20 @@ async def cancel_rental(rid: str, u=Depends(roles("Administrador", "Caja"))):
             row = c.fetchone()
             if not row:
                 raise HTTPException(404, "Alquiler no encontrado.")
-            if row[0] == "cancelado":
-                return
-            if row[0] != "reservado":
-                raise HTTPException(
-                    400, "Solo se puede cancelar un alquiler reservado."
+            if row[0] != "cancelado":
+                if row[0] != "reservado":
+                    raise HTTPException(
+                        400, "Solo se puede cancelar un alquiler reservado."
+                    )
+                c.execute(
+                    "UPDATE alquileres SET estado=N'cancelado' WHERE id=? AND estado=N'reservado'",
+                    (rid,),
                 )
-            c.execute(
-                "UPDATE alquileres SET estado=N'cancelado' WHERE id=? AND estado=N'reservado'",
-                (rid,),
-            )
-            if not c.rowcount:
-                raise HTTPException(
-                    409, "El alquiler cambió de estado; vuelva a consultarlo."
-                )
+                if not c.rowcount:
+                    raise HTTPException(
+                        409, "El alquiler cambió de estado; vuelva a consultarlo."
+                    )
+            # Idempotent cleanup repairs any interval claims left by an earlier attempt.
             c.execute("DELETE FROM ocupacion_intervalos WHERE alquiler_id=?", (rid,))
             cn.commit()
 
