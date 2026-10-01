@@ -1815,6 +1815,61 @@ async def cancel_rental(rid: str, u=Depends(roles("Administrador", "Caja"))):
     return await hydrate_rental(row)
 
 
+@api.post("/alquileres/{rid}/anular")
+async def void_rental_receipt(rid: str, u=Depends(roles("Administrador", "Caja"))):
+    scope, scope_args = await office_scope_sql(u, column="office_id")
+
+    def void():
+        with _connect() as cn:
+            c = cn.cursor()
+            clause = (" AND " + scope) if scope else ""
+            c.execute(
+                "SELECT ambiente_id,fecha,estado,cod_comprobante,paid_by,fecha_pago "
+                "FROM alquileres WITH(UPDLOCK,HOLDLOCK) WHERE id=?" + clause,
+                (rid, *scope_args),
+            )
+            row = c.fetchone()
+            if not row:
+                raise HTTPException(404, "Alquiler no encontrado.")
+            ambiente_id, rental_date, state, code, paid_by, paid_at = row
+            if not code or state not in ("pagado", "cancelado"):
+                raise HTTPException(
+                    400, "Solo se puede anular un comprobante de alquiler pagado."
+                )
+            if u["rol"] == "Caja":
+                if paid_by != u["id"]:
+                    raise HTTPException(
+                        403, "Caja solo puede anular sus propios comprobantes."
+                    )
+                if _printed_payment_date(paid_at) != _current_bolivia_date():
+                    raise HTTPException(
+                        403,
+                        "Caja solo puede anular sus comprobantes el día de la fecha impresa.",
+                    )
+
+            acquire_app_lock(c, f"room:{ambiente_id}:{rental_date}")
+            if state != "cancelado":
+                c.execute(
+                    "UPDATE alquileres SET estado=N'cancelado' "
+                    "WHERE id=? AND estado=N'pagado' AND cod_comprobante=?",
+                    (rid, code),
+                )
+                if not c.rowcount:
+                    raise HTTPException(
+                        409, "El comprobante cambió de estado; vuelva a consultarlo."
+                    )
+            c.execute("DELETE FROM ocupacion_intervalos WHERE alquiler_id=?", (rid,))
+            cn.commit()
+
+    await tx(void)
+    row = await sql(
+        "SELECT * FROM alquileres WHERE id=?" + ((" AND " + scope) if scope else ""),
+        (rid, *scope_args),
+        one=True,
+    )
+    return await hydrate_rental(row)
+
+
 def parse_iso_date(value, label="Fecha inválida. Use YYYY-MM-DD."):
     try:
         parsed = date.fromisoformat(value)
@@ -2379,7 +2434,10 @@ async def receipts(
         rc.append(rs)
         rv.extend(ra)
     pc.append("p.estado<>N'borrador'")
-    rc.append("a.estado=N'pagado'")
+    rc.append(
+        "(a.estado=N'pagado' OR "
+        "(a.estado=N'cancelado' AND a.cod_comprobante IS NOT NULL AND a.cod_comprobante<>N''))"
+    )
     if fecha_desde:
         pc.append("p.fecha_pago>=?")
         pv.append(fecha_desde)

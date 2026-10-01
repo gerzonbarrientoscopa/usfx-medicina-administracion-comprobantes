@@ -53,7 +53,7 @@ export default function AnularPagoPage() {
         const currentRequest = ++requestId.current;
         setLoading(true);
         try {
-            const { data } = await apiClient.get("/pagos", {
+            const { data } = await apiClient.get("/comprobantes", {
                 params: {
                     q: textoBuscar.trim(),
                     pag: paginaSolicitada,
@@ -77,9 +77,14 @@ export default function AnularPagoPage() {
 
     const anular = async (pago) => {
         try {
-            await apiClient.post(`/pagos/${pago.id}/anular`);
+            const endpoint = pago.origen === "alquiler"
+                ? `/alquileres/${pago.id}/anular`
+                : `/pagos/${pago.id}/anular`;
+            await apiClient.post(endpoint);
             toast.success(`Comprobante ${formatComprobante(pago)} anulado.`);
-            setPagos((prev) => prev.map((x) => (x.id === pago.id ? { ...x, anulado: true } : x)));
+            setPagos((prev) => prev.map((x) => (x.id === pago.id && x.origen === pago.origen
+                ? { ...x, anulado: true, ...(x.origen === "alquiler" ? { estado: "cancelado" } : {}) }
+                : x)));
         } catch (e) {
             toast.error(formatApiError(e));
         }
@@ -89,7 +94,7 @@ export default function AnularPagoPage() {
         <div className="space-y-6" data-testid="anular-page">
             <div>
                 <div className="section-eyebrow">Operaciones de auditoría</div>
-                <h1 className="font-serif-display text-4xl mt-1">Anular Pago</h1>
+                <h1 className="font-serif-display text-4xl mt-1">Anular comprobante</h1>
                 <p className="text-sm text-[color:var(--institution-muted)] mt-1">
                     La anulación no elimina el registro: queda almacenado con estado anulado para fines de auditoría.
                 </p>
@@ -130,10 +135,10 @@ export default function AnularPagoPage() {
                     )}
                     <div className="space-y-1.5 flex-1">
                         <Label className="text-xs uppercase tracking-widest text-[color:var(--institution-muted)]">
-                            Número de comprobante o nombre del estudiante
+                            Número de comprobante, cliente o estudiante
                         </Label>
                         <Input
-                            placeholder="Ej. 00001/2026 ó Juan Pérez"
+                            placeholder="Ej. 00014, 00014/2026 o nombre"
                             value={textoBuscar}
                             onChange={(e) => setTextoBuscar(e.target.value)}
                             onKeyDown={(e) => e.key === "Enter" && buscar(1)}
@@ -159,7 +164,7 @@ export default function AnularPagoPage() {
                         <TableRow style={{ backgroundColor: "var(--institution-cream)" }}>
                             <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Código</TableHead>
                             {isSuperAdmin && <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Oficina</TableHead>}
-                            <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Estudiante</TableHead>
+                                <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Cliente / estudiante</TableHead>
                             <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Tipo</TableHead>
                             <TableHead className="text-right uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Total</TableHead>
                             <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Fecha</TableHead>
@@ -174,12 +179,14 @@ export default function AnularPagoPage() {
                                     {formatComprobante(pago)}
                                 </TableCell>
                                 {isSuperAdmin && <TableCell>{pago.office_nombre || officeName}</TableCell>}
-                                <TableCell>{pago.estudiante_nombre || "—"}</TableCell>
-                                <TableCell>{pago.tipo_pago_nombre || "—"}</TableCell>
+                                <TableCell>{pago.origen === "alquiler" ? pago.cliente_nombre || "—" : pago.estudiante_nombre || "—"}</TableCell>
+                                <TableCell>{pago.origen === "alquiler"
+                                    ? [pago.ambiente_nombre, pago.tarifa_nombre].filter(Boolean).join(" · ") || "Alquiler"
+                                    : pago.tipo_pago_nombre || "—"}</TableCell>
                                 <TableCell className="text-right font-mono-num">{formatMoney(pago.total)}</TableCell>
                                 <TableCell className="font-mono-num">{pago.fecha_pago}</TableCell>
                                 <TableCell>
-                                    {pago.anulado ? (
+                                    {pago.anulado || (pago.origen === "alquiler" && pago.estado === "cancelado") ? (
                                         <span className="pill pill-void">Anulado</span>
                                     ) : (
                                         <span className="pill pill-valid">Válido</span>
@@ -209,8 +216,9 @@ export default function AnularPagoPage() {
                                                     Confirmar anulación
                                                 </AlertDialogTitle>
                                                 <AlertDialogDescription>
-                                                     El comprobante <strong>{formatComprobante(pago)}</strong> de{" "}
-                                                    <strong>{pago.estudiante_nombre}</strong> por <strong>Bs. {formatMoney(pago.total)}</strong> quedará anulado y no podrá revertirse.
+                                                    El comprobante <strong>{formatComprobante(pago)}</strong> de{" "}
+                                                    <strong>{pago.origen === "alquiler" ? pago.cliente_nombre : pago.estudiante_nombre}</strong> por <strong>Bs. {formatMoney(pago.total)}</strong> quedará anulado y no podrá revertirse.
+                                                    {pago.origen === "alquiler" && " El horario del ambiente quedará disponible nuevamente."}
                                                 </AlertDialogDescription>
                                             </AlertDialogHeader>
                                             <AlertDialogFooter>

@@ -2090,6 +2090,63 @@ async def cancel_alquiler(rental_id: str, user: dict = Depends(require_roles(*_R
     return await db.alquileres.find_one({"id": rental_id}, {"_id": 0, "intervals": 0})
 
 
+@api.post("/alquileres/{rental_id}/anular")
+async def anular_comprobante_alquiler(
+    rental_id: str, user: dict = Depends(require_roles("Administrador", "Caja"))
+):
+    rental = await _rental_scope_record(rental_id, user)
+    if (
+        not rental.get("cod_comprobante")
+        or rental.get("estado") not in {"pagado", "cancelado"}
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="Solo se puede anular un comprobante de alquiler pagado.",
+        )
+    if user.get("rol") == "Caja":
+        if rental.get("paid_by") != user.get("id"):
+            raise HTTPException(
+                status_code=403,
+                detail="Caja solo puede anular sus propios comprobantes.",
+            )
+        if _printed_payment_date(rental.get("fecha_pago")) != _current_bolivia_date():
+            raise HTTPException(
+                status_code=403,
+                detail="Caja solo puede anular sus comprobantes el día de la fecha impresa.",
+            )
+
+    if rental.get("estado") != "cancelado":
+        result = await db.alquileres.update_one(
+            {
+                "id": rental_id,
+                "office_id": rental["office_id"],
+                "estado": "pagado",
+                "cod_comprobante": rental["cod_comprobante"],
+            },
+            {"$set": {"estado": "cancelado"}},
+        )
+        if not result.modified_count:
+            latest = await db.alquileres.find_one(
+                {"id": rental_id, "office_id": rental["office_id"]}, {"_id": 0}
+            )
+            if (
+                not latest
+                or latest.get("estado") != "cancelado"
+                or not latest.get("cod_comprobante")
+            ):
+                raise HTTPException(
+                    status_code=409,
+                    detail="El comprobante cambió de estado; vuelva a consultarlo.",
+                )
+            rental = latest
+
+    # Keep the receipt number and rental record for audit, but release its room.
+    await _release_rental_intervals(rental)
+    return await db.alquileres.find_one(
+        {"id": rental_id}, {"_id": 0, "intervals": 0}
+    )
+
+
 # ----------------------------- Pagos: comprobante preview -----------------------------
 @api.get("/pagos/preview-comprobante")
 async def preview_comprobante(
@@ -2718,7 +2775,11 @@ async def buscar_comprobantes(
                 raise HTTPException(status_code=400, detail="Fecha inválida. Use YYYY-MM-DD.")
     scope = await office_scope(user, office_id)
     students = {**scope, "estado": {"$ne": "borrador"}}
-    rentals = {**scope, "estado": "pagado"}
+    rentals = {
+        **scope,
+        "estado": {"$in": ["pagado", "cancelado"]},
+        "cod_comprobante": {"$type": "string", "$ne": ""},
+    }
     if fecha_desde or fecha_hasta:
         dates = {}
         if fecha_desde:
@@ -2780,7 +2841,7 @@ async def buscar_comprobantes(
             {"tarifa_nombre": {"$regex": escaped, "$options": "i"}},
         ])
         students.setdefault("$and", []).append({"$or": student_or})
-        rentals["$or"] = rental_or
+        rentals.setdefault("$and", []).append({"$or": rental_or})
     pipeline = [
         {"$match": students},
         *_PAGO_HYDRATE_PIPELINE,

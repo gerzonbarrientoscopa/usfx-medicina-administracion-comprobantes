@@ -367,6 +367,37 @@ def test_reserve_payment_immediate_payment_cancel_and_counter(mongo_rental_api):
             assert immediate["estado"] == "pagado"
             assert int(immediate["cod_comprobante"]) == int(code) + 1
 
+            receipt_search = await client.get(
+                f"{API}/comprobantes",
+                params={"q": immediate["cod_comprobante"]},
+            )
+            assert receipt_search.status_code == 200, receipt_search.text
+            assert any(
+                item["id"] == immediate["id"] and item["origen"] == "alquiler"
+                for item in receipt_search.json()["items"]
+            )
+            annulled_rental = await client.post(
+                f'{API}/alquileres/{immediate["id"]}/anular'
+            )
+            assert annulled_rental.status_code == 200, annulled_rental.text
+            assert annulled_rental.json()["estado"] == "cancelado"
+            annulled_search = await client.get(
+                f"{API}/comprobantes",
+                params={"q": immediate["cod_comprobante"]},
+            )
+            assert any(
+                item["id"] == immediate["id"]
+                and item["estado"] == "cancelado"
+                for item in annulled_search.json()["items"]
+            )
+            released_slot = await client.post(
+                f"{API}/alquileres",
+                json=_rental_payload(
+                    mongo_rental_api["ambiente_a"], tariff_id, fecha, "10:00", "11:00"
+                ),
+            )
+            assert released_slot.status_code == 201, released_slot.text
+
             cancellable_response = await client.post(
                 f"{API}/alquileres",
                 json=_rental_payload(mongo_rental_api["ambiente_a"], tariff_id, fecha, "11:00", "12:00"),

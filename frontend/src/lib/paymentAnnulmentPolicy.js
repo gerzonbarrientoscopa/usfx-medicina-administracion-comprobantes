@@ -12,9 +12,15 @@ function currentBoliviaDate(now) {
 }
 
 export function canAnnulPayment(payment, user, today = new Date()) {
-    if (!payment || payment.anulado) return false;
+    const isRental = payment?.origen === "alquiler";
+    if (
+        !payment
+        || payment.anulado
+        || (isRental && payment.estado === "cancelado")
+    ) return false;
     if (user?.rol === "Administrador" || user?.rol === "SuperAdmin") return true;
-    if (user?.rol !== "Caja" || payment.created_by !== user.id) return false;
+    const issuerId = isRental ? payment.paid_by : payment.created_by;
+    if (user?.rol !== "Caja" || issuerId !== user.id) return false;
 
     const printedDate = toISODate(payment.fecha_pago);
     return Boolean(printedDate) && printedDate === currentBoliviaDate(today);
