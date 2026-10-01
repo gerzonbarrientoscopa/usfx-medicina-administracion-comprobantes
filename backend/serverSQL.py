@@ -29,6 +29,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
 
+BOLIVIA_TIMEZONE = timezone(timedelta(hours=-4))
+
 
 def _format_response_date(value, field):
     if not isinstance(field, str):
@@ -1823,6 +1825,29 @@ def parse_iso_date(value, label="Fecha inválida. Use YYYY-MM-DD."):
         raise HTTPException(400, label)
 
 
+def _current_bolivia_date() -> date:
+    return datetime.now(BOLIVIA_TIMEZONE).date()
+
+
+def _printed_payment_date(value) -> Optional[date]:
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    raw = str(value or "").strip()
+    try:
+        return date.fromisoformat(raw[:10])
+    except ValueError:
+        match = re.fullmatch(r"(\d{1,2})/(\d{1,2})/(\d{4})", raw)
+        if not match:
+            return None
+        try:
+            day, month, year = (int(part) for part in match.groups())
+            return date(year, month, day)
+        except ValueError:
+            return None
+
+
 @api.get("/pagos/preview-comprobante")
 async def preview(
     office_id: Optional[str] = None, u=Depends(roles("Administrador", "Caja"))
@@ -2280,7 +2305,7 @@ async def update_payment(
 
 
 @api.post("/pagos/{pid}/anular")
-async def void_payment(pid: str, u=Depends(roles("Administrador"))):
+async def void_payment(pid: str, u=Depends(roles("Administrador", "Caja"))):
     scope, scope_args = await office_scope_sql(u, column="p.office_id")
 
     def void():
@@ -2288,7 +2313,7 @@ async def void_payment(pid: str, u=Depends(roles("Administrador"))):
             c = cn.cursor()
             clause = (" AND " + scope) if scope else ""
             c.execute(
-                "SELECT p.anulado FROM pagos p WITH(UPDLOCK,HOLDLOCK) WHERE p.id=?"
+                "SELECT p.anulado,p.fecha_pago,p.created_by FROM pagos p WITH(UPDLOCK,HOLDLOCK) WHERE p.id=?"
                 + clause,
                 (pid, *scope_args),
             )
@@ -2297,6 +2322,16 @@ async def void_payment(pid: str, u=Depends(roles("Administrador"))):
                 raise HTTPException(404, "Pago no encontrado.")
             if row[0]:
                 raise HTTPException(400, "El pago ya está anulado.")
+            if u["rol"] == "Caja":
+                if row[2] != u["id"]:
+                    raise HTTPException(
+                        403, "Caja solo puede anular sus propios comprobantes."
+                    )
+                if _printed_payment_date(row[1]) != _current_bolivia_date():
+                    raise HTTPException(
+                        403,
+                        "Caja solo puede anular sus comprobantes el día de la fecha impresa.",
+                    )
             c.execute(
                 "UPDATE pagos SET anulado=1,anulado_at=SYSUTCDATETIME(),anulado_by=? WHERE id=? AND anulado=0",
                 (u["id"], pid),

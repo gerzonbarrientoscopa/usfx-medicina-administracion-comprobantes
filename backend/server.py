@@ -22,6 +22,8 @@ from pathlib import Path
 from datetime import datetime, date, timezone, timedelta
 from typing import List, Optional, Literal
 
+BOLIVIA_TIMEZONE = timezone(timedelta(hours=-4))
+
 
 def _format_response_date(value, field):
     if not isinstance(field, str):
@@ -428,6 +430,29 @@ class PaginacionPagos(BaseModel):
 # ----------------------------- HELPERS -----------------------------
 def iso(dt: datetime) -> str:
     return dt.astimezone(timezone.utc).isoformat()
+
+
+def _current_bolivia_date() -> date:
+    return datetime.now(BOLIVIA_TIMEZONE).date()
+
+
+def _printed_payment_date(value) -> Optional[date]:
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    raw = str(value or "").strip()
+    try:
+        return date.fromisoformat(raw[:10])
+    except ValueError:
+        match = re.fullmatch(r"(\d{1,2})/(\d{1,2})/(\d{4})", raw)
+        if not match:
+            return None
+        try:
+            day, month, year = (int(part) for part in match.groups())
+            return date(year, month, day)
+        except ValueError:
+            return None
 
 
 def format_receipt_display(prefix: str, code: str, gestion: int) -> str:
@@ -2872,15 +2897,42 @@ async def update_pago(
 
 
 @api.post("/pagos/{pago_id}/anular")
-async def anular_pago(pago_id: str, usuario: dict = Depends(require_roles("Administrador"))):
+async def anular_pago(
+    pago_id: str,
+    usuario: dict = Depends(require_roles("Administrador", "Caja")),
+):
     scope = await office_scope(usuario)
     pago = await db.pagos.find_one({"id": pago_id, **scope})
     if not pago:
         raise HTTPException(status_code=404, detail="Pago no encontrado.")
     if pago.get("anulado"):
         raise HTTPException(status_code=400, detail="El pago ya está anulado.")
-    await db.pagos.update_one(
-        {"id": pago_id, **scope},
+    if usuario.get("rol") == "Caja":
+        if pago.get("created_by") != usuario.get("id"):
+            raise HTTPException(
+                status_code=403,
+                detail="Caja solo puede anular sus propios comprobantes.",
+            )
+        if _printed_payment_date(pago.get("fecha_pago")) != _current_bolivia_date():
+            raise HTTPException(
+                status_code=403,
+                detail="Caja solo puede anular sus comprobantes el día de la fecha impresa.",
+            )
+
+    annul_filter = {
+        "id": pago_id,
+        **scope,
+        "anulado": {"$ne": True},
+    }
+    if usuario.get("rol") == "Caja":
+        annul_filter.update(
+            {
+                "created_by": usuario["id"],
+                "fecha_pago": pago.get("fecha_pago"),
+            }
+        )
+    result = await db.pagos.update_one(
+        annul_filter,
         {
             "$set": {
                 "anulado": True,
@@ -2889,6 +2941,11 @@ async def anular_pago(pago_id: str, usuario: dict = Depends(require_roles("Admin
             }
         },
     )
+    if not result.modified_count:
+        raise HTTPException(
+            status_code=409,
+            detail="El comprobante cambió de estado; vuelva a consultarlo.",
+        )
     return {"ok": True}
 
 
