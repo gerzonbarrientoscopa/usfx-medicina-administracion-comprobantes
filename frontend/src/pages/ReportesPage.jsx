@@ -4,6 +4,7 @@ import { formatDate, toISODate } from "@/lib/dateFormat";
 import { formatComprobante } from "@/lib/receipt";
 import { reportConceptRows } from "@/lib/reportConceptRows";
 import { buildReportPdfRows } from "@/lib/reportPdfRows";
+import { sortReportReceipts } from "@/lib/sortReportReceipts";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -135,7 +136,7 @@ export default function ReportesPage() {
     }, [officeId]);
 
     const reportOfficeName = data?.office_nombre || officeName;
-    const reportRows = [
+    const reportRows = sortReportReceipts([
         ...(data?.pagos || []).map((pago) => ({ ...pago, origen: "Estudiantil" })),
         ...(data?.alquileres || []).map((alquiler) => ({
             ...alquiler,
@@ -149,7 +150,7 @@ export default function ReportesPage() {
             }],
             anulado: false,
         })),
-    ].sort((a, b) => toISODate(a.fecha_pago).localeCompare(toISODate(b.fecha_pago)));
+    ]);
 
     const buildPDF = (modo) => {
         if (!data) return;
