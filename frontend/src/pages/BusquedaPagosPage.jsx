@@ -381,7 +381,7 @@ export default function BusquedaPagosPage() {
                             data-testid="busq-hasta-input"
                         />
                     </div>
-                    <div className="flex justify-end md:col-span-2 xl:col-span-6">
+                    <div className="flex justify-center md:col-span-2 xl:col-span-6">
                         <Button
                             onClick={() => buscar(1)}
                             disabled={loading}
