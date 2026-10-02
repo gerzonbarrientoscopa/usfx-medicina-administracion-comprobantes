@@ -1,4 +1,4 @@
-import React, { useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { apiClient, formatApiError, formatMoney } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -31,19 +31,52 @@ import {
     AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 
+const pagoItems = (pago) => {
+    if (Array.isArray(pago.items) && pago.items.length) return pago.items;
+    if (!pago.id_tipo_pago && !pago.tipo_pago_nombre) return [];
+    return [{
+        tipo_pago_nombre: pago.tipo_pago_nombre || "",
+        cantidad: pago.cantidad,
+        monto: pago.monto,
+    }];
+};
+
+const comprobanteItems = (pago) => pago.origen === "alquiler"
+    ? [{
+        tipo_pago_nombre: `${pago.ambiente_nombre || "Ambiente"} · ${pago.tarifa_nombre || "Alquiler"}`,
+        cantidad: pago.cantidad,
+        monto: pago.monto,
+        total: pago.total,
+    }]
+    : pagoItems(pago);
+
 export default function AnularPagoPage() {
     const { user } = useAuth();
     const {
-        isSuperAdmin, offices, selectedOfficeId, setSelectedOfficeId, officeParams, officeName,
+        isSuperAdmin, offices, officeId, selectedOfficeId, setSelectedOfficeId, officeParams,
     } = useOfficeScope();
     const [textoBuscar, setTextoBuscar] = useState("");
     const [pagos, setPagos] = useState([]);
+    const [usuarios, setUsuarios] = useState([]);
     const [pagina, setPagina] = useState(1);
     const [totalPaginas, setTotalPaginas] = useState(1);
     const [totalResultados, setTotalResultados] = useState(0);
     const [loading, setLoading] = useState(false);
     const requestId = useRef(0);
     const FILAS_POR_PAGINA = 20;
+
+    useEffect(() => {
+        let cancelled = false;
+        setUsuarios([]);
+        apiClient.get("/usuarios/list", {
+            params: officeId ? { office_id: officeId } : {},
+        }).then(({ data }) => {
+            if (!cancelled) setUsuarios(data);
+        }).catch((error) => {
+            if (!cancelled) toast.error(formatApiError(error));
+        });
+        return () => { cancelled = true; };
+    }, [officeId]);
 
     const buscar = async (paginaSolicitada = 1) => {
         if (!textoBuscar.trim()) {
@@ -158,18 +191,20 @@ export default function AnularPagoPage() {
                 </CardContent>
             </Card>
 
-            <div className="bg-white border rounded-sm" style={{ borderColor: "var(--institution-border)" }}>
+            <div className="bg-white border rounded-sm overflow-x-auto" style={{ borderColor: "var(--institution-border)" }}>
                 <Table>
                     <TableHeader>
                         <TableRow style={{ backgroundColor: "var(--institution-cream)" }}>
                             <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Código</TableHead>
                             {isSuperAdmin && <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Oficina</TableHead>}
-                                <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Cliente / estudiante</TableHead>
-                            <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Tipo</TableHead>
-                            <TableHead className="text-right uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Total</TableHead>
+                            <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Origen</TableHead>
+                            <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Cliente / estudiante</TableHead>
+                            <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Conceptos y detalle</TableHead>
+                            <TableHead className="text-right uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Total comprobante</TableHead>
                             <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Fecha</TableHead>
+                            <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Registrado por</TableHead>
                             <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Estado</TableHead>
-                            <TableHead className="text-right uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Acción</TableHead>
+                            <TableHead className="text-right uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Acciones</TableHead>
                         </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -178,13 +213,37 @@ export default function AnularPagoPage() {
                                 <TableCell className="font-mono-num font-medium">
                                     {formatComprobante(pago)}
                                 </TableCell>
-                                {isSuperAdmin && <TableCell>{pago.office_nombre || officeName}</TableCell>}
+                                {isSuperAdmin && <TableCell>{pago.office_nombre || "—"}</TableCell>}
+                                <TableCell>{pago.origen === "alquiler" ? "Alquiler" : "Estudiantil"}</TableCell>
                                 <TableCell>{pago.origen === "alquiler" ? pago.cliente_nombre || "—" : pago.estudiante_nombre || "—"}</TableCell>
-                                <TableCell>{pago.origen === "alquiler"
-                                    ? [pago.ambiente_nombre, pago.tarifa_nombre].filter(Boolean).join(" · ") || "Alquiler"
-                                    : pago.tipo_pago_nombre || "—"}</TableCell>
-                                <TableCell className="text-right font-mono-num">{formatMoney(pago.total)}</TableCell>
+                                <TableCell>
+                                    <div className="min-w-[420px]">
+                                        <div className="grid grid-cols-[minmax(120px,1fr)_64px_92px_92px] gap-3 border-b pb-1 text-[9px] uppercase tracking-wider text-[color:var(--institution-muted)]">
+                                            <span>Concepto / ambiente</span>
+                                            <span className="text-right">Cantidad</span>
+                                            <span className="text-right">Precio unit.</span>
+                                            <span className="text-right">Subtotal</span>
+                                        </div>
+                                        {comprobanteItems(pago).length ? comprobanteItems(pago).map((item, index) => (
+                                            <div
+                                                key={`${item.id_tipo_pago || item.tipo_pago_nombre}-${index}`}
+                                                className="grid grid-cols-[minmax(120px,1fr)_64px_92px_92px] gap-3 border-b last:border-b-0 py-1.5 text-xs"
+                                            >
+                                                <span className="font-medium">{item.tipo_pago_nombre || "—"}</span>
+                                                <span className="text-right font-mono-num">{item.cantidad ?? "—"}</span>
+                                                <span className="text-right font-mono-num">{formatMoney(item.monto)}</span>
+                                                <span className="text-right font-mono-num">{formatMoney(item.total ?? Number(item.cantidad || 0) * Number(item.monto || 0))}</span>
+                                            </div>
+                                        )) : <div className="py-1.5 text-xs text-[color:var(--institution-muted)]">Sin conceptos.</div>}
+                                    </div>
+                                </TableCell>
+                                <TableCell className="text-right font-mono-num font-semibold">{formatMoney(pago.total)}</TableCell>
                                 <TableCell className="font-mono-num">{pago.fecha_pago}</TableCell>
+                                <TableCell className="text-xs text-[color:var(--institution-muted)]">
+                                    {pago.origen === "alquiler"
+                                        ? usuarios.find((usuario) => usuario.id === pago.paid_by)?.nombre || "—"
+                                        : pago.created_by_name || "—"}
+                                </TableCell>
                                 <TableCell>
                                     {pago.anulado || (pago.origen === "alquiler" && pago.estado === "cancelado") ? (
                                         <span className="pill pill-void">Anulado</span>
@@ -207,7 +266,7 @@ export default function AnularPagoPage() {
                                                     : undefined}
                                             >
                                                 <Ban size={12} className="mr-1" />
-                                                {pago.anulado ? "Anulado" : "Anular"}
+                                                {pago.anulado || (pago.origen === "alquiler" && pago.estado === "cancelado") ? "Anulado" : "Anular"}
                                             </Button>
                                         </AlertDialogTrigger>
                                         <AlertDialogContent className="rounded-sm">
@@ -239,7 +298,7 @@ export default function AnularPagoPage() {
                         ))}
                         {pagos.length === 0 && (
                             <TableRow>
-                                <TableCell colSpan={isSuperAdmin ? 8 : 7} className="text-center py-12 text-sm text-[color:var(--institution-muted)]">
+                                <TableCell colSpan={isSuperAdmin ? 10 : 9} className="text-center py-12 text-sm text-[color:var(--institution-muted)]">
                                     Ingrese un criterio de búsqueda y presione Buscar.
                                 </TableCell>
                             </TableRow>
