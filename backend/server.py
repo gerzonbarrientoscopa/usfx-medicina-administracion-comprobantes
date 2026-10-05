@@ -1564,6 +1564,14 @@ async def search_alquiler_clientes(q: str = "", user: dict = Depends(require_rol
     return matches
 
 
+@api.post("/alquileres/clientes/persona", response_model=Persona, status_code=201)
+async def create_alquiler_persona(
+    persona: PersonaCreate,
+    user: dict = Depends(require_roles(*_RENTAL_ROLES)),
+):
+    return await create_persona(persona, user)
+
+
 def _validate_rental_date(text: str) -> date:
     try:
         parsed = datetime.strptime(text, "%Y-%m-%d").date()

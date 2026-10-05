@@ -597,6 +597,29 @@ def test_customer_search_limits_cross_office_students_to_exact_identifiers(mongo
             )
             assert any(result["id"] == "student-b" for result in global_partial.json())
 
+        async with await _client(_actor("Caja")) as caja_client:
+            created_person = await caja_client.post(
+                f"{API}/alquileres/clientes/persona",
+                json={"ci": "CI-RENTAL-NEW-PERSON", "nombre": "Rental Client"},
+            )
+            assert created_person.status_code == 201, created_person.text
+            assert created_person.json()["ci"] == "CI-RENTAL-NEW-PERSON"
+
+            searchable_person = await caja_client.get(
+                f"{API}/alquileres/clientes", params={"q": "CI-RENTAL-NEW-PERSON"}
+            )
+            assert any(
+                result["id"] == created_person.json()["id"]
+                and result["tipo"] == "persona"
+                for result in searchable_person.json()
+            )
+
+            general_person_create = await caja_client.post(
+                f"{API}/personas",
+                json={"ci": "CI-RENTAL-NEW-PERSON-2", "nombre": "Not Allowed Here"},
+            )
+            assert general_person_create.status_code == 403
+
     mongo_rental_api["loop"].run_until_complete(run())
 
 

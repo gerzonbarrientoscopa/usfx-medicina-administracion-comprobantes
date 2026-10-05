@@ -1500,6 +1500,11 @@ async def rental_clients(q: str = "", u=Depends(current)):
     return people + students
 
 
+@api.post("/alquileres/clientes/persona", status_code=201)
+async def create_rental_person(b: PersonaCreate, u=Depends(roles("Administrador", "Caja"))):
+    return await create_person(b, u)
+
+
 @api.get("/alquileres")
 async def rentals(
     ambiente_id: str,
