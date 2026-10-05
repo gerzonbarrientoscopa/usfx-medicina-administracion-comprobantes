@@ -39,6 +39,12 @@ const DAYS = [
   { value: "sabado", label: "Sábado" },
   { value: "domingo", label: "Domingo" },
 ];
+const SHIFTS = [
+  { value: "manana", label: "Mañana" },
+  { value: "tarde", label: "Tarde" },
+  { value: "noche", label: "Noche" },
+];
+const blankShifts = () => SHIFTS.map(({ value }) => ({ turno: value, desde: "", hasta: "" }));
 
 const PAGE_SIZE = 20;
 const emptyForm = (officeId = "") => ({
@@ -46,6 +52,7 @@ const emptyForm = (officeId = "") => ({
   descripcion: "",
   office_id: officeId,
   horarios: [],
+  turnos: blankShifts(),
 });
 
 function summarizeSchedule(horarios = []) {
@@ -59,6 +66,13 @@ function summarizeSchedule(horarios = []) {
       .join(", ")}`;
   }).filter(Boolean);
   return days.length ? days.join(" · ") : "Sin horarios registrados";
+}
+
+function summarizeShifts(turnos = []) {
+  return SHIFTS.map(({ value, label }) => {
+    const turno = turnos.find((item) => item.turno === value);
+    return turno?.desde && turno?.hasta ? `${label} ${turno.desde}–${turno.hasta}` : `${label} sin definir`;
+  }).join(" · ");
 }
 
 export default function AmbientesPage() {
@@ -146,6 +160,10 @@ export default function AmbientesPage() {
       descripcion: ambiente.descripcion || "",
       office_id: "",
       horarios: ambiente.horarios || [],
+      turnos: SHIFTS.map(({ value }) => {
+        const turno = (ambiente.turnos || []).find((item) => item.turno === value);
+        return { turno: value, desde: turno?.desde || "", hasta: turno?.hasta || "" };
+      }),
     });
     setOpen(true);
   };
@@ -176,6 +194,15 @@ export default function AmbientesPage() {
     }));
   };
 
+  const updateTurno = (turno, field, value) => {
+    setFormData((current) => ({
+      ...current,
+      turnos: current.turnos.map((item) =>
+        item.turno === turno ? { ...item, [field]: value } : item,
+      ),
+    }));
+  };
+
   const handleSubmit = async (event) => {
     event.preventDefault();
     setLoading(true);
@@ -184,6 +211,7 @@ export default function AmbientesPage() {
         nombre: formData.nombre.trim(),
         descripcion: formData.descripcion.trim(),
         horarios: formData.horarios,
+        turnos: formData.turnos,
       };
       if (!editing && isSuperAdmin) payload.office_id = formData.office_id;
 
@@ -333,6 +361,55 @@ export default function AmbientesPage() {
 
             <section className="space-y-3">
               <div>
+                <h2 className="font-medium">Turnos del ambiente</h2>
+                <p className="mt-1 text-xs text-[color:var(--institution-muted)]">
+                  Defina un horario sin superposición para cada turno. Estos horarios se usarán en las tarifas de mañana, tarde y noche.
+                </p>
+              </div>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                {SHIFTS.map(({ value, label }) => {
+                  const turno = formData.turnos.find((item) => item.turno === value);
+                  return (
+                    <div
+                      key={value}
+                      className="space-y-2 rounded-sm border p-3"
+                      style={{ borderColor: "var(--institution-border)" }}
+                    >
+                      <h3 className="text-sm font-medium">{label}</h3>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="space-y-1">
+                          <Label htmlFor={`ambiente-${value}-desde`} className="text-xs">Desde</Label>
+                          <Input
+                            id={`ambiente-${value}-desde`}
+                            type="time"
+                            value={turno.desde}
+                            onChange={(event) => updateTurno(value, "desde", event.target.value)}
+                            required
+                            data-testid={`ambiente-turno-${value}-desde`}
+                            className="h-9 rounded-sm"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <Label htmlFor={`ambiente-${value}-hasta`} className="text-xs">Hasta</Label>
+                          <Input
+                            id={`ambiente-${value}-hasta`}
+                            type="time"
+                            value={turno.hasta}
+                            onChange={(event) => updateTurno(value, "hasta", event.target.value)}
+                            required
+                            data-testid={`ambiente-turno-${value}-hasta`}
+                            className="h-9 rounded-sm"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+
+            <section className="space-y-3">
+              <div>
                 <h2 className="font-medium">Disponibilidad semanal</h2>
                 <p className="text-xs text-[color:var(--institution-muted)] mt-1">
                   Agregue uno o más intervalos por día. Los días sin intervalos
@@ -464,7 +541,7 @@ export default function AmbientesPage() {
                 Ambiente
               </TableHead>
               <TableHead className="min-w-[350px] uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">
-                Horarios semanales
+                Turnos y horarios semanales
               </TableHead>
               <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">
                 Descripción
@@ -489,7 +566,10 @@ export default function AmbientesPage() {
                       size={14}
                       className="mt-0.5 shrink-0 text-[color:var(--institution-muted)]"
                     />
-                    <span>{summarizeSchedule(ambiente.horarios)}</span>
+                    <span>
+                      <span className="block font-medium">{summarizeShifts(ambiente.turnos)}</span>
+                      <span className="block">{summarizeSchedule(ambiente.horarios)}</span>
+                    </span>
                   </span>
                 </TableCell>
                 <TableCell className="text-xs text-[color:var(--institution-muted)] max-w-xs">

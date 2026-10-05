@@ -161,13 +161,14 @@ class AmbienteCreate(AnyModel):
     nombre: str
     descripcion: str = ""
     horarios: list[dict] = Field(default_factory=list)
+    turnos: list[dict] = Field(default_factory=list)
     office_id: Optional[str] = None
 
 
 class TarifaCreate(AnyModel):
     ambiente_id: str
     nombre: str
-    modalidad: str
+    modalidad: Literal["hora", "manana", "tarde", "noche", "dia", "actividad"]
     monto: Decimal
     descripcion: str = ""
     desde: Optional[str] = None
@@ -405,6 +406,78 @@ def validate_blocks(blocks):
             )
 
 
+SHIFT_MODALITIES = ("manana", "tarde", "noche")
+
+
+def validate_turnos(turnos, require_all=True):
+    names = [block.get("turno") for block in turnos]
+    if (
+        any(not isinstance(name, str) for name in names)
+        or len(names) != len(set(names))
+        or any(name not in SHIFT_MODALITIES for name in names)
+    ):
+        raise HTTPException(422, "Cada turno debe configurarse una sola vez.")
+    if require_all and set(names) != set(SHIFT_MODALITIES):
+        raise HTTPException(422, "Configure los horarios de mañana, tarde y noche.")
+    intervals = []
+    normalized = []
+    for block in turnos:
+        start, end = block.get("desde"), block.get("hasta")
+        if not isinstance(start, str) or not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", start):
+            raise HTTPException(422, "La hora de inicio de cada turno debe tener formato HH:MM.")
+        if not isinstance(end, str) or not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", end):
+            raise HTTPException(422, "La hora de fin de cada turno debe tener formato HH:MM.")
+        first, last = minutes(start), minutes(end)
+        if first >= last:
+            raise HTTPException(422, "La hora de fin del turno debe ser posterior al inicio.")
+        intervals.append((first, last))
+        normalized.append({"turno": block["turno"], "desde": start, "hasta": end})
+    intervals.sort()
+    if any(current[0] < previous[1] for previous, current in zip(intervals, intervals[1:])):
+        raise HTTPException(422, "Los turnos de un ambiente no pueden superponerse.")
+    return normalized
+
+
+async def room_turnos(ambiente_id):
+    return await sql(
+        "SELECT turno,CONVERT(varchar(5),desde,108) desde,CONVERT(varchar(5),hasta,108) hasta "
+        "FROM ambiente_turnos WHERE ambiente_id=? ORDER BY desde",
+        (ambiente_id,),
+    )
+
+
+def apply_current_shift(tariff, turnos):
+    if tariff.get("modalidad") in SHIFT_MODALITIES:
+        shift = next(
+            (item for item in turnos if item["turno"] == tariff["modalidad"]),
+            None,
+        )
+        if shift:
+            tariff["desde"], tariff["hasta"] = shift["desde"], shift["hasta"]
+    return format_tariff_times(tariff)
+
+
+async def validate_tariff_shift(body):
+    if body.modalidad not in SHIFT_MODALITIES:
+        if body.desde is not None or body.hasta is not None:
+            raise HTTPException(422, "Esta modalidad no admite horarios fijos.")
+        return
+    if not body.desde or not body.hasta:
+        raise HTTPException(422, "Indique las horas definidas para el turno.")
+    start, end = normalize_hhmm(body.desde), normalize_hhmm(body.hasta)
+    if minutes(start) >= minutes(end):
+        raise HTTPException(422, "La hora de fin debe ser posterior al inicio.")
+    turnos = await room_turnos(body.ambiente_id)
+    configured = next((item for item in turnos if item["turno"] == body.modalidad), None)
+    if not configured:
+        raise HTTPException(400, "Configure primero ese turno en el ambiente.")
+    if (start, end) != (configured["desde"], configured["hasta"]):
+        raise HTTPException(
+            400,
+            "El horario de la tarifa debe coincidir con el turno configurado en el ambiente.",
+        )
+
+
 def covered(blocks, start, end):
     s, e = minutes(start), minutes(end)
     values = sorted((minutes(x["desde"]), minutes(x["hasta"])) for x in blocks)
@@ -583,6 +656,11 @@ async def hydrate_environment(environment):
     )
     for block in environment["horarios"]:
         block["dia"] = WEEKDAYS[int(block["dia"])]
+    environment["turnos"] = await sql(
+        "SELECT turno,CONVERT(varchar(5),desde,108) desde,CONVERT(varchar(5),hasta,108) hasta "
+        "FROM ambiente_turnos WHERE ambiente_id=? ORDER BY turno",
+        (environment["id"],),
+    )
     return environment
 
 
@@ -1331,6 +1409,7 @@ async def environments(
 @api.post("/ambientes", status_code=201)
 async def create_environment(b: AmbienteCreate, u=Depends(roles("Administrador"))):
     validate_blocks(b.horarios)
+    turnos = validate_turnos(b.turnos)
     oid = await office(u, b.office_id, True)
     name = b.nombre.strip()
     if not name:
@@ -1349,6 +1428,11 @@ async def create_environment(b: AmbienteCreate, u=Depends(roles("Administrador")
                     "INSERT INTO ambiente_horarios(ambiente_id,dia,desde,hasta) VALUES(?,?,?,?)",
                     (ident, WEEKDAYS.index(h["dia"]), h["desde"], h["hasta"]),
                 )
+            for turno in turnos:
+                c.execute(
+                    "INSERT INTO ambiente_turnos(ambiente_id,turno,desde,hasta) VALUES(?,?,?,?)",
+                    (ident, turno["turno"], turno["desde"], turno["hasta"]),
+                )
             cn.commit()
             return ident
 
@@ -1363,6 +1447,11 @@ async def update_environment(
     aid: str, b: AmbienteCreate, u=Depends(roles("Administrador"))
 ):
     validate_blocks(b.horarios)
+    turnos = (
+        validate_turnos(b.turnos)
+        if "turnos" in b.model_fields_set
+        else None
+    )
     room = await sql("SELECT office_id FROM ambientes WHERE id=?", (aid,), one=True)
     if not room:
         raise HTTPException(404, "Ambiente no encontrado.")
@@ -1411,6 +1500,13 @@ async def update_environment(
                     "INSERT INTO ambiente_horarios(ambiente_id,dia,desde,hasta) VALUES(?,?,?,?)",
                     (aid, WEEKDAYS.index(h["dia"]), h["desde"], h["hasta"]),
                 )
+            if turnos is not None:
+                c.execute("DELETE FROM ambiente_turnos WHERE ambiente_id=?", (aid,))
+                for turno in turnos:
+                    c.execute(
+                        "INSERT INTO ambiente_turnos(ambiente_id,turno,desde,hasta) VALUES(?,?,?,?)",
+                        (aid, turno["turno"], turno["desde"], turno["hasta"]),
+                    )
             cn.commit()
 
     await tx(update)
@@ -1454,6 +1550,7 @@ async def delete_environment(aid: str, u=Depends(roles("Administrador"))):
                 )
             c.execute("DELETE FROM ocupacion_intervalos WHERE ambiente_id=?", (aid,))
             c.execute("DELETE FROM ambiente_ocupacion WHERE ambiente_id=?", (aid,))
+            c.execute("DELETE FROM ambiente_turnos WHERE ambiente_id=?", (aid,))
             c.execute("DELETE FROM ambiente_horarios WHERE ambiente_id=?", (aid,))
             c.execute(
                 "DELETE FROM ambientes WHERE id=? AND office_id=?",
@@ -1481,7 +1578,8 @@ async def tariffs(ambiente_id: str, u=Depends(roles("Administrador", "Caja"))):
         "SELECT * FROM tarifas_ambientes WHERE ambiente_id=? ORDER BY nombre",
         (ambiente_id,),
     )
-    return [format_tariff_times(row) for row in rows]
+    turnos = await room_turnos(ambiente_id)
+    return [apply_current_shift(row, turnos) for row in rows]
 
 
 @api.post("/tarifas-ambientes", status_code=201)
@@ -1492,6 +1590,7 @@ async def create_tariff(b: TarifaCreate, u=Depends(roles("Administrador"))):
     if not room:
         raise HTTPException(404, "Ambiente no encontrado.")
     await office_scope_sql(u, room["office_id"])
+    await validate_tariff_shift(b)
     ident = (await sql(
         "INSERT INTO tarifas_ambientes(ambiente_id,office_id,nombre,modalidad,monto,descripcion,desde,hasta) OUTPUT INSERTED.id VALUES(?,?,?,?,?,?,?,?)",
         (
@@ -1506,9 +1605,8 @@ async def create_tariff(b: TarifaCreate, u=Depends(roles("Administrador"))):
         ),
         one=True, write=True,
     ))["id"]
-    return format_tariff_times(
-        await sql("SELECT * FROM tarifas_ambientes WHERE id=?", (ident,), one=True)
-    )
+    tariff = await sql("SELECT * FROM tarifas_ambientes WHERE id=?", (ident,), one=True)
+    return apply_current_shift(tariff, await room_turnos(b.ambiente_id))
 
 
 @api.put("/tarifas-ambientes/{tid}")
@@ -1523,6 +1621,7 @@ async def update_tariff(tid: str, b: TarifaCreate, u=Depends(roles("Administrado
     await office_scope_sql(u, target["office_id"])
     if b.ambiente_id != target["ambiente_id"]:
         raise HTTPException(400, "No se puede cambiar el ambiente de una tarifa.")
+    await validate_tariff_shift(b)
     await sql(
         "UPDATE tarifas_ambientes SET nombre=?,modalidad=?,monto=?,descripcion=?,desde=?,hasta=? WHERE id=? AND office_id=?",
         (
@@ -1537,9 +1636,8 @@ async def update_tariff(tid: str, b: TarifaCreate, u=Depends(roles("Administrado
         ),
         write=True,
     )
-    return format_tariff_times(
-        await sql("SELECT * FROM tarifas_ambientes WHERE id=?", (tid,), one=True)
-    )
+    tariff = await sql("SELECT * FROM tarifas_ambientes WHERE id=?", (tid,), one=True)
+    return apply_current_shift(tariff, await room_turnos(target["ambiente_id"]))
 
 
 @api.delete("/tarifas-ambientes/{tid}")
@@ -1651,6 +1749,7 @@ async def create_rental(b: AlquilerCreate, u=Depends(roles("Administrador", "Caj
     )
     if not room or not tariff or room["office_id"] != oid:
         raise HTTPException(404, "Ambiente o tarifa no encontrados.")
+    apply_current_shift(tariff, await room_turnos(b.ambiente_id))
     if b.cliente_tipo == "persona":
         payer = await sql(
             "SELECT id,nombre,ci,NULL cu FROM personas WHERE id=?",
@@ -1707,14 +1806,14 @@ async def create_rental(b: AlquilerCreate, u=Depends(roles("Administrador", "Caj
             raise HTTPException(
                 400, "El horario solicitado no está cubierto por un bloque disponible."
             )
-    elif tariff["modalidad"] in ("manana", "tarde") and (
+    elif tariff["modalidad"] in SHIFT_MODALITIES and (
         start is not None
         and start != tariff_start
         or end is not None
         and end != tariff_end
     ):
         raise HTTPException(400, "El horario debe coincidir con la tarifa.")
-    elif tariff["modalidad"] in ("manana", "tarde"):
+    elif tariff["modalidad"] in SHIFT_MODALITIES:
         if not covered(blocks, tariff_start, tariff_end):
             raise HTTPException(
                 400, "La tarifa no está cubierta por el horario disponible."
@@ -1744,6 +1843,29 @@ async def create_rental(b: AlquilerCreate, u=Depends(roles("Administrador", "Caj
             c = cn.cursor()
             acquire_app_lock(c, f"room-config:{b.ambiente_id}")
             acquire_app_lock(c, f"room:{b.ambiente_id}:{b.fecha}")
+            if tariff["modalidad"] in SHIFT_MODALITIES:
+                c.execute(
+                    "SELECT CONVERT(varchar(5),desde,108) desde,CONVERT(varchar(5),hasta,108) hasta FROM ambiente_turnos WHERE ambiente_id=? AND turno=?",
+                    (b.ambiente_id, tariff["modalidad"]),
+                )
+                current_shift = _rows(c)
+                if current_shift and (
+                    current_shift[0]["desde"], current_shift[0]["hasta"]
+                ) != (tariff_start, tariff_end):
+                    raise HTTPException(
+                        409,
+                        "El horario del turno cambió; actualice la tarifa y vuelva a intentar.",
+                    )
+                if not current_shift:
+                    c.execute(
+                        "SELECT TOP 1 turno FROM ambiente_turnos WHERE ambiente_id=?",
+                        (b.ambiente_id,),
+                    )
+                    if c.fetchone():
+                        raise HTTPException(
+                            409,
+                            "El turno ya no está configurado; actualice la tarifa y vuelva a intentar.",
+                        )
             c.execute(
                 "SELECT dia,CONVERT(varchar(5),desde,108) desde,CONVERT(varchar(5),hasta,108) hasta FROM ambiente_horarios WHERE ambiente_id=?",
                 (b.ambiente_id,),
@@ -2777,6 +2899,7 @@ async def reconcile_startup():
         "tipos_pagos",
         "ambientes",
         "ambiente_horarios",
+        "ambiente_turnos",
         "tarifas_ambientes",
         "pagos",
         "pago_items",

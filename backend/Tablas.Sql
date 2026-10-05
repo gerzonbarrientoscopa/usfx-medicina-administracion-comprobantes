@@ -80,6 +80,14 @@ CREATE TABLE dbo.ambiente_horarios (
   id int IDENTITY(1,1) CONSTRAINT PK_amb_hor PRIMARY KEY, id_ambiente int NOT NULL, dia tinyint NOT NULL, desde time(0) NOT NULL, hasta time(0) NOT NULL,
   CONSTRAINT FK_amb_hor_amb FOREIGN KEY(id_ambiente) REFERENCES dbo.ambientes(id), CONSTRAINT CK_amb_hor_dia CHECK(dia BETWEEN 0 AND 6), CONSTRAINT CK_amb_hor_range CHECK(desde<hasta)
 );
+IF OBJECT_ID(N'ambiente_turnos','U') IS NULL
+CREATE TABLE dbo.ambiente_turnos (
+  id_ambiente int NOT NULL, turno nvarchar(10) NOT NULL, desde time(0) NOT NULL, hasta time(0) NOT NULL,
+  CONSTRAINT PK_amb_turnos PRIMARY KEY(id_ambiente,turno),
+  CONSTRAINT FK_amb_turnos_amb FOREIGN KEY(id_ambiente) REFERENCES dbo.ambientes(id),
+  CONSTRAINT CK_amb_turnos_tipo CHECK(turno IN(N'manana',N'tarde',N'noche')),
+  CONSTRAINT CK_amb_turnos_range CHECK(desde<hasta)
+);
 IF OBJECT_ID(N'tarifas_ambientes','U') IS NULL
 CREATE TABLE dbo.tarifas_ambientes (
   id int IDENTITY(1,1) NOT NULL CONSTRAINT PK_tarifas PRIMARY KEY, id_ambiente int NOT NULL, id_oficina int NOT NULL,
@@ -87,8 +95,25 @@ CREATE TABLE dbo.tarifas_ambientes (
   descripcion nvarchar(500) NOT NULL CONSTRAINT DF_tar_desc DEFAULT N'', desde time(0) NULL, hasta time(0) NULL,
   created_at datetime2(3) NOT NULL CONSTRAINT DF_tar_created DEFAULT SYSUTCDATETIME(),
   CONSTRAINT FK_tar_amb FOREIGN KEY(id_ambiente) REFERENCES dbo.ambientes(id), CONSTRAINT FK_tar_oficina FOREIGN KEY(id_oficina) REFERENCES dbo.oficinas(id),
-  CONSTRAINT UQ_tar_nombre UNIQUE(id_ambiente,nombre_key), CONSTRAINT CK_tar_modalidad CHECK(modalidad IN(N'hora',N'manana',N'tarde',N'dia',N'actividad')), CONSTRAINT CK_tar_monto CHECK(monto>0), CONSTRAINT CK_tar_horas CHECK((modalidad IN(N'manana',N'tarde') AND desde IS NOT NULL AND hasta IS NOT NULL AND desde<hasta) OR (modalidad NOT IN(N'manana',N'tarde') AND desde IS NULL AND hasta IS NULL))
+   CONSTRAINT UQ_tar_nombre UNIQUE(id_ambiente,nombre_key), CONSTRAINT CK_tar_modalidad CHECK(modalidad IN(N'hora',N'manana',N'tarde',N'noche',N'dia',N'actividad')), CONSTRAINT CK_tar_monto CHECK(monto>0), CONSTRAINT CK_tar_horas CHECK((modalidad IN(N'manana',N'tarde',N'noche') AND desde IS NOT NULL AND hasta IS NOT NULL AND desde<hasta) OR (modalidad NOT IN(N'manana',N'tarde',N'noche') AND desde IS NULL AND hasta IS NULL))
 );
+IF OBJECT_ID(N'dbo.tarifas_ambientes','U') IS NOT NULL
+BEGIN
+  IF NOT EXISTS(SELECT 1 FROM sys.check_constraints WHERE parent_object_id=OBJECT_ID(N'dbo.tarifas_ambientes') AND name=N'CK_tar_modalidad' AND definition LIKE N'%noche%')
+  BEGIN
+    IF EXISTS(SELECT 1 FROM sys.check_constraints WHERE parent_object_id=OBJECT_ID(N'dbo.tarifas_ambientes') AND name=N'CK_tar_modalidad')
+      ALTER TABLE dbo.tarifas_ambientes DROP CONSTRAINT CK_tar_modalidad;
+    ALTER TABLE dbo.tarifas_ambientes ADD CONSTRAINT CK_tar_modalidad
+      CHECK(modalidad IN(N'hora',N'manana',N'tarde',N'noche',N'dia',N'actividad'));
+  END
+  IF NOT EXISTS(SELECT 1 FROM sys.check_constraints WHERE parent_object_id=OBJECT_ID(N'dbo.tarifas_ambientes') AND name=N'CK_tar_horas' AND definition LIKE N'%noche%')
+  BEGIN
+    IF EXISTS(SELECT 1 FROM sys.check_constraints WHERE parent_object_id=OBJECT_ID(N'dbo.tarifas_ambientes') AND name=N'CK_tar_horas')
+      ALTER TABLE dbo.tarifas_ambientes DROP CONSTRAINT CK_tar_horas;
+    ALTER TABLE dbo.tarifas_ambientes ADD CONSTRAINT CK_tar_horas
+      CHECK((modalidad IN(N'manana',N'tarde',N'noche') AND desde IS NOT NULL AND hasta IS NOT NULL AND desde<hasta) OR (modalidad NOT IN(N'manana',N'tarde',N'noche') AND desde IS NULL AND hasta IS NULL));
+  END
+END
 IF OBJECT_ID(N'pagos','U') IS NULL
 CREATE TABLE dbo.pagos (
   id int IDENTITY(1,1) NOT NULL CONSTRAINT PK_pagos PRIMARY KEY, id_oficina int NOT NULL, id_estudiante int NOT NULL,

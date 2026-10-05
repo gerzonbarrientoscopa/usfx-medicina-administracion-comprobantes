@@ -74,6 +74,11 @@ def mongo_rental_api():
                     {"dia": "lunes", "desde": "09:00", "hasta": "12:00"},
                     {"dia": "lunes", "desde": "13:00", "hasta": "17:00"},
                 ],
+                "turnos": [
+                    {"turno": "manana", "desde": "09:00", "hasta": "12:00"},
+                    {"turno": "tarde", "desde": "13:00", "hasta": "17:00"},
+                    {"turno": "noche", "desde": "18:00", "hasta": "22:00"},
+                ],
             }
             ambientes.append(ambiente)
             await db.ambientes.insert_one(ambiente)
@@ -243,6 +248,118 @@ def test_tariff_crud_and_validation_in_mongo(mongo_rental_api):
             assert await mongo_rental_api["db"].tarifas_ambientes.find_one({"id": tariff["id"]}) is None
 
     mongo_rental_api["loop"].run_until_complete(run())
+
+
+def test_environment_requires_and_persists_all_three_shifts(mongo_rental_api):
+    state = mongo_rental_api
+    turnos = [
+        {"turno": "manana", "desde": "08:00", "hasta": "12:00"},
+        {"turno": "tarde", "desde": "13:00", "hasta": "17:00"},
+        {"turno": "noche", "desde": "18:00", "hasta": "22:00"},
+    ]
+
+    async def run():
+        async with await _client(_actor()) as client:
+            incomplete = await client.post(
+                f"{API}/ambientes",
+                json={"nombre": "Sin turnos", "horarios": []},
+            )
+            assert incomplete.status_code == 400
+
+            created = await client.post(
+                f"{API}/ambientes",
+                json={
+                    "nombre": "Turnos CRUD",
+                    "horarios": [{"dia": "lunes", "desde": "08:00", "hasta": "22:00"}],
+                    "turnos": turnos,
+                },
+            )
+            assert created.status_code == 201, created.text
+            assert created.json()["turnos"] == turnos
+
+            edited_turnos = [dict(item) for item in turnos]
+            edited_turnos[0] = {**edited_turnos[0], "hasta": "11:30"}
+            updated = await client.put(
+                f'{API}/ambientes/{created.json()["id"]}',
+                json={
+                    "nombre": "Turnos CRUD actualizado",
+                    "horarios": [{"dia": "lunes", "desde": "08:00", "hasta": "22:00"}],
+                    "turnos": edited_turnos,
+                },
+            )
+            assert updated.status_code == 200, updated.text
+            assert updated.json()["turnos"] == edited_turnos
+
+    state["loop"].run_until_complete(run())
+
+
+def test_night_tariff_reserves_and_marks_the_configured_shift(mongo_rental_api):
+    state = mongo_rental_api
+
+    async def run():
+        async with await _client(_actor()) as client:
+            payload = _tariff_payload(
+                state["ambiente_a"], modalidad="noche",
+                desde="18:00", hasta="22:00",
+            )
+            created_tariff = await client.post(f"{API}/tarifas-ambientes", json=payload)
+            assert created_tariff.status_code == 201, created_tariff.text
+            tariff = created_tariff.json()
+            assert (tariff["desde"], tariff["hasta"]) == ("18:00", "22:00")
+
+            wrong_hours = await client.post(
+                f"{API}/tarifas-ambientes",
+                json={**payload, "nombre": "Turno nocturno incorrecto", "hasta": "21:00"},
+            )
+            assert wrong_hours.status_code == 400
+
+            await state["db"].ambientes.update_one(
+                {"id": state["ambiente_a"]},
+                {"$set": {"turnos": [
+                    {"turno": "manana", "desde": "09:00", "hasta": "12:00"},
+                    {"turno": "tarde", "desde": "13:00", "hasta": "17:00"},
+                    {"turno": "noche", "desde": "18:00", "hasta": "21:00"},
+                ]}},
+            )
+            refreshed_tariffs = await client.get(
+                f"{API}/tarifas-ambientes",
+                params={"ambiente_id": state["ambiente_a"]},
+            )
+            assert (refreshed_tariffs.json()[0]["desde"], refreshed_tariffs.json()[0]["hasta"]) == (
+                "18:00", "21:00",
+            )
+
+            await state["db"].ambientes.update_one(
+                {"id": state["ambiente_a"]},
+                {"$push": {"horarios": {"dia": "lunes", "desde": "18:00", "hasta": "22:00"}}},
+            )
+            booking = await client.post(
+                f"{API}/alquileres",
+                json=_rental_payload(
+                    state["ambiente_a"], tariff["id"], state["monday"],
+                    desde=None, hasta=None,
+                ),
+            )
+            assert booking.status_code == 201, booking.text
+            rental = booking.json()
+            assert rental["tramos"] == [{"desde": "18:00", "hasta": "21:00"}]
+            assert rental["estado"] == "reservado"
+
+            calendar_params = {
+                "ambiente_id": state["ambiente_a"],
+                "fecha_desde": state["monday"],
+                "fecha_hasta": state["monday"],
+            }
+            reserved = await client.get(f"{API}/alquileres", params=calendar_params)
+            assert reserved.status_code == 200
+            assert reserved.json()[0]["estado"] == "reservado"
+
+            paid = await client.post(f'{API}/alquileres/{rental["id"]}/pagar')
+            assert paid.status_code == 200, paid.text
+            calendar = await client.get(f"{API}/alquileres", params=calendar_params)
+            assert calendar.json()[0]["estado"] == "pagado"
+
+    state["loop"].run_until_complete(run())
 
 
 def test_booking_clients_schedule_overlap_adjacency_and_concurrency(mongo_rental_api):
@@ -721,6 +838,11 @@ def test_startup_succeeds_after_canceled_room_is_deleted(empty_startup_database)
             "id": "room-a", "office_id": "office-a", "nombre": "Startup Room",
             "nombre_key": "startup room",
             "horarios": [{"dia": "lunes", "desde": "09:00", "hasta": "12:00"}],
+            "turnos": [
+                {"turno": "manana", "desde": "09:00", "hasta": "12:00"},
+                {"turno": "tarde", "desde": "13:00", "hasta": "17:00"},
+                {"turno": "noche", "desde": "18:00", "hasta": "22:00"},
+            ],
         })
         await db.personas.insert_one({
             "id": "person-a", "ci": "STARTUP-CI", "ci_key": "startup-ci",

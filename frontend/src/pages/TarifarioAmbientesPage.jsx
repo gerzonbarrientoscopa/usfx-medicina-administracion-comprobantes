@@ -12,9 +12,11 @@ const MODES = [
   ["hora", "Por hora"],
   ["manana", "Mañana"],
   ["tarde", "Tarde"],
+  ["noche", "Noche"],
   ["dia", "Día completo"],
   ["actividad", "Actividad"],
 ];
+const SHIFT_MODALITIES = ["manana", "tarde", "noche"];
 const blank = { nombre: "", modalidad: "hora", monto: "", descripcion: "", desde: "", hasta: "" };
 
 export default function TarifarioAmbientesPage() {
@@ -69,13 +71,21 @@ export default function TarifarioAmbientesPage() {
   useEffect(() => { loadTarifas(); }, [loadTarifas]);
 
   const activeAmbiente = useMemo(() => ambientes.find((a) => String(a.id) === String(selected)), [ambientes, selected]);
+  const selectedShift = activeAmbiente?.turnos?.find((item) => item.turno === form.modalidad);
   const resetForm = () => { setEditing(null); setForm(blank); };
   const submit = async (event) => {
     event.preventDefault();
     if (!selected) return;
+    if (SHIFT_MODALITIES.includes(form.modalidad) && (!selectedShift?.desde || !selectedShift?.hasta)) {
+      toast.error("Configure primero el horario de ese turno en el ambiente.");
+      return;
+    }
     setSaving(true);
     const payload = { ambiente_id: selected, nombre: form.nombre.trim(), modalidad: form.modalidad, monto: Number(form.monto), descripcion: form.descripcion.trim() || undefined };
-    if (["manana", "tarde"].includes(form.modalidad)) { payload.desde = form.desde; payload.hasta = form.hasta; }
+    if (SHIFT_MODALITIES.includes(form.modalidad)) {
+      payload.desde = selectedShift.desde;
+      payload.hasta = selectedShift.hasta;
+    }
     try {
       if (editing) await apiClient.put(`/tarifas-ambientes/${editing.id}`, payload);
       else await apiClient.post("/tarifas-ambientes", payload);
@@ -127,7 +137,13 @@ export default function TarifarioAmbientesPage() {
         <form className="mt-5 space-y-4" onSubmit={submit}>
           <div className="space-y-1.5"><Label htmlFor="tarifa-name">Nombre de tarifa</Label><Input id="tarifa-name" required maxLength={120} value={form.nombre} onChange={(e) => setForm({ ...form, nombre: e.target.value })} className="rounded-sm"/></div>
           <div className="space-y-1.5"><Label htmlFor="tarifa-mode">Modalidad</Label><select id="tarifa-mode" value={form.modalidad} onChange={(e) => setForm({ ...form, modalidad: e.target.value, desde: "", hasta: "" })} className="h-10 w-full rounded-sm border border-input bg-background px-3 text-sm">{MODES.map(([v, label]) => <option key={v} value={v}>{label}</option>)}</select></div>
-          {["manana", "tarde"].includes(form.modalidad) && <div className="grid grid-cols-2 gap-3"><div className="space-y-1.5"><Label htmlFor="tarifa-from">Desde</Label><Input id="tarifa-from" type="time" value={form.desde} onChange={(e) => setForm({ ...form, desde: e.target.value })} required className="rounded-sm"/></div><div className="space-y-1.5"><Label htmlFor="tarifa-to">Hasta</Label><Input id="tarifa-to" type="time" value={form.hasta} onChange={(e) => setForm({ ...form, hasta: e.target.value })} required className="rounded-sm"/></div></div>}
+          {SHIFT_MODALITIES.includes(form.modalidad) && <div className="rounded-sm border p-3 text-sm" style={{ borderColor: "var(--institution-border)", background: "var(--institution-cream)" }}>
+            <div className="text-xs uppercase tracking-wider text-[color:var(--institution-muted)]">Horario definido para {MODES.find(([value]) => value === form.modalidad)?.[1]}</div>
+            <div className="mt-1 font-medium">{selectedShift?.desde && selectedShift?.hasta
+              ? `${selectedShift.desde}–${selectedShift.hasta}`
+              : "Configure este turno en el ambiente antes de registrar la tarifa."}</div>
+            <p className="mt-1 text-xs text-[color:var(--institution-muted)]">El tarifario usa el horario establecido en la ficha del ambiente.</p>
+          </div>}
           <div className="space-y-1.5"><Label htmlFor="tarifa-amount">Monto (Bs.)</Label><Input id="tarifa-amount" type="number" min="0.01" step="0.01" required value={form.monto} onChange={(e) => setForm({ ...form, monto: e.target.value })} className="rounded-sm"/></div>
           <div className="space-y-1.5"><Label htmlFor="tarifa-description">Descripción <span className="font-normal text-[color:var(--institution-muted)]">· opcional</span></Label><Textarea id="tarifa-description" rows={2} maxLength={500} value={form.descripcion} onChange={(e) => setForm({ ...form, descripcion: e.target.value })} className="rounded-sm"/></div>
           {form.modalidad === "hora" && <p className="text-xs text-[color:var(--institution-muted)]">El monto se calcula proporcionalmente al tiempo reservado.</p>}

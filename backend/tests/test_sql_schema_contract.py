@@ -58,6 +58,9 @@ def test_schema_uses_numeric_identity_and_manual_user_primary_key():
     assert "CK_usuarios_codigo" in SCHEMA and "CK_usuarios_superadmin" in SCHEMA
     assert "origen_id int NOT NULL" in SCHEMA
     assert "DROP DATABASE" not in SCHEMA
+    assert "CREATE TABLE dbo.ambiente_turnos" in SCHEMA
+    assert "CHECK(turno IN(N'manana',N'tarde',N'noche'))" in SCHEMA
+    assert "modalidad IN(N'hora',N'manana',N'tarde',N'noche',N'dia',N'actividad')" in SCHEMA
 
 
 def test_schema_has_new_columns_and_only_live_sql_process_fields(adapter):

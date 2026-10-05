@@ -15,6 +15,7 @@ import pytest
 from pydantic import ValidationError
 
 from server import (
+    AmbienteCreate,
     AlquilerCreate,
     TarifaAmbienteCreate,
     _covered_by_schedule,
@@ -43,6 +44,34 @@ def test_tariff_fixed_modalities_require_strict_ordered_times():
         TarifaAmbienteCreate(
             ambiente_id="room-1", nombre="Mañana", modalidad="manana",
             monto="25", desde="12:00", hasta="12:00",
+        )
+
+
+def test_night_tariff_and_three_room_shifts_are_validated():
+    night = TarifaAmbienteCreate(
+        ambiente_id="room-1", nombre="Noche", modalidad="noche",
+        monto="45.00", desde="18:00", hasta="22:00",
+    )
+    assert night.modalidad == "noche"
+
+    room = AmbienteCreate(
+        nombre="Sala",
+        turnos=[
+            {"turno": "manana", "desde": "08:00", "hasta": "12:00"},
+            {"turno": "tarde", "desde": "13:00", "hasta": "17:00"},
+            {"turno": "noche", "desde": "18:00", "hasta": "22:00"},
+        ],
+    )
+    assert [turno.turno for turno in room.turnos] == ["manana", "tarde", "noche"]
+
+    with pytest.raises(ValidationError):
+        AmbienteCreate(
+            nombre="Turnos superpuestos",
+            turnos=[
+                {"turno": "manana", "desde": "08:00", "hasta": "12:00"},
+                {"turno": "tarde", "desde": "11:00", "hasta": "17:00"},
+                {"turno": "noche", "desde": "18:00", "hasta": "22:00"},
+            ],
         )
 
 

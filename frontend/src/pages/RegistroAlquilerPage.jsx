@@ -25,6 +25,8 @@ const prettyDate = (value, options = { weekday: "short", day: "numeric", month: 
 const mins = (value) => { const [h, m] = (value || "00:00").split(":").map(Number); return h * 60 + m; };
 const time = (value) => `${String(Math.floor(value / 60)).padStart(2, "0")}:${String(value % 60).padStart(2, "0")}`;
 const overlaps = (a, b, c, d) => a < d && c < b;
+const SHIFT_MODALITIES = ["manana", "tarde", "noche"];
+const SHIFT_LABELS = { manana: "Mañana", tarde: "Tarde", noche: "Noche" };
 
 export default function RegistroAlquilerPage() {
   const { user } = useAuth();
@@ -159,11 +161,14 @@ export default function RegistroAlquilerPage() {
   useEffect(() => {
     if (!date || !tarifa) return;
     if (tarifa.modalidad === "dia") { setStart(""); setEnd(""); }
-    else if (["manana", "tarde"].includes(tarifa.modalidad)) { setStart(tarifa.desde || ""); setEnd(tarifa.hasta || ""); }
+    else if (SHIFT_MODALITIES.includes(tarifa.modalidad)) { setStart(tarifa.desde || ""); setEnd(tarifa.hasta || ""); }
     else if (start && !selectedDaySchedule.some((b) => mins(start) >= mins(b.desde) && mins(start) < mins(b.hasta))) { setStart(""); setEnd(""); }
   }, [date, tarifa, selectedDaySchedule, start]);
 
   const occupiedFor = (day) => reservas.filter((r) => toISODate(r.fecha) === day && r.estado !== "cancelado");
+  const reservationForSlot = (day, from, to) => occupiedFor(day).find((r) =>
+    (r.tramos || []).some((block) => overlaps(from, to, mins(block.desde), mins(block.hasta))),
+  );
   const scheduleFor = (day) => {
     if (!ambiente) return [];
     const weekday = DAY_NAMES[parseDate(day).getDay()];
@@ -195,7 +200,7 @@ export default function RegistroAlquilerPage() {
   const selectedTramos = useMemo(() => {
     if (!tarifa || !date) return [];
     if (tarifa.modalidad === "dia") return selectedDaySchedule;
-    if (["manana", "tarde"].includes(tarifa.modalidad)) return start && end ? [{ desde: start, hasta: end }] : [];
+    if (SHIFT_MODALITIES.includes(tarifa.modalidad)) return start && end ? [{ desde: start, hasta: end }] : [];
     return start && end ? [{ desde: start, hasta: end }] : [];
   }, [tarifa, date, selectedDaySchedule, start, end]);
   const durationHours = selectedTramos.reduce((sum, block) => sum + Math.max(0, mins(block.hasta) - mins(block.desde)) / 60, 0);
@@ -205,7 +210,7 @@ export default function RegistroAlquilerPage() {
   const selectionOccupied = selectedTramos.some((range) => isOccupied(date, mins(range.desde), mins(range.hasta)));
 
   const chooseSlot = (day, value) => {
-    if (!tarifa || ["dia", "manana", "tarde"].includes(tarifa.modalidad)) return;
+    if (!tarifa || tarifa.modalidad === "dia" || SHIFT_MODALITIES.includes(tarifa.modalidad)) return;
     setDate(day); setStart(value); setEnd("");
   };
   const createRental = async (chargeNow) => {
@@ -318,7 +323,7 @@ export default function RegistroAlquilerPage() {
     }
     return [...ticks].sort((a, b) => a - b);
   }, [ambiente]);
-  const selectable = tarifa && !["dia", "manana", "tarde"].includes(tarifa.modalidad);
+  const selectable = tarifa && tarifa.modalidad !== "dia" && !SHIFT_MODALITIES.includes(tarifa.modalidad);
 
   return <div className="space-y-6" data-testid="registro-alquiler-page">
     <header className="flex flex-wrap items-end justify-between gap-4"><div><div className="section-eyebrow">Operaciones · Espacios</div><h1 className="font-serif-display mt-1 text-4xl">Registro de Alquiler</h1><p className="mt-1 max-w-2xl text-sm text-[color:var(--institution-muted)]">Consulte disponibilidad, reserve un ambiente y emita el comprobante de pago.</p></div>
@@ -342,7 +347,7 @@ export default function RegistroAlquilerPage() {
           <div className="min-w-[740px]">
             <div className="grid border-b" style={{ gridTemplateColumns: "62px repeat(7,minmax(88px,1fr))", borderColor: "var(--institution-border)" }}>
               <div className="p-2 text-[10px] uppercase tracking-wider text-[color:var(--institution-muted)]">Hora</div>
-               {dates.map((day) => <button key={day} type="button" onClick={() => { setDate(day); if (!selectable) { setStart(""); setEnd(""); } }} className={`border-l px-2 py-2 text-left transition-colors hover:bg-[color:var(--institution-cream)] ${day === date ? "bg-[color:var(--institution-cream)]" : ""}`} style={{ borderColor: "var(--institution-border)" }}><span className="block text-[10px] uppercase tracking-wider text-[color:var(--institution-muted)]">{prettyDate(day, { weekday: "short" })}</span><span className="font-medium">{formatDate(day)}</span></button>)}
+                {dates.map((day) => <button key={day} type="button" onClick={() => { setDate(day); if (tarifa && SHIFT_MODALITIES.includes(tarifa.modalidad)) { setStart(tarifa.desde || ""); setEnd(tarifa.hasta || ""); } else if (!selectable) { setStart(""); setEnd(""); } }} className={`border-l px-2 py-2 text-left transition-colors hover:bg-[color:var(--institution-cream)] ${day === date ? "bg-[color:var(--institution-cream)]" : ""}`} style={{ borderColor: "var(--institution-border)" }}><span className="block text-[10px] uppercase tracking-wider text-[color:var(--institution-muted)]">{prettyDate(day, { weekday: "short" })}</span><span className="font-medium">{formatDate(day)}</span></button>)}
             </div>
             <div className="max-h-[570px] overflow-y-auto">
               {slotTicks.slice(0, -1).map((slot) => <div key={slot} className="grid h-10 border-b last:border-0" style={{ gridTemplateColumns: "62px repeat(7,minmax(88px,1fr))", borderColor: "var(--institution-border)" }}>
@@ -350,10 +355,13 @@ export default function RegistroAlquilerPage() {
                  {dates.map((day) => {
                   const workBlock = scheduleFor(day).find((b) => slot >= mins(b.desde) && slot < mins(b.hasta));
                   const working = Boolean(workBlock);
-                  const busy = working && isOccupied(day, slot, slot + 1);
+                   const occupiedBooking = working ? reservationForSlot(day, slot, slot + 1) : null;
+                   const busy = Boolean(occupiedBooking);
+                   const paidSlot = occupiedBooking?.estado === "pagado";
+                   const occupiedLabel = paidSlot ? "Pagado" : occupiedBooking ? "Reservado" : "";
                   const selectedSlot = day === date && start && slot === mins(start);
-                   return <button key={day} type="button" disabled={!working || busy || !selectable} onClick={() => chooseSlot(day, time(slot))} aria-label={`${prettyDate(day, { weekday: "long" })} ${formatDate(day)}, ${time(slot)}${busy ? ", ocupado" : working ? ", disponible" : ", fuera de horario"}`} title={busy ? "Ocupado" : !working ? "Fuera del horario registrado" : selectable ? `Seleccionar ${time(slot)}` : "Elija una tarifa por hora o actividad para seleccionar horario"} className={`relative border-l text-left transition-colors focus-visible:z-10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[color:var(--institution-burgundy)] ${!working ? "bg-[color:var(--institution-cream)]/70" : busy ? "cursor-not-allowed bg-[#f4e8e8]" : selectable ? "cursor-pointer hover:bg-[#edf3f0]" : "cursor-default"} ${selectedSlot ? "bg-[#e6efe9] ring-1 ring-inset ring-[#607c6c]" : ""}`} style={{ borderColor: "var(--institution-border)" }}>
-                    {busy && <span className="absolute inset-x-1 top-1/2 -translate-y-1/2 truncate rounded-sm bg-[#8f3d4e] px-1 py-0.5 text-center text-[9px] text-white">Ocupado</span>}
+                    return <button key={day} type="button" disabled={!working || busy || !selectable} onClick={() => chooseSlot(day, time(slot))} aria-label={`${prettyDate(day, { weekday: "long" })} ${formatDate(day)}, ${time(slot)}${busy ? `, ${occupiedLabel.toLowerCase()}` : working ? ", disponible" : ", fuera de horario"}`} title={busy ? occupiedLabel : !working ? "Fuera del horario registrado" : selectable ? `Seleccionar ${time(slot)}` : "Elija una tarifa por hora o actividad para seleccionar horario"} className={`relative border-l text-left transition-colors focus-visible:z-10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[color:var(--institution-burgundy)] ${!working ? "bg-[color:var(--institution-cream)]/70" : paidSlot ? "cursor-not-allowed bg-[#e5eee8]" : busy ? "cursor-not-allowed bg-[#f3ead7]" : selectable ? "cursor-pointer hover:bg-[#edf3f0]" : "cursor-default"} ${selectedSlot ? "bg-[#e6efe9] ring-1 ring-inset ring-[#607c6c]" : ""}`} style={{ borderColor: "var(--institution-border)" }}>
+                     {busy && <span className={`absolute inset-x-1 top-1/2 -translate-y-1/2 truncate rounded-sm px-1 py-0.5 text-center text-[9px] ${paidSlot ? "bg-[#425c4d] text-white" : "bg-[#826628] text-white"}`}>{occupiedLabel}</span>}
                     {selectedSlot && <span className="absolute inset-x-1 top-1/2 -translate-y-1/2 truncate text-center text-[9px] font-medium text-[#425c4d]">{time(slot)} inicio</span>}
                   </button>;
                 })}
@@ -362,7 +370,7 @@ export default function RegistroAlquilerPage() {
             </div>
           </div>
         </div>
-        <div className="flex flex-wrap gap-x-4 gap-y-2 text-xs text-[color:var(--institution-muted)]"><span className="inline-flex items-center gap-1.5"><i className="h-3 w-3 rounded-sm border bg-white"/>Disponible</span><span className="inline-flex items-center gap-1.5"><i className="h-3 w-3 rounded-sm bg-[#8f3d4e]"/>Ocupado</span><span className="inline-flex items-center gap-1.5"><i className="h-3 w-3 rounded-sm bg-[color:var(--institution-cream)]"/>Fuera de horario</span></div>
+        <div className="flex flex-wrap gap-x-4 gap-y-2 text-xs text-[color:var(--institution-muted)]"><span className="inline-flex items-center gap-1.5"><i className="h-3 w-3 rounded-sm border bg-white"/>Disponible</span><span className="inline-flex items-center gap-1.5"><i className="h-3 w-3 rounded-sm bg-[#f3ead7]"/>Reservado · pendiente de pago</span><span className="inline-flex items-center gap-1.5"><i className="h-3 w-3 rounded-sm bg-[#e5eee8]"/>Pagado</span><span className="inline-flex items-center gap-1.5"><i className="h-3 w-3 rounded-sm bg-[color:var(--institution-cream)]"/>Fuera de horario</span></div>
         {ambiente && !ambiente.horarios?.length && <div className="rounded-sm border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">Este ambiente no tiene horarios semanales registrados. Actualice su disponibilidad antes de reservar.</div>}
       </section>
 
@@ -382,9 +390,9 @@ export default function RegistroAlquilerPage() {
         </div>
         {customer && <div className="flex items-start justify-between gap-3 rounded-sm border p-3" style={{ borderColor: "var(--institution-border)", background: "var(--institution-cream)" }}><div><div className="text-[10px] uppercase tracking-widest text-[color:var(--institution-muted)]">{customer.tipo === "persona" ? "Persona" : "Estudiante"}</div><div className="mt-1 text-sm font-medium">{customer.nombre}</div><div className="text-xs text-[color:var(--institution-muted)]">CI {customer.ci || "—"}{customer.cu ? ` · CU ${customer.cu}` : ""}</div>{customer.tipo === "estudiante" && customer.office_nombre && <div className="mt-1 text-xs font-medium text-[color:var(--institution-burgundy)]">Oficina del estudiante: {customer.office_nombre}</div>}</div><Button variant="ghost" size="sm" onClick={() => setCustomer(null)}>Cambiar</Button></div>}
         <div className="space-y-1.5"><Label htmlFor="rental-date">Fecha de uso</Label><Input id="rental-date" type="date" value={date} onChange={(e) => { const value = e.target.value; setDate(value); setStart(""); setEnd(""); if (value) { const selectedDate = parseDate(value); selectedDate.setDate(selectedDate.getDate() - ((selectedDate.getDay() + 6) % 7)); setAnchor(fmtDate(selectedDate)); } }} className="rounded-sm"/></div>
-        {tarifa && <div className="space-y-3 rounded-sm border p-3" style={{ borderColor: "var(--institution-border)" }}><div className="flex items-center justify-between gap-2"><div><div className="text-[10px] uppercase tracking-widest text-[color:var(--institution-muted)]">Horario</div><div className="mt-1 text-sm font-medium">{tarifa.modalidad === "dia" ? "Jornada completa" : ["manana", "tarde"].includes(tarifa.modalidad) ? `${tarifa.desde}–${tarifa.hasta}` : start ? `${start}${end ? `–${end}` : " · seleccione fin"}` : "Seleccione inicio en agenda"}</div></div><Clock3 size={17} className="text-[color:var(--institution-muted)]"/></div>
+        {tarifa && <div className="space-y-3 rounded-sm border p-3" style={{ borderColor: "var(--institution-border)" }}><div className="flex items-center justify-between gap-2"><div><div className="text-[10px] uppercase tracking-widest text-[color:var(--institution-muted)]">Horario</div><div className="mt-1 text-sm font-medium">{tarifa.modalidad === "dia" ? "Jornada completa" : SHIFT_MODALITIES.includes(tarifa.modalidad) ? `${SHIFT_LABELS[tarifa.modalidad]} · ${tarifa.desde}–${tarifa.hasta}` : start ? `${start}${end ? `–${end}` : " · seleccione fin"}` : "Seleccione inicio en agenda"}</div></div><Clock3 size={17} className="text-[color:var(--institution-muted)]"/></div>
           {tarifa.modalidad === "dia" && <p className="text-xs text-[color:var(--institution-muted)]">Se reservarán automáticamente todos los tramos del horario registrado para ese día.</p>}
-          {["manana", "tarde"].includes(tarifa.modalidad) && <p className="text-xs text-[color:var(--institution-muted)]">El intervalo fijo de esta tarifa se aplicará al día elegido.</p>}
+          {SHIFT_MODALITIES.includes(tarifa.modalidad) && <p className="text-xs text-[color:var(--institution-muted)]">Se marcará el turno completo como reservado o pagado según la operación elegida.</p>}
           {selectable && start && <div className="space-y-1.5"><Label htmlFor="rental-end">Hora de término</Label><select id="rental-end" value={end} onChange={(e) => setEnd(e.target.value)} className="h-10 w-full rounded-sm border border-input bg-white px-3 text-sm"><option value="">Seleccione hora de término</option>{endOptions.map((value) => <option key={value} value={value}>{value}</option>)}</select><p className="text-xs text-[color:var(--institution-muted)]">Solo horas dentro del mismo tramo disponible.</p></div>}
           {date && selectedTramos.length > 0 && (!scheduleAllowsSelection || selectionOccupied) && <p role="alert" className="text-xs text-[#8f3d4e]">{selectionOccupied ? "El horario seleccionado ya no está disponible." : "La tarifa excede el horario de apertura registrado."}</p>}
         </div>}

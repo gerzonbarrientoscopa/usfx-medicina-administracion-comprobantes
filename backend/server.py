@@ -292,10 +292,24 @@ class BloqueHorarioAmbiente(BaseModel):
         return self
 
 
+class TurnoHorarioAmbiente(BaseModel):
+    turno: Literal["manana", "tarde", "noche"]
+    desde: str = Field(pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d$")
+    hasta: str = Field(pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d$")
+
+    @model_validator(mode="after")
+    def validate_time_range(self):
+        if self.desde >= self.hasta:
+            raise ValueError("La hora de fin del turno debe ser posterior a la de inicio.")
+        return self
+
+
 class AmbienteBase(BaseModel):
     nombre: str = Field(min_length=1, max_length=120)
     descripcion: Optional[str] = Field(default="", max_length=500)
     horarios: List[BloqueHorarioAmbiente] = Field(default_factory=list, max_length=42)
+    # An empty list remains readable for rooms created before shifts existed.
+    turnos: List[TurnoHorarioAmbiente] = Field(default_factory=list, max_length=3)
     office_id: Optional[str] = None
     office_nombre: Optional[str] = None
 
@@ -309,6 +323,14 @@ class AmbienteBase(BaseModel):
             for previous, current in zip(ordered, ordered[1:]):
                 if current.desde < previous.hasta:
                     raise ValueError("Los horarios del mismo día no pueden superponerse.")
+        if self.turnos:
+            names = [turno.turno for turno in self.turnos]
+            if set(names) != {"manana", "tarde", "noche"} or len(names) != 3:
+                raise ValueError("Configure una sola vez cada turno: mañana, tarde y noche.")
+            shifts = sorted(self.turnos, key=lambda turno: turno.desde)
+            for previous, current in zip(shifts, shifts[1:]):
+                if current.desde < previous.hasta:
+                    raise ValueError("Los turnos de un ambiente no pueden superponerse.")
         return self
 
 
@@ -325,7 +347,7 @@ class Ambiente(AmbienteBase):
 class TarifaAmbienteCreate(BaseModel):
     ambiente_id: str
     nombre: str = Field(min_length=1, max_length=120)
-    modalidad: Literal["hora", "manana", "tarde", "dia", "actividad"]
+    modalidad: Literal["hora", "manana", "tarde", "noche", "dia", "actividad"]
     monto: Decimal = Field(gt=0)
     descripcion: Optional[str] = ""
     desde: Optional[str] = None
@@ -346,7 +368,7 @@ class TarifaAmbienteCreate(BaseModel):
     @model_validator(mode="after")
     def validate_tariff_times(self):
         valid_time = re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d$")
-        if self.modalidad in ("manana", "tarde"):
+        if self.modalidad in ("manana", "tarde", "noche"):
             if not self.desde or not self.hasta or not valid_time.fullmatch(self.desde) or not valid_time.fullmatch(self.hasta):
                 raise ValueError("Indique un horario fijo válido HH:MM para esta modalidad.")
             if self.desde >= self.hasta:
@@ -1238,6 +1260,9 @@ async def get_ambientes(
 async def create_ambiente(
     ambiente: AmbienteCreate, user: dict = Depends(require_roles("Administrador"))
 ):
+    _validate_room_shifts_for_create(
+        ambiente.model_dump(include={"turnos"})["turnos"]
+    )
     office_id = await office_for_write(user, ambiente.office_id)
     nombre = ambiente.nombre.strip()
     if not nombre:
@@ -1288,7 +1313,13 @@ async def _update_ambiente_under_lease(
     nombre = ambiente.nombre.strip()
     if not nombre:
         raise HTTPException(status_code=400, detail="Ingrese el nombre del ambiente.")
+    if "turnos" in ambiente.model_fields_set:
+        _validate_room_shifts_for_create(
+            ambiente.model_dump(include={"turnos"})["turnos"]
+        )
     update = ambiente.model_dump(exclude={"office_id", "office_nombre"})
+    if "turnos" not in ambiente.model_fields_set:
+        update.pop("turnos", None)
     update.update({"nombre": nombre, "nombre_key": nombre.casefold()})
     proposed = {**target, **update}
     active_rentals = db.alquileres.find(
@@ -1358,6 +1389,7 @@ async def _delete_ambiente_under_lease(ambiente_id: str, user: dict, lease_owner
 
 _RENTAL_ROLES = ("Administrador", "Caja")
 _WEEKDAYS_ES = ("lunes", "martes", "miercoles", "jueves", "viernes", "sabado", "domingo")
+_SHIFT_MODALITIES = ("manana", "tarde", "noche")
 _ROOM_LEASE_SECONDS = 120
 _PAYMENT_LEASE_SECONDS = 120
 
@@ -1460,6 +1492,47 @@ def _schedule_blocks(ambiente: dict, rental_date: date) -> list:
     )
 
 
+def _configured_shift(ambiente: dict, modality: str) -> Optional[dict]:
+    return next(
+        (
+            shift for shift in ambiente.get("turnos", [])
+            if shift.get("turno") == modality
+        ),
+        None,
+    )
+
+
+def _validate_room_shifts_for_create(turnos: list):
+    if {turno["turno"] for turno in turnos} != set(_SHIFT_MODALITIES) or len(turnos) != 3:
+        raise HTTPException(
+            status_code=400,
+            detail="Configure los horarios de mañana, tarde y noche para el ambiente.",
+        )
+
+
+def _apply_current_shift(tariff: dict, ambiente: dict) -> dict:
+    shift = _configured_shift(ambiente, tariff.get("modalidad", ""))
+    if shift:
+        tariff["desde"], tariff["hasta"] = shift["desde"], shift["hasta"]
+    return tariff
+
+
+def _validate_tariff_shift(body: TarifaAmbienteCreate, ambiente: dict):
+    if body.modalidad not in _SHIFT_MODALITIES:
+        return
+    shift = _configured_shift(ambiente, body.modalidad)
+    if not shift:
+        raise HTTPException(
+            status_code=400,
+            detail="Configure primero el horario de ese turno en el ambiente.",
+        )
+    if (body.desde, body.hasta) != (shift["desde"], shift["hasta"]):
+        raise HTTPException(
+            status_code=400,
+            detail="El horario de la tarifa debe coincidir con el turno configurado en el ambiente.",
+        )
+
+
 def _covered_by_schedule(blocks: list, start: str, end: str) -> bool:
     start_min, end_min = _minute_of_day(start), _minute_of_day(end)
     # Merge touching registered blocks so a continuous interval can span their boundary.
@@ -1493,7 +1566,10 @@ async def get_tarifas_ambientes(
     if not ambiente:
         raise HTTPException(status_code=404, detail="Ambiente no encontrado.")
     await office_scope(user, ambiente["office_id"])
-    return await db.tarifas_ambientes.find({"ambiente_id": ambiente_id}, {"_id": 0}).sort("nombre", 1).to_list(500)
+    tariffs = await db.tarifas_ambientes.find(
+        {"ambiente_id": ambiente_id}, {"_id": 0}
+    ).sort("nombre", 1).to_list(500)
+    return [_apply_current_shift(tariff, ambiente) for tariff in tariffs]
 
 
 @api.post("/tarifas-ambientes", status_code=201)
@@ -1504,6 +1580,7 @@ async def create_tarifa_ambiente(
     if not ambiente:
         raise HTTPException(status_code=404, detail="Ambiente no encontrado.")
     await office_scope(user, ambiente["office_id"])
+    _validate_tariff_shift(body, ambiente)
     doc = body.model_dump()
     doc.update({"id": str(uuid.uuid4()), "office_id": ambiente["office_id"], "monto": float(body.monto), "created_at": iso(datetime.now(timezone.utc))})
     await db.tarifas_ambientes.insert_one(doc)
@@ -1521,10 +1598,19 @@ async def update_tarifa_ambiente(
     await office_scope(user, target["office_id"])
     if body.ambiente_id != target["ambiente_id"]:
         raise HTTPException(status_code=400, detail="No se puede cambiar el ambiente de una tarifa.")
+    ambiente = await db.ambientes.find_one(
+        {"id": body.ambiente_id}, {"_id": 0}
+    )
+    if not ambiente:
+        raise HTTPException(status_code=404, detail="Ambiente no encontrado.")
+    _validate_tariff_shift(body, ambiente)
     update = body.model_dump()
     update["monto"] = float(body.monto)
     await db.tarifas_ambientes.update_one({"id": tarifa_id}, {"$set": update})
-    return await db.tarifas_ambientes.find_one({"id": tarifa_id}, {"_id": 0})
+    return _apply_current_shift(
+        await db.tarifas_ambientes.find_one({"id": tarifa_id}, {"_id": 0}),
+        ambiente,
+    )
 
 
 @api.delete("/tarifas-ambientes/{tarifa_id}")
@@ -1615,6 +1701,7 @@ async def _build_rental(user: dict, body: AlquilerCreate) -> dict:
     tariff = await db.tarifas_ambientes.find_one({"id": body.tarifa_id, "ambiente_id": body.ambiente_id}, {"_id": 0})
     if not tariff:
         raise HTTPException(status_code=400, detail="La tarifa no pertenece al ambiente seleccionado.")
+    _apply_current_shift(tariff, ambiente)
     if body.office_id and body.office_id != ambiente["office_id"]:
         raise HTTPException(status_code=400, detail="La oficina no coincide con el ambiente.")
     payer_collection = db.personas if body.cliente_tipo == "persona" else db.estudiantes
@@ -1652,7 +1739,7 @@ async def _build_rental(user: dict, body: AlquilerCreate) -> dict:
         if not _covered_by_schedule(blocks, body.desde, body.hasta):
             raise HTTPException(status_code=400, detail="El horario solicitado no está cubierto por un bloque disponible.")
         tramos = [{"desde": body.desde, "hasta": body.hasta}]
-    elif modalidad in ("manana", "tarde"):
+    elif modalidad in _SHIFT_MODALITIES:
         if body.desde is not None and body.desde != tariff["desde"] or body.hasta is not None and body.hasta != tariff["hasta"]:
             raise HTTPException(status_code=400, detail="El horario debe coincidir con la tarifa.")
         if not _covered_by_schedule(blocks, tariff["desde"], tariff["hasta"]):
