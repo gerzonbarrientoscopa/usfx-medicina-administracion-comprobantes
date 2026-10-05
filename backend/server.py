@@ -57,6 +57,18 @@ def _format_response_date(value, field):
 
 def _format_response_dates(value):
     if isinstance(value, dict):
+        # Rental receipt text is derived for responses only, never persisted.
+        if ("cliente_tipo" in value and "id" in value) or value.get("origen") == "alquiler":
+            value = {
+                **value,
+                "comprobante_display": format_receipt_display(
+                    value.get("prefijo_comprobante"),
+                    value.get("cod_comprobante"),
+                    value.get("gestion"),
+                ) if all(value.get(key) for key in (
+                    "prefijo_comprobante", "cod_comprobante", "gestion"
+                )) else None,
+            }
         return {
             key: _format_response_dates(_format_response_date(item, key))
             for key, item in value.items()
@@ -112,6 +124,7 @@ ALL_ROLES = (SUPER_ADMIN_ROLE, *ROLES)
 class UserPublic(BaseModel):
     model_config = ConfigDict(extra="ignore")
     id: str
+    codigo: Optional[str] = None
     email: EmailStr
     nombre: str
     rol: Literal["SuperAdmin", "Administrador", "Caja", "Consultas"]
@@ -121,6 +134,7 @@ class UserPublic(BaseModel):
 
 
 class UserCreate(BaseModel):
+    codigo: str = Field(pattern=r"^[0-9]{3}$")
     email: EmailStr
     nombre: str
     password: str = Field(min_length=4)
@@ -129,6 +143,7 @@ class UserCreate(BaseModel):
 
 
 class UserUpdate(BaseModel):
+    codigo: Optional[str] = Field(default=None, pattern=r"^[0-9]{3}$")
     nombre: Optional[str] = None
     rol: Optional[Literal["Administrador", "Caja", "Consultas"]] = None
     password: Optional[str] = Field(default=None, min_length=4)
@@ -773,6 +788,8 @@ async def create_user(
     email = usuario.email.lower().strip()
     if email == SUPER_ADMIN_EMAIL or await db.usuarios.find_one({"email": email}):
         raise HTTPException(status_code=400, detail="El email ya está registrado.")
+    if usuario.codigo == "000" or await db.usuarios.find_one({"codigo": usuario.codigo}):
+        raise HTTPException(status_code=400, detail="El código de usuario ya está reservado o registrado.")
     office_id = await office_for_write(current, usuario.office_id)
     if usuario.rol == "Administrador":
         if current["rol"] != SUPER_ADMIN_ROLE:
@@ -781,6 +798,7 @@ async def create_user(
             raise HTTPException(status_code=400, detail="La oficina ya tiene un administrador.")
     doc = {
         "id": str(uuid.uuid4()),
+        "codigo": usuario.codigo,
         "email": email,
         "nombre": usuario.nombre,
         "rol": usuario.rol,
@@ -791,7 +809,7 @@ async def create_user(
     try:
         await db.usuarios.insert_one(doc)
     except DuplicateKeyError:
-        raise HTTPException(status_code=400, detail="El email ya existe o la oficina ya tiene un administrador.")
+        raise HTTPException(status_code=400, detail="El código o email ya existe, o la oficina ya tiene un administrador.")
     return await public_user(doc)
 
 
@@ -814,6 +832,12 @@ async def update_user(
             raise HTTPException(status_code=403, detail="No puede cambiar su propio rol.")
 
     update = {}
+    if usuario.codigo is not None:
+        if target.get("codigo") and usuario.codigo != target["codigo"]:
+            raise HTTPException(status_code=400, detail="El código de usuario no se puede cambiar.")
+        if usuario.codigo == "000":
+            raise HTTPException(status_code=400, detail="El código 000 está reservado para el Super Admin.")
+        update["codigo"] = usuario.codigo
     if usuario.nombre is not None:
         update["nombre"] = usuario.nombre
     if usuario.rol is not None:
@@ -841,7 +865,7 @@ async def update_user(
     try:
         await db.usuarios.update_one({"id": user_id, **scope}, {"$set": update})
     except DuplicateKeyError:
-        raise HTTPException(status_code=400, detail="La oficina ya tiene un administrador.")
+        raise HTTPException(status_code=400, detail="El código ya existe o la oficina ya tiene un administrador.")
     updated = await db.usuarios.find_one(
         {"id": user_id}, {"_id": 0, "password_hash": 0}
     )
@@ -1667,7 +1691,7 @@ async def _build_rental(user: dict, body: AlquilerCreate) -> dict:
         "tarifa_id": tariff["id"], "tarifa_nombre": tariff["nombre"], "modalidad": modalidad,
         "monto": cents / 100, "cantidad": float(quantity), "total": total_cents / 100,
         "estado": "reservado", "cod_comprobante": None, "gestion": None,
-        "prefijo_comprobante": None, "comprobante_display": None, "fecha_pago": None,
+        "prefijo_comprobante": None, "fecha_pago": None,
         "created_at": iso(datetime.now(timezone.utc)), "intervals": intervals,
     }
 
@@ -1927,7 +1951,6 @@ async def _pay_rental(rental_id: str, user: dict) -> dict:
         update = {
             "estado": "pagado", "cod_comprobante": code, "gestion": year,
             "prefijo_comprobante": office["prefijo_comprobante"],
-            "comprobante_display": format_receipt_display(office["prefijo_comprobante"], code, year),
             "fecha_pago": paid_at, "paid_by": user["id"],
         }
         # Counter allocation intentionally precedes the paid transition. A
@@ -3295,6 +3318,10 @@ async def startup():
     await db.usuarios.create_index("email", unique=True)
     await db.usuarios.create_index("id", unique=True)
     await db.usuarios.create_index(
+        "codigo", unique=True,
+        partialFilterExpression={"codigo": {"$type": "string"}},
+    )
+    await db.usuarios.create_index(
         [("office_id", 1), ("rol", 1)],
         unique=True,
         partialFilterExpression={"office_id": {"$type": "string"}, "rol": "Administrador"},
@@ -3372,11 +3399,16 @@ async def startup():
     await db.pagos.create_index("id_tipo_pago")
     await reconcile_payment_counters()
 
+    await db.alquileres.update_many(
+        {"comprobante_display": {"$exists": True}},
+        {"$unset": {"comprobante_display": ""}},
+    )
     admin = await db.usuarios.find_one({"email": SUPER_ADMIN_EMAIL})
     if admin is None:
         await db.usuarios.insert_one(
             {
                 "id": str(uuid.uuid4()),
+                "codigo": "000",
                 "email": SUPER_ADMIN_EMAIL,
                 "nombre": ADMIN_NAME,
                 "rol": SUPER_ADMIN_ROLE,
@@ -3388,6 +3420,8 @@ async def startup():
         logger.info("Creación de cuenta Super Admin.")
     else:
         updates = {}
+        if admin.get("codigo") != "000":
+            updates["codigo"] = "000"
         if not verify_password(ADMIN_PASSWORD, admin["password_hash"]):
             updates["password_hash"] = hash_password(ADMIN_PASSWORD)
         if admin.get("nombre") != ADMIN_NAME:

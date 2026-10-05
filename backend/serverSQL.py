@@ -5,10 +5,15 @@ Requires ``pyodbc`` and Microsoft ODBC Driver 18 for SQL Server
 SQLSERVER_HOST, SQLSERVER_DATABASE, SQLSERVER_USER and SQLSERVER_PASSWORD.
 For Windows authentication use SQLSERVER_TRUSTED_AUTH=1.  Connections are
 created lazily; importing this module never contacts a database.
+
+Install Tablas.Sql on a freshly recreated database; legacy UUID SQL schemas
+are not migrated. Entity keys use INT IDENTITY, while users use immutable
+three-digit codes (000 is reserved for the bootstrap SuperAdmin). JSON keeps
+the shared frontend's field names and string IDs.
 """
 
 from __future__ import annotations
-import asyncio, json, os, re, uuid
+import asyncio, json, os, re
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Any, Literal, Optional
@@ -107,6 +112,7 @@ class LoginRequest(AnyModel):
 
 
 class UserCreate(AnyModel):
+    codigo: str = Field(pattern=r"^[0-9]{3}$")
     email: EmailStr
     nombre: str
     password: str = Field(min_length=4)
@@ -115,6 +121,7 @@ class UserCreate(AnyModel):
 
 
 class UserUpdate(AnyModel):
+    codigo: Optional[str] = Field(default=None, pattern=r"^[0-9]{3}$")
     nombre: Optional[str] = None
     rol: Optional[str] = None
     password: Optional[str] = None
@@ -204,12 +211,92 @@ def _connection_string():
     return f"DRIVER={{ODBC Driver 18 for SQL Server}};SERVER={host};DATABASE={db};UID={os.getenv('SQLSERVER_USER','')};PWD={os.getenv('SQLSERVER_PASSWORD','')};TrustServerCertificate=yes"
 
 
+# Physical SQL identifiers differ from the stable JSON/API names used by both
+# backends. Translate every statement, including transaction cursor statements,
+# and normalize returned rows at the database boundary.
+_SQL_COLUMNS = {
+    "office_id": "id_oficina",
+    "ambiente_id": "id_ambiente",
+    "pago_id": "id_pago",
+    "tarifa_id": "id_tarifa",
+    "cliente_tipo": "tipo_cliente",
+    "cliente_id": "id_cliente",
+    "cliente_nombre": "nombre_cliente",
+    "cliente_ci": "ci_cliente",
+    "cliente_cu": "cu_cliente",
+    "paid_by": "registrado_por",
+    "claimed_at": "reservado_en",
+    "alquiler_tramos": "alquiler_intervalos",
+}
+_API_COLUMNS = {physical: api_name for api_name, physical in _SQL_COLUMNS.items()}
+_SQL_IDENTIFIER = re.compile(
+    r"'(?:''|[^'])*'|--[^\n]*|/\*[\s\S]*?\*/|\b(" + "|".join(_SQL_COLUMNS) + r")\b",
+    re.IGNORECASE,
+)
+_ID_COLUMNS = {
+    "id", "office_id", "ambiente_id", "pago_id", "tarifa_id",
+    "cliente_id", "id_estudiante", "id_tipo_pago", "alquiler_id", "origen_id",
+}
+
+
+def _physical_sql(statement):
+    return _SQL_IDENTIFIER.sub(
+        lambda match: _SQL_COLUMNS[match.group(1).lower()] if match.group(1) else match.group(),
+        statement,
+    )
+
+
+class _SQLCursor:
+    def __init__(self, cursor):
+        self._cursor = cursor
+
+    def __getattr__(self, name):
+        return getattr(self._cursor, name)
+
+    def execute(self, statement, *params):
+        self._cursor.execute(_physical_sql(statement), *params)
+        return self
+
+    def _api_row(self, row):
+        if row is None:
+            return None
+        return tuple(
+            str(value) if isinstance(value, int)
+            and _API_COLUMNS.get(column[0], column[0]) in _ID_COLUMNS else value
+            for column, value in zip(self._cursor.description, row)
+        )
+
+    def fetchone(self):
+        return self._api_row(self._cursor.fetchone())
+
+    def fetchall(self):
+        return [self._api_row(row) for row in self._cursor.fetchall()]
+
+
+class _SQLConnection:
+    def __init__(self, connection):
+        self._connection = connection
+
+    def __getattr__(self, name):
+        return getattr(self._connection, name)
+
+    def __enter__(self):
+        self._connection.__enter__()
+        return self
+
+    def __exit__(self, *args):
+        return self._connection.__exit__(*args)
+
+    def cursor(self):
+        return _SQLCursor(self._connection.cursor())
+
+
 def _connect():
-    return pyodbc.connect(_connection_string(), autocommit=False)
+    return _SQLConnection(pyodbc.connect(_connection_string(), autocommit=False))
 
 
 def _rows(cur):
-    cols = [x[0] for x in cur.description] if cur.description else []
+    cols = [_API_COLUMNS.get(x[0], x[0]) for x in cur.description] if cur.description else []
     return [dict(zip(cols, row)) for row in cur.fetchall()]
 
 
@@ -460,7 +547,7 @@ async def hydrate_rental(r):
     r["tarifa_nombre"] = (t or {}).get("nombre")
     r["modalidad"] = (t or {}).get("modalidad")
     r["tramos"] = await sql(
-        "SELECT CONVERT(varchar(5),desde,108) desde,CONVERT(varchar(5),hasta,108) hasta FROM alquiler_tramos WHERE alquiler_id=? ORDER BY desde",
+        "SELECT CONVERT(varchar(5),desde,108) desde,CONVERT(varchar(5),hasta,108) hasta FROM alquiler_intervalos WHERE alquiler_id=? ORDER BY desde",
         (r["id"],),
     )
     o = await sql(
@@ -690,12 +777,11 @@ async def create_office(b: OfficeCreate, u=Depends(roles(SUPER_ADMIN_ROLE))):
         raise HTTPException(400, "Ingrese el nombre de la oficina.")
     if not re.fullmatch(r"[A-Z]{3}", prefix):
         raise HTTPException(400, "El prefijo del comprobante debe tener tres letras.")
-    oid = str(uuid.uuid4())
-    await sql(
-        "INSERT INTO oficinas(id,nombre,prefijo_comprobante,suboficina,activa) VALUES(?,?,?,?,?)",
-        (oid, name, prefix, b.suboficina.strip(), b.activa),
-        write=True,
-    )
+    oid = (await sql(
+        "INSERT INTO oficinas(nombre,prefijo_comprobante,suboficina,activa) OUTPUT INSERTED.id VALUES(?,?,?,?)",
+        (name, prefix, b.suboficina.strip(), b.activa),
+        one=True, write=True,
+    ))["id"]
     return await sql("SELECT * FROM oficinas WHERE id=?", (oid,), one=True)
 
 
@@ -754,7 +840,7 @@ async def users(
     where = ("WHERE " + scope) if scope else ""
     total = (await sql("SELECT COUNT(*) n FROM usuarios " + where, args, one=True))["n"]
     rows = await sql(
-        "SELECT id,email,nombre,rol,office_id,created_at FROM usuarios "
+        "SELECT id,id AS codigo,email,nombre,rol,office_id,created_at FROM usuarios "
         + where
         + " ORDER BY nombre OFFSET ? ROWS FETCH NEXT ? ROWS ONLY",
         args + [(pag - 1) * tam, tam],
@@ -768,7 +854,7 @@ async def users_list(office_id: Optional[str] = None, u=Depends(current)):
     where = (" WHERE " + scope) if scope else ""
     return await attach_office_names(
         await sql(
-            "SELECT id,nombre,rol,office_id FROM usuarios" + where + " ORDER BY nombre",
+            "SELECT id,id AS codigo,nombre,rol,office_id FROM usuarios" + where + " ORDER BY nombre",
             args,
         )
     )
@@ -794,7 +880,9 @@ async def create_user(b: UserCreate, u=Depends(roles("Administrador"))):
         one=True,
     ):
         raise HTTPException(400, "La oficina ya tiene un administrador.")
-    ident = str(uuid.uuid4())
+    ident = b.codigo
+    if ident == "000" or await sql("SELECT id FROM usuarios WHERE id=?", (ident,), one=True):
+        raise HTTPException(400, "El código de usuario ya está reservado o registrado.")
     await sql(
         "INSERT INTO usuarios(id,email,nombre,rol,office_id,password_hash) VALUES(?,?,?,?,?,?)",
         (ident, email, b.nombre, b.rol, oid, hashpw(b.password)),
@@ -804,7 +892,7 @@ async def create_user(b: UserCreate, u=Depends(roles("Administrador"))):
         await attach_office_names(
             [
                 await sql(
-                    "SELECT id,email,nombre,rol,office_id,created_at FROM usuarios WHERE id=?",
+                    "SELECT id,id AS codigo,email,nombre,rol,office_id,created_at FROM usuarios WHERE id=?",
                     (ident,),
                     one=True,
                 )
@@ -825,6 +913,8 @@ async def update_user(uid: str, b: UserUpdate, u=Depends(roles("Administrador"))
         raise HTTPException(403, "Sin permisos para modificar este usuario.")
     if target["rol"] == SUPER_ADMIN_ROLE:
         raise HTTPException(403, "La cuenta del Super Admin está protegida.")
+    if b.codigo is not None and b.codigo != uid:
+        raise HTTPException(400, "El código de usuario no se puede cambiar.")
     if (
         u["rol"] != SUPER_ADMIN_ROLE
         and target["rol"] == "Administrador"
@@ -880,7 +970,7 @@ async def update_user(uid: str, b: UserUpdate, u=Depends(roles("Administrador"))
         await attach_office_names(
             [
                 await sql(
-                    "SELECT id,email,nombre,rol,office_id,created_at FROM usuarios WHERE id=?",
+                    "SELECT id,id AS codigo,email,nombre,rol,office_id,created_at FROM usuarios WHERE id=?",
                     (uid,),
                     one=True,
                 )
@@ -909,6 +999,14 @@ async def delete_user(uid: str, u=Depends(roles("Administrador"))):
         raise HTTPException(403, "Sin permisos para eliminar este usuario.")
     if target["rol"] == "Administrador" and u["rol"] != SUPER_ADMIN_ROLE:
         raise HTTPException(403, "Sólo el Super Admin puede eliminar administradores.")
+    # A manually assigned primary key must not be reused for a different person
+    # while historical receipts still identify its original owner.
+    if await sql(
+        """SELECT TOP 1 1 usado FROM pagos WHERE created_by=? OR edited_by=? OR anulado_by=?
+           UNION ALL SELECT TOP 1 1 usado FROM alquileres WHERE paid_by=?""",
+        (uid, uid, uid, uid), one=True,
+    ):
+        raise HTTPException(400, "No se puede eliminar un usuario registrado en el historial de comprobantes.")
     await sql("DELETE FROM usuarios WHERE id=?", (uid,), write=True)
     return {"ok": True}
 
@@ -968,7 +1066,6 @@ async def create_student(
     b: EstudianteCreate, u=Depends(roles("Administrador", "Caja"))
 ):
     oid = await office(u, b.office_id, True)
-    ident = str(uuid.uuid4())
     cu = b.cu.strip()
     if await sql(
         "SELECT id FROM personas WHERE ci_key=LOWER(LTRIM(RTRIM(?)))", (b.ci,), one=True
@@ -980,11 +1077,11 @@ async def create_student(
         one=True,
     ):
         raise HTTPException(400, "El estudiante ya existe.")
-    await sql(
-        "INSERT INTO estudiantes(id,ci,cu,nombre,gestion,office_id) VALUES(?,?,?,?,?,?)",
-        (ident, b.ci, cu, b.nombre, b.gestion, oid),
-        write=True,
-    )
+    ident = (await sql(
+        "INSERT INTO estudiantes(ci,cu,nombre,gestion,office_id) OUTPUT INSERTED.id VALUES(?,?,?,?,?)",
+        (b.ci, cu, b.nombre, b.gestion, oid),
+        one=True, write=True,
+    ))["id"]
     return (
         await attach_office_names(
             [await sql("SELECT * FROM estudiantes WHERE id=?", (ident,), one=True)]
@@ -1084,12 +1181,11 @@ async def create_person(b: PersonaCreate, u=Depends(roles("Administrador"))):
         "SELECT id FROM personas WHERE ci_key=LOWER(LTRIM(RTRIM(?)))", (b.ci,), one=True
     ):
         raise HTTPException(400, "Ya existe una persona registrada con este C.I.")
-    ident = str(uuid.uuid4())
-    await sql(
-        "INSERT INTO personas(id,ci,nombre) VALUES(?,?,?)",
-        (ident, b.ci, b.nombre),
-        write=True,
-    )
+    ident = (await sql(
+        "INSERT INTO personas(ci,nombre) OUTPUT INSERTED.id VALUES(?,?)",
+        (b.ci, b.nombre),
+        one=True, write=True,
+    ))["id"]
     return await sql("SELECT * FROM personas WHERE id=?", (ident,), one=True)
 
 
@@ -1150,12 +1246,11 @@ async def create_concept(b: TipoPagoCreate, u=Depends(roles("Administrador"))):
     name = b.nombre.strip()
     if not name:
         raise HTTPException(400, "Ingrese el nombre del tipo de pago.")
-    ident = str(uuid.uuid4())
-    await sql(
-        "INSERT INTO tipos_pagos(id,office_id,nombre,monto,descripcion,inicio,fin) VALUES(?,?,?,?,?,?,?)",
-        (ident, oid, name, b.monto, b.descripcion, b.inicio, b.fin),
-        write=True,
-    )
+    ident = (await sql(
+        "INSERT INTO tipos_pagos(office_id,nombre,monto,descripcion,inicio,fin) OUTPUT INSERTED.id VALUES(?,?,?,?,?,?)",
+        (oid, name, b.monto, b.descripcion, b.inicio, b.fin),
+        one=True, write=True,
+    ))["id"]
     return (
         await attach_office_names(
             [await sql("SELECT * FROM tipos_pagos WHERE id=?", (ident,), one=True)]
@@ -1237,7 +1332,6 @@ async def environments(
 async def create_environment(b: AmbienteCreate, u=Depends(roles("Administrador"))):
     validate_blocks(b.horarios)
     oid = await office(u, b.office_id, True)
-    ident = str(uuid.uuid4())
     name = b.nombre.strip()
     if not name:
         raise HTTPException(400, "Ingrese el nombre del ambiente.")
@@ -1246,17 +1340,19 @@ async def create_environment(b: AmbienteCreate, u=Depends(roles("Administrador")
         with _connect() as cn:
             c = cn.cursor()
             c.execute(
-                "INSERT INTO ambientes(id,office_id,nombre,descripcion) VALUES(?,?,?,?)",
-                (ident, oid, name, b.descripcion),
+                "INSERT INTO ambientes(office_id,nombre,descripcion) OUTPUT INSERTED.id VALUES(?,?,?)",
+                (oid, name, b.descripcion),
             )
+            ident = c.fetchone()[0]
             for h in b.horarios:
                 c.execute(
                     "INSERT INTO ambiente_horarios(ambiente_id,dia,desde,hasta) VALUES(?,?,?,?)",
                     (ident, WEEKDAYS.index(h["dia"]), h["desde"], h["hasta"]),
                 )
             cn.commit()
+            return ident
 
-    await tx(create)
+    ident = await tx(create)
     return await hydrate_environment(
         await sql("SELECT * FROM ambientes WHERE id=?", (ident,), one=True)
     )
@@ -1290,7 +1386,7 @@ async def update_environment(
             future = [row[0] for row in c.fetchall()]
             for reserved_date in future:
                 c.execute(
-                    """SELECT t.desde,t.hasta FROM alquiler_tramos t
+                    """SELECT t.desde,t.hasta FROM alquiler_intervalos t
                              JOIN alquileres a ON a.id=t.alquiler_id
                              WHERE a.ambiente_id=? AND a.fecha=? AND a.estado<>N'cancelado'""",
                     (aid, reserved_date),
@@ -1396,11 +1492,9 @@ async def create_tariff(b: TarifaCreate, u=Depends(roles("Administrador"))):
     if not room:
         raise HTTPException(404, "Ambiente no encontrado.")
     await office_scope_sql(u, room["office_id"])
-    ident = str(uuid.uuid4())
-    await sql(
-        "INSERT INTO tarifas_ambientes(id,ambiente_id,office_id,nombre,modalidad,monto,descripcion,desde,hasta) VALUES(?,?,?,?,?,?,?,?,?)",
+    ident = (await sql(
+        "INSERT INTO tarifas_ambientes(ambiente_id,office_id,nombre,modalidad,monto,descripcion,desde,hasta) OUTPUT INSERTED.id VALUES(?,?,?,?,?,?,?,?)",
         (
-            ident,
             b.ambiente_id,
             room["office_id"],
             b.nombre,
@@ -1410,8 +1504,8 @@ async def create_tariff(b: TarifaCreate, u=Depends(roles("Administrador"))):
             b.desde,
             b.hasta,
         ),
-        write=True,
-    )
+        one=True, write=True,
+    ))["id"]
     return format_tariff_times(
         await sql("SELECT * FROM tarifas_ambientes WHERE id=?", (ident,), one=True)
     )
@@ -1639,12 +1733,13 @@ async def create_rental(b: AlquilerCreate, u=Depends(roles("Administrador", "Caj
     total = (Decimal(str(tariff["monto"])) * quantity).quantize(
         Decimal("0.01"), rounding=ROUND_HALF_UP
     )
-    ident = str(uuid.uuid4())
+    ident = None
     estado = "confirmando"
     gestion = rental_date.year
 
     # The room/date application lock and serializable transaction are mandatory: see Tablas.Sql.
     def reserve():
+        nonlocal ident
         with _connect() as cn:
             c = cn.cursor()
             acquire_app_lock(c, f"room-config:{b.ambiente_id}")
@@ -1666,9 +1761,8 @@ async def create_rental(b: AlquilerCreate, u=Depends(roles("Administrador", "Caj
                     "El horario solicitado no está cubierto por un bloque disponible.",
                 )
             c.execute(
-                "INSERT INTO alquileres(id,office_id,ambiente_id,tarifa_id,fecha,cliente_tipo,cliente_id,cliente_documento,cliente_nombre,cliente_ci,cliente_cu,estado,total,cantidad,monto,gestion,confirmation_started_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, ?,SYSUTCDATETIME())",
+                "INSERT INTO alquileres(office_id,ambiente_id,tarifa_id,fecha,cliente_tipo,cliente_id,cliente_documento,cliente_nombre,cliente_ci,cliente_cu,estado,total,cantidad,monto,gestion,confirmation_started_at) OUTPUT INSERTED.id VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,SYSUTCDATETIME())",
                 (
-                    ident,
                     oid,
                     b.ambiente_id,
                     b.tarifa_id,
@@ -1686,6 +1780,7 @@ async def create_rental(b: AlquilerCreate, u=Depends(roles("Administrador", "Caj
                     gestion,
                 ),
             )
+            ident = c.fetchone()[0]
             c.execute(
                 "INSERT INTO ambiente_ocupacion(ambiente_id,fecha) SELECT ?,? WHERE NOT EXISTS(SELECT 1 FROM ambiente_ocupacion WHERE ambiente_id=? AND fecha=?)",
                 (b.ambiente_id, b.fecha, b.ambiente_id, b.fecha),
@@ -1703,7 +1798,7 @@ async def create_rental(b: AlquilerCreate, u=Depends(roles("Administrador", "Caj
                     (b.ambiente_id, b.fecha, ident, start, end),
                 )
                 c.execute(
-                    "INSERT INTO alquiler_tramos(alquiler_id,desde,hasta) VALUES(?,?,?)",
+                    "INSERT INTO alquiler_intervalos(alquiler_id,desde,hasta) VALUES(?,?,?)",
                     (ident, start, end),
                 )
             c.execute(
@@ -1719,7 +1814,8 @@ async def create_rental(b: AlquilerCreate, u=Depends(roles("Administrador", "Caj
     except Exception as exc:
         raise HTTPException(
             500,
-            f"No se pudo verificar la confirmación. Consulte la reserva {ident} antes de reintentar.",
+            f"No se pudo verificar la confirmación. Consulte la reserva {ident} antes de reintentar."
+            if ident else "No se pudo crear la reserva; vuelva a consultar la disponibilidad.",
         ) from exc
     result = await hydrate_rental(
         await sql("SELECT * FROM alquileres WHERE id=?", (ident,), one=True)
@@ -1760,8 +1856,8 @@ async def pay_rental(rid: str, u=Depends(roles("Administrador", "Caja"))):
             year = datetime.now(timezone.utc).year
             code, prefix = allocate_receipt(c, oid, year, "alquiler", rid)
             c.execute(
-                "UPDATE alquileres SET estado=N'pagado',gestion=?,cod_comprobante=?,prefijo_comprobante=?,comprobante_display=?,paid_by=?,fecha_pago=SYSUTCDATETIME(),processing_lease_until=NULL,payment_token=NULL,processing_started_at=NULL WHERE id=? AND estado=N'reservado'",
-                (year, code, prefix, f"{prefix}-{code} / {year}", u["id"], rid),
+                "UPDATE alquileres SET estado=N'pagado',gestion=?,cod_comprobante=?,prefijo_comprobante=?,paid_by=?,fecha_pago=SYSUTCDATETIME() WHERE id=? AND estado=N'reservado'",
+                (year, code, prefix, u["id"], rid),
             )
             if not c.rowcount:
                 raise HTTPException(
@@ -1935,7 +2031,6 @@ async def preview(
 @api.post("/pagos", status_code=201)
 async def create_payment(b: PagoCreate, u=Depends(roles("Administrador", "Caja"))):
     oid = await office(u, b.office_id, True)
-    ident = str(uuid.uuid4())
     year = datetime.now(timezone.utc).year
     payment_date = parse_iso_date(b.fecha_pago).isoformat()
     if b.id_tipo_pago and b.cantidad is None:
@@ -1967,31 +2062,26 @@ async def create_payment(b: PagoCreate, u=Depends(roles("Administrador", "Caja")
                     Decimal("0.01"), rounding=ROUND_HALF_UP
                 )
                 item = (
-                    str(uuid.uuid4()),
                     b.id_tipo_pago,
                     t[0],
                     qty,
                     amount,
                     line_total,
                 )
-            code, prefix = allocate_receipt(c, oid, year, "pago", ident)
             state = "emitido" if item else "borrador"
-            unit = item[4] if item else Decimal(0)
-            total = item[5] if item else Decimal(0)
-            type_id = item[1] if item else None
-            quantity = item[3] if item else None
+            unit = item[3] if item else Decimal(0)
+            total = item[4] if item else Decimal(0)
+            type_id = item[0] if item else None
+            quantity = item[2] if item else None
             c.execute(
-                """INSERT INTO pagos(id,office_id,id_estudiante,fecha_pago,gestion,cod_comprobante,prefijo_comprobante,
+                """INSERT INTO pagos(office_id,id_estudiante,fecha_pago,gestion,
                          estado,monto,total,id_tipo_pago,cantidad,created_by)
-                         VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                         OUTPUT INSERTED.id VALUES(?,?,?,?,?,?,?,?,?,?)""",
                 (
-                    ident,
                     oid,
                     b.id_estudiante,
                     payment_date,
                     year,
-                    code,
-                    prefix,
                     state,
                     unit,
                     total,
@@ -2000,15 +2090,22 @@ async def create_payment(b: PagoCreate, u=Depends(roles("Administrador", "Caja")
                     u["id"],
                 ),
             )
+            ident = c.fetchone()[0]
+            code, prefix = allocate_receipt(c, oid, year, "pago", ident)
+            c.execute(
+                "UPDATE pagos SET cod_comprobante=?,prefijo_comprobante=? WHERE id=?",
+                (code, prefix, ident),
+            )
             if item:
                 c.execute(
-                    """INSERT INTO pago_items(id,pago_id,id_tipo_pago,tipo_pago_nombre,cantidad,monto,total)
-                             VALUES(?,?,?,?,?,?,?)""",
-                    (item[0], ident, item[1], item[2], item[3], item[4], item[5]),
+                    """INSERT INTO pago_items(pago_id,id_tipo_pago,tipo_pago_nombre,cantidad,monto,total)
+                             VALUES(?,?,?,?,?,?)""",
+                    (ident, *item),
                 )
             cn.commit()
+            return ident
 
-    await tx(create)
+    ident = await tx(create)
     return await hydrate_payment(
         await sql("SELECT * FROM pagos WHERE id=?", (ident,), one=True)
     )
@@ -2019,7 +2116,6 @@ async def add_item(
     pid: str, b: PagoItemCreate, u=Depends(roles("Administrador", "Caja"))
 ):
     scope, scope_args = await office_scope_sql(u, column="p.office_id")
-    ident = str(uuid.uuid4())
     qty = Decimal(str(b.cantidad))
 
     def add():
@@ -2053,8 +2149,8 @@ async def add_item(
             c.execute("SELECT COUNT(*) FROM pago_items WHERE pago_id=?", (pid,))
             old_count = c.fetchone()[0]
             c.execute(
-                "INSERT INTO pago_items(id,pago_id,id_tipo_pago,tipo_pago_nombre,cantidad,monto,total) VALUES(?,?,?,?,?,?,?)",
-                (ident, pid, b.id_tipo_pago, t[0], qty, amount, line_total),
+                "INSERT INTO pago_items(pago_id,id_tipo_pago,tipo_pago_nombre,cantidad,monto,total) VALUES(?,?,?,?,?,?)",
+                (pid, b.id_tipo_pago, t[0], qty, amount, line_total),
             )
             new_total = Decimal(str(p[3] or 0)) + line_total
             if old_count == 0:
@@ -2685,7 +2781,7 @@ async def reconcile_startup():
         "pagos",
         "pago_items",
         "alquileres",
-        "alquiler_tramos",
+        "alquiler_intervalos",
         "ambiente_ocupacion",
         "ocupacion_intervalos",
         "comprobante_contadores",
@@ -2702,11 +2798,6 @@ async def reconcile_startup():
         with _connect() as cn:
             c = cn.cursor()
             c.execute(
-                """UPDATE alquileres SET estado=N'reservado',payment_token=NULL,processing_lease_until=NULL,processing_started_at=NULL
-                         WHERE estado=N'procesando'
-                         AND (processing_lease_until IS NULL OR processing_lease_until<=SYSUTCDATETIME())"""
-            )
-            c.execute(
                 """UPDATE alquileres SET estado=N'cancelado',confirmation_started_at=NULL
                          WHERE estado=N'confirmando'
                          AND (confirmation_started_at IS NULL OR confirmation_started_at<DATEADD(minute,-30,SYSUTCDATETIME()))"""
@@ -2718,14 +2809,14 @@ async def reconcile_startup():
             c.execute(
                 """INSERT INTO ambiente_ocupacion(ambiente_id,fecha)
                          SELECT DISTINCT a.ambiente_id,a.fecha FROM alquileres a
-                         JOIN alquiler_tramos t ON t.alquiler_id=a.id
+                         JOIN alquiler_intervalos t ON t.alquiler_id=a.id
                          WHERE a.estado<>N'cancelado'
                          AND NOT EXISTS(SELECT 1 FROM ambiente_ocupacion o WHERE o.ambiente_id=a.ambiente_id AND o.fecha=a.fecha)"""
             )
             c.execute(
                 """INSERT INTO ocupacion_intervalos(ambiente_id,fecha,alquiler_id,desde,hasta)
                          SELECT a.ambiente_id,a.fecha,a.id,t.desde,t.hasta
-                         FROM alquileres a JOIN alquiler_tramos t ON t.alquiler_id=a.id
+                         FROM alquileres a JOIN alquiler_intervalos t ON t.alquiler_id=a.id
                          WHERE a.estado<>N'cancelado'
                          AND NOT EXISTS(SELECT 1 FROM ocupacion_intervalos i
                                         WHERE i.alquiler_id=a.id AND i.desde=t.desde AND i.hasta=t.hasta)"""
@@ -2800,7 +2891,7 @@ async def reconcile_startup():
     if not admin:
         await sql(
             "INSERT INTO usuarios(id,email,nombre,rol,password_hash) VALUES(?,?,?,?,?)",
-            (str(uuid.uuid4()), email, name, SUPER_ADMIN_ROLE, hashpw(password)),
+            ("000", email, name, SUPER_ADMIN_ROLE, hashpw(password)),
             write=True,
         )
     else:

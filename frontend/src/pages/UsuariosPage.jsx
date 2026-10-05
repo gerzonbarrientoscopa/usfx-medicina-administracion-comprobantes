@@ -30,7 +30,7 @@ import {
 } from "@/components/ui/table";
 import { Plus, Pencil, Trash2, ChevronLeft, ChevronRight } from "lucide-react";
 
-const EMPTY = { email: "", nombre: "", password: "", rol: "Caja" };
+const EMPTY = { codigo: "", email: "", nombre: "", password: "", rol: "Caja" };
 
 export default function UsuariosPage() {
   const { user } = useAuth();
@@ -94,6 +94,10 @@ export default function UsuariosPage() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (!/^[0-9]{3}$/.test(formData.codigo) || formData.codigo === "000") {
+      toast.error("Ingresa un código de tres dígitos entre 001 y 999.");
+      return;
+    }
     if (isSuperAdmin && !formData.office_id) {
       toast.error("Selecciona una oficina.");
       return;
@@ -107,10 +111,12 @@ export default function UsuariosPage() {
           ...(isSuperAdmin ? { office_id: formData.office_id } : {}),
         };
         if (formData.password) payload.password = formData.password;
+        if (!editingUsuario.codigo) payload.codigo = formData.codigo;
         await apiClient.put(`/usuarios/${editingUsuario.id}`, payload);
         toast.success("Usuario actualizado.");
       } else {
         const payload = {
+          codigo: formData.codigo,
           email: formData.email,
           nombre: formData.nombre,
           password: formData.password,
@@ -157,6 +163,7 @@ export default function UsuariosPage() {
     if (!canManage(usuario)) return;
     setEditingUsuario(usuario);
     setFormData({
+      codigo: usuario.codigo || "",
       email: usuario.email,
       nombre: usuario.nombre,
       password: "",
@@ -243,6 +250,27 @@ export default function UsuariosPage() {
               </DialogTitle>
             </DialogHeader>
             <form onSubmit={handleSubmit} className="space-y-4">
+              <div className="space-y-1.5">
+                <Label htmlFor="user-code" className="text-xs uppercase tracking-widest text-[color:var(--institution-muted)]">
+                  Código de usuario (3 dígitos)
+                </Label>
+                <Input
+                  id="user-code"
+                  value={formData.codigo}
+                  onChange={(e) => setFormData({ ...formData, codigo: e.target.value })}
+                  inputMode="numeric"
+                  pattern="[0-9]{3}"
+                  maxLength={3}
+                  placeholder="001"
+                  required
+                  disabled={!!editingUsuario?.codigo}
+                  data-testid="user-code-input"
+                  className="rounded-sm"
+                />
+                <p className="text-xs text-[color:var(--institution-muted)]">
+                  Único en el sistema. No se puede cambiar después de asignarlo; 000 está reservado.
+                </p>
+              </div>
               <div className="space-y-1.5">
                 <Label className="text-xs uppercase tracking-widest text-[color:var(--institution-muted)]">
                   Nombre completo
@@ -375,6 +403,9 @@ export default function UsuariosPage() {
           <TableHeader>
             <TableRow style={{ backgroundColor: "var(--institution-cream)" }}>
               <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">
+                Código
+              </TableHead>
+              <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">
                 Nombre
               </TableHead>
               <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">
@@ -394,6 +425,7 @@ export default function UsuariosPage() {
           <TableBody>
             {usuarios.map((usuario) => (
               <TableRow key={usuario.id} data-testid={`user-row-${usuario.id}`}>
+                <TableCell>{usuario.codigo || "—"}</TableCell>
                 <TableCell className="font-medium">{usuario.nombre}</TableCell>
                 <TableCell>{usuario.email}</TableCell>
                 <TableCell>
@@ -437,7 +469,7 @@ export default function UsuariosPage() {
             {usuarios.length === 0 && (
               <TableRow>
                 <TableCell
-                  colSpan={5}
+                  colSpan={6}
                   className="text-center py-12 text-sm text-[color:var(--institution-muted)]"
                 >
                   Sin usuarios registrados.
