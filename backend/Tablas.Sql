@@ -23,6 +23,11 @@ IF EXISTS(SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID(N'dbo.oficinas')
     THROW 50001, 'Esquema antiguo: recree ComprobantesDB antes de ejecutar este script. No se migran UUID.', 1;
 GO
 
+IF OBJECT_ID(N'dbo.estudiantes','U') IS NOT NULL OR OBJECT_ID(N'dbo.personas','U') IS NOT NULL
+ OR EXISTS(SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID(N'dbo.usuarios') AND name=N'id' AND is_identity=0)
+    THROW 50002, 'Esquema incompatible con Clientes. Use una base nueva o ReiniciarLocal.Sql antes de instalar Tablas.Sql.', 1;
+GO
+
 IF OBJECT_ID(N'dbo.oficinas','U') IS NULL
 CREATE TABLE dbo.oficinas (
   id int IDENTITY(1,1) NOT NULL CONSTRAINT PK_oficinas PRIMARY KEY,
@@ -34,32 +39,31 @@ CREATE TABLE dbo.oficinas (
 );
 IF OBJECT_ID(N'dbo.usuarios','U') IS NULL
 CREATE TABLE dbo.usuarios (
-  id char(3) NOT NULL CONSTRAINT PK_usuarios PRIMARY KEY, email nvarchar(320) NOT NULL,
+  id int IDENTITY(1,1) NOT NULL CONSTRAINT PK_usuarios PRIMARY KEY, codigo char(3) NOT NULL CONSTRAINT UQ_usuarios_codigo UNIQUE, email nvarchar(320) NOT NULL,
  email_key AS LOWER(LTRIM(RTRIM(email))) PERSISTED, nombre nvarchar(200) NOT NULL,
   rol nvarchar(20) NOT NULL, id_oficina int NULL, password_hash nvarchar(255) NOT NULL,
  created_at datetime2(3) NOT NULL CONSTRAINT DF_usuarios_created DEFAULT SYSUTCDATETIME(),
   CONSTRAINT UQ_usuarios_email UNIQUE(email_key), CONSTRAINT FK_usuarios_oficina FOREIGN KEY(id_oficina) REFERENCES dbo.oficinas(id),
   CONSTRAINT CK_usuarios_rol CHECK(rol IN(N'SuperAdmin',N'Administrador',N'Caja',N'Consultas')),
-   CONSTRAINT CK_usuarios_codigo CHECK(id COLLATE Latin1_General_100_BIN2 LIKE '[0-9][0-9][0-9]'),
-   CONSTRAINT CK_usuarios_superadmin CHECK((id='000' AND rol=N'SuperAdmin') OR (id<>'000' AND rol<>N'SuperAdmin'))
+   CONSTRAINT CK_usuarios_codigo CHECK(codigo COLLATE Latin1_General_100_BIN2 LIKE '[0-9][0-9][0-9]'),
+   CONSTRAINT CK_usuarios_superadmin CHECK((codigo='000' AND rol=N'SuperAdmin') OR (codigo<>'000' AND rol<>N'SuperAdmin'))
 );
 IF NOT EXISTS(SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID(N'dbo.usuarios') AND name=N'IX_usuarios_un_admin')
 CREATE UNIQUE INDEX IX_usuarios_un_admin ON dbo.usuarios(id_oficina) WHERE rol=N'Administrador' AND id_oficina IS NOT NULL;
-IF OBJECT_ID(N'dbo.personas','U') IS NULL
-CREATE TABLE dbo.personas (
-  id int IDENTITY(1,1) NOT NULL CONSTRAINT PK_personas PRIMARY KEY, ci nvarchar(30) NOT NULL,
- ci_key AS LOWER(LTRIM(RTRIM(ci))) PERSISTED, nombre nvarchar(200) NOT NULL, created_at datetime2(3) NOT NULL CONSTRAINT DF_personas_created DEFAULT SYSUTCDATETIME(),
- CONSTRAINT UQ_personas_ci UNIQUE(ci_key)
+IF OBJECT_ID(N'dbo.clientes','U') IS NULL
+CREATE TABLE dbo.clientes (
+ id int IDENTITY(1,1) NOT NULL CONSTRAINT PK_clientes PRIMARY KEY,
+ ci nvarchar(30) NOT NULL CONSTRAINT DF_clientes_ci DEFAULT N'',
+ ci_key AS LOWER(LTRIM(RTRIM(ci))) PERSISTED,
+ cu nvarchar(50) NOT NULL CONSTRAINT DF_clientes_cu DEFAULT N'',
+ cu_key AS LOWER(LTRIM(RTRIM(cu))) PERSISTED,
+ nombre nvarchar(200) NOT NULL,
+ CONSTRAINT CK_clientes_identificador CHECK(ci<>N'' OR cu<>N'')
 );
-IF OBJECT_ID(N'dbo.estudiantes','U') IS NULL
-CREATE TABLE dbo.estudiantes (
-  id int IDENTITY(1,1) NOT NULL CONSTRAINT PK_estudiantes PRIMARY KEY, ci nvarchar(30) NOT NULL,
- ci_key AS LOWER(LTRIM(RTRIM(ci))) PERSISTED, cu nvarchar(50) NOT NULL CONSTRAINT DF_estudiantes_cu DEFAULT N'', cu_key AS LOWER(LTRIM(RTRIM(cu))) PERSISTED,
-  nombre nvarchar(200) NOT NULL, gestion int NOT NULL, id_oficina int NOT NULL,
-  CONSTRAINT FK_estudiantes_oficina FOREIGN KEY(id_oficina) REFERENCES dbo.oficinas(id), CONSTRAINT CK_estudiantes_gestion CHECK(gestion BETWEEN 1900 AND 9999)
-);
-IF NOT EXISTS(SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID(N'dbo.estudiantes') AND name=N'IX_estudiantes_cu_key_oficina')
-CREATE UNIQUE INDEX IX_estudiantes_cu_key_oficina ON dbo.estudiantes(id_oficina,cu_key) WHERE cu<>N'';
+IF NOT EXISTS(SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID(N'dbo.clientes') AND name=N'IX_clientes_ci')
+CREATE UNIQUE INDEX IX_clientes_ci ON dbo.clientes(ci_key) WHERE ci<>N'';
+IF NOT EXISTS(SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID(N'dbo.clientes') AND name=N'IX_clientes_cu')
+CREATE UNIQUE INDEX IX_clientes_cu ON dbo.clientes(cu_key) WHERE cu<>N'';
 IF OBJECT_ID(N'dbo.tipos_pagos','U') IS NULL
 CREATE TABLE dbo.tipos_pagos (
   id int IDENTITY(1,1) NOT NULL CONSTRAINT PK_tipos_pagos PRIMARY KEY, id_oficina int NOT NULL,
@@ -116,12 +120,12 @@ BEGIN
 END
 IF OBJECT_ID(N'pagos','U') IS NULL
 CREATE TABLE dbo.pagos (
-  id int IDENTITY(1,1) NOT NULL CONSTRAINT PK_pagos PRIMARY KEY, id_oficina int NOT NULL, id_estudiante int NOT NULL,
+  id int IDENTITY(1,1) NOT NULL CONSTRAINT PK_pagos PRIMARY KEY, id_oficina int NOT NULL, id_cliente int NOT NULL,
  fecha_pago date NOT NULL, gestion int NOT NULL, cod_comprobante nvarchar(30) NULL, prefijo_comprobante char(3) NULL, estado nvarchar(20) NOT NULL CONSTRAINT DF_pagos_estado DEFAULT N'borrador',
   monto decimal(19,2) NOT NULL CONSTRAINT DF_pagos_monto DEFAULT 0, total decimal(19,2) NOT NULL CONSTRAINT DF_pagos_total DEFAULT 0,
    id_tipo_pago int NULL, cantidad decimal(19,4) NULL, anulado bit NOT NULL CONSTRAINT DF_pagos_anulado DEFAULT 0,
-  anulado_at datetime2(3) NULL, anulado_by char(3) NULL, created_at datetime2(3) NOT NULL CONSTRAINT DF_pagos_created DEFAULT SYSUTCDATETIME(), created_by char(3) NULL, edited_at datetime2(3) NULL, edited_by char(3) NULL,
-  CONSTRAINT FK_pagos_oficina FOREIGN KEY(id_oficina) REFERENCES dbo.oficinas(id), CONSTRAINT FK_pagos_estudiante FOREIGN KEY(id_estudiante) REFERENCES dbo.estudiantes(id), CONSTRAINT CK_pagos_estado CHECK(estado IN(N'borrador',N'emitido',N'finalizado')), CONSTRAINT CK_pagos_money CHECK(monto>=0 AND total>=0)
+  anulado_at datetime2(3) NULL, anulado_by int NULL, created_at datetime2(3) NOT NULL CONSTRAINT DF_pagos_created DEFAULT SYSUTCDATETIME(), created_by int NULL, edited_at datetime2(3) NULL, edited_by int NULL,
+  CONSTRAINT FK_pagos_oficina FOREIGN KEY(id_oficina) REFERENCES dbo.oficinas(id), CONSTRAINT FK_pagos_cliente FOREIGN KEY(id_cliente) REFERENCES dbo.clientes(id), CONSTRAINT CK_pagos_estado CHECK(estado IN(N'borrador',N'emitido',N'finalizado')), CONSTRAINT CK_pagos_money CHECK(monto>=0 AND total>=0)
 );
 IF NOT EXISTS(SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID(N'dbo.pagos') AND name=N'IX_pagos_recibo')
 CREATE UNIQUE INDEX IX_pagos_recibo ON dbo.pagos(id_oficina,gestion,cod_comprobante) WHERE cod_comprobante IS NOT NULL;
@@ -134,10 +138,10 @@ CREATE TABLE dbo.pago_items (
 IF OBJECT_ID(N'alquileres','U') IS NULL
 CREATE TABLE dbo.alquileres (
   id int IDENTITY(1,1) NOT NULL CONSTRAINT PK_alquileres PRIMARY KEY, id_oficina int NOT NULL, id_ambiente int NOT NULL, id_tarifa int NOT NULL, fecha date NOT NULL,
-  tipo_cliente nvarchar(20) NOT NULL, id_cliente int NOT NULL, cliente_documento nvarchar(50) NULL, nombre_cliente nvarchar(200) NULL, ci_cliente nvarchar(50) NULL, cu_cliente nvarchar(50) NULL,
+  id_cliente int NOT NULL, nombre_cliente nvarchar(200) NULL, ci_cliente nvarchar(50) NULL, cu_cliente nvarchar(50) NULL,
   estado nvarchar(20) NOT NULL, total decimal(19,2) NOT NULL, cantidad decimal(19,4) NOT NULL CONSTRAINT DF_alq_cantidad DEFAULT 1, monto decimal(19,2) NOT NULL, gestion int NOT NULL, cod_comprobante nvarchar(30) NULL, prefijo_comprobante char(3) NULL,
-  registrado_por char(3) NULL, fecha_pago datetime2(3) NULL, confirmation_started_at datetime2(3) NULL, created_at datetime2(3) NOT NULL CONSTRAINT DF_alq_created DEFAULT SYSUTCDATETIME(),
-   CONSTRAINT FK_alq_oficina FOREIGN KEY(id_oficina) REFERENCES dbo.oficinas(id), CONSTRAINT CK_alq_estado CHECK(estado IN(N'reservado',N'confirmando',N'pagado',N'cancelado')), CONSTRAINT CK_alq_cliente CHECK(tipo_cliente IN(N'persona',N'estudiante'))
+  registrado_por int NULL, fecha_pago datetime2(3) NULL, confirmation_started_at datetime2(3) NULL, created_at datetime2(3) NOT NULL CONSTRAINT DF_alq_created DEFAULT SYSUTCDATETIME(),
+   CONSTRAINT FK_alq_oficina FOREIGN KEY(id_oficina) REFERENCES dbo.oficinas(id), CONSTRAINT CK_alq_estado CHECK(estado IN(N'reservado',N'confirmando',N'pagado',N'cancelado')), CONSTRAINT FK_alq_cliente FOREIGN KEY(id_cliente) REFERENCES dbo.clientes(id)
 );
 IF NOT EXISTS(SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID(N'dbo.alquileres') AND name=N'IX_alq_recibo')
 CREATE UNIQUE INDEX IX_alq_recibo ON dbo.alquileres(id_oficina,gestion,cod_comprobante) WHERE cod_comprobante IS NOT NULL;

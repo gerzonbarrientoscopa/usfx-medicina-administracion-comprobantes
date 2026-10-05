@@ -26,9 +26,9 @@ export function buildComprobanteHTML(pago) {
         `${formatDate(new Date())} ${new Date().toLocaleTimeString("es-BO")}`,
     );
     const codigo = escapeHTML(formatComprobante(pago));
-    const estudianteNombre = escapeHTML(pago.estudiante_nombre);
-    const estudianteCi = escapeHTML(pago.estudiante_ci);
-    const estudianteCu = escapeHTML(pago.estudiante_cu || "-");
+    const clienteNombre = escapeHTML(pago.cliente_nombre);
+    const clienteCi = escapeHTML(pago.cliente_ci);
+    const clienteCu = escapeHTML(pago.cliente_cu || "-");
     const oficina = escapeHTML(pago.office_nombre || "Oficina no identificada");
     const suboficina = escapeHTML(pago.suboficina || "");
     const items = Array.isArray(pago.items) && pago.items.length
@@ -117,9 +117,9 @@ export function buildComprobanteHTML(pago) {
       <div class="title-bar">Comprobante de Pago</div>
 
       <div class="row"><span class="label">Oficina</span><span class="value">${oficina}</span></div>
-      <div class="row"><span class="label">Estudiante</span><span class="value">${estudianteNombre}</span></div>
-      <div class="row"><span class="label">C.I.</span><span class="value">${estudianteCi}</span></div>
-      <div class="row"><span class="label">C.U.</span><span class="value">${estudianteCu}</span></div>
+      <div class="row"><span class="label">Cliente</span><span class="value">${clienteNombre}</span></div>
+      <div class="row"><span class="label">C.I.</span><span class="value">${clienteCi}</span></div>
+      <div class="row"><span class="label">C.U.</span><span class="value">${clienteCu}</span></div>
       <div class="row"><span class="label">Fecha de Pago</span><span class="value">${fecha}</span></div>
 
       <table>

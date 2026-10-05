@@ -1,10 +1,10 @@
 ---
-name: Cross-office rental clients
-description: Why students can rent at another office but cross-office lookup needs exact identifiers
+name: Unified shared clients
+description: Unified client catalog replaces the former Persona/Estudiante office policy.
 ---
 
-**Rule:** A student can rent an environment outside their enrollment office without being duplicated as a Persona. For non-superadmins, cross-office student discovery and booking require an exact C.I. or C.U.; partial name search remains scoped to their own office.
+**Rule:** Clientes is a shared catalog for all offices, replacing Estudiantes and Personas. Do not restore their mutual-exclusion rules, enrollment-office ownership, or cross-office document-confirmation restrictions.
 
-**Why:** Persona and Estudiante identities are mutually exclusive, so forcing a second Persona record would block legitimate rentals. Broad cross-office student searches would expose unnecessary identity data to cashiers.
+**Why:** The user requested a single identity with Id, C.I., C.U. and Nombre completo for both payments and rentals, starting with fresh databases; the shared-office catalog was communicated as part of that decision.
 
-**How to apply:** Preserve both the exact-match search restriction and the server-side document check when changing rental client selection; avoid broadening the regular student-management scope.
+**How to apply:** Keep payment, rental, tariff and room office boundaries intact, but select their payer from the same client catalog. Only SuperAdmin administers users; SuperAdmin, Administrador and Caja administer clients.

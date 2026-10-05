@@ -15,14 +15,14 @@ def test_income_and_receipt_search(mongo_rental_api):
         day = f"{year}-03-12"
         next_day = f"{year}-03-13"
         await db.pagos.insert_one({
-            "id": "student-payment", "office_id": "office-a", "id_estudiante": "student-a",
+            "id": "student-payment", "office_id": "office-a", "cliente_id": "student-a",
             "cod_comprobante": "00001", "prefijo_comprobante": "RTA", "gestion": year,
             "fecha_pago": day, "total": 25.0, "estado": "finalizado",
             "anulado": False, "created_by": "user-Administrador-office-a",
             "created_at": f"{day}T12:00:00Z",
         })
         await db.pagos.insert_one({
-            "id": "void-payment", "office_id": "office-a", "id_estudiante": "student-a",
+            "id": "void-payment", "office_id": "office-a", "cliente_id": "student-a",
             "cod_comprobante": "00002", "prefijo_comprobante": "RTA", "gestion": year,
             "fecha_pago": day, "total": 8.0, "estado": "finalizado",
             "anulado": True, "created_by": "user-Administrador-office-a",
@@ -52,7 +52,7 @@ def test_income_and_receipt_search(mongo_rental_api):
             assert response.status_code == 200, response.text
             report = response.json()
             assert [a["id"] for a in report["alquileres"]] == ["paid-rental"]
-            assert report["totales"]["estudiantiles"] == 25
+            assert report["totales"]["pagos"] == 25
             assert report["totales"]["alquileres"] == 60
             assert report["totales"]["validos"] == 85
             assert report["totales"]["anulados"] == 8
@@ -68,7 +68,7 @@ def test_income_and_receipt_search(mongo_rental_api):
             found = await client.get(f"{API}/comprobantes", params=search)
             assert found.status_code == 200, found.text
             assert found.json()["total"] == 3
-            assert {p["origen"] for p in found.json()["items"]} == {"alquiler", "estudiantil"}
+            assert {p["origen"] for p in found.json()["items"]} == {"alquiler", "pago"}
             matched_user = await client.get(f"{API}/comprobantes", params={
                 **search, "created_by": "user-Administrador-office-a",
             })

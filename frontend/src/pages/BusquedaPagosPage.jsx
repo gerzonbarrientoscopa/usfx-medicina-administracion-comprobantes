@@ -78,7 +78,7 @@ export default function BusquedaPagosPage() {
     const [tipos, setTipos] = useState([]);
     const [users, setUsers] = useState([]);
     const [editTipos, setEditTipos] = useState([]);
-    const [editEstudiantes, setEditEstudiantes] = useState([]);
+    const [editClientes, setEditClientes] = useState([]);
 
     const [q, setQ] = useState("");
     const [tipo, setTipo] = useState("");
@@ -96,7 +96,7 @@ export default function BusquedaPagosPage() {
     // Edit state
     const [editOpen, setEditOpen] = useState(false);
     const [editing, setEditing] = useState(null);
-    const [editForm, setEditForm] = useState({ id_estudiante: "", id_tipo_pago: "", cantidad: "", fecha_pago: "" });
+    const [editForm, setEditForm] = useState({ cliente_id: "", id_tipo_pago: "", cantidad: "", fecha_pago: "" });
     const [editEstOpen, setEditEstOpen] = useState(false);
     const [editTpOpen, setEditTpOpen] = useState(false);
     const [savingEdit, setSavingEdit] = useState(false);
@@ -127,7 +127,7 @@ export default function BusquedaPagosPage() {
                 const params = officeId ? { office_id: officeId } : {};
                 const [tiposResponse, usuariosResponse] = await Promise.all([
                     cargarTodasLasPaginas("/tipos-pagos", params),
-                    apiClient.get("/usuarios/list", { params }),
+                    apiClient.get("/reportes/registradores", { params }),
                 ]);
                 if (requestId !== catalogRequest.current || officeIdRef.current !== officeId) return;
                 setTipos(tiposResponse);
@@ -190,10 +190,10 @@ export default function BusquedaPagosPage() {
     const cargarOpcionesEdicion = async (p, requestId) => {
         const paymentOfficeId = p.office_id;
         const paymentStudent = {
-            id: p.id_estudiante,
-            nombre: p.estudiante_nombre,
-            ci: p.estudiante_ci,
-            cu: p.estudiante_cu,
+            id: p.cliente_id,
+            nombre: p.cliente_nombre,
+            ci: p.cliente_ci,
+            cu: p.cliente_cu,
         };
         const paymentTipo = {
             id: p.id_tipo_pago,
@@ -201,7 +201,7 @@ export default function BusquedaPagosPage() {
             monto: p.monto,
             codigo: p.tipo_pago_codigo || "",
         };
-        setEditEstudiantes([paymentStudent]);
+        setEditClientes([paymentStudent]);
         setEditTipos([paymentTipo]);
         if (!paymentOfficeId) return;
         const params = { office_id: paymentOfficeId };
@@ -221,11 +221,11 @@ export default function BusquedaPagosPage() {
                 ];
             };
             const [students, types] = await Promise.all([
-                cargarTodasLasPaginas("/estudiantes"),
+                cargarTodasLasPaginas("/clientes"),
                 cargarTodasLasPaginas("/tipos-pagos"),
             ]);
             if (requestId !== editOptionsRequest.current) return;
-            setEditEstudiantes(students.some((student) => student.id === p.id_estudiante)
+            setEditClientes(students.some((student) => student.id === p.cliente_id)
                 ? students
                 : [...students, paymentStudent]);
             setEditTipos(types.some((paymentType) => paymentType.id === p.id_tipo_pago)
@@ -239,7 +239,7 @@ export default function BusquedaPagosPage() {
     const openEdit = (p) => {
         setEditing(p);
         setEditForm({
-            id_estudiante: p.id_estudiante,
+            cliente_id: p.cliente_id,
             id_tipo_pago: p.id_tipo_pago,
             cantidad: String(p.cantidad),
             fecha_pago: toISODate(p.fecha_pago),
@@ -250,8 +250,8 @@ export default function BusquedaPagosPage() {
     };
 
     const selectedEditEst = useMemo(
-        () => editEstudiantes.find((e) => e.id === editForm.id_estudiante) || null,
-        [editEstudiantes, editForm.id_estudiante],
+        () => editClientes.find((e) => e.id === editForm.cliente_id) || null,
+        [editClientes, editForm.cliente_id],
     );
     const selectedEditTipo = useMemo(
         () => editTipos.find((t) => t.id === editForm.id_tipo_pago) || null,
@@ -269,7 +269,7 @@ export default function BusquedaPagosPage() {
         setSavingEdit(true);
         try {
             const payload = {
-                id_estudiante: editForm.id_estudiante,
+                cliente_id: editForm.cliente_id,
                 id_tipo_pago: editForm.id_tipo_pago,
                 cantidad: Number(editForm.cantidad),
                 fecha_pago: editForm.fecha_pago,
@@ -294,7 +294,7 @@ export default function BusquedaPagosPage() {
                 <div className="section-eyebrow">Consultas</div>
                 <h1 className="font-serif-display text-4xl mt-1">Búsqueda de Pagos</h1>
                 <p className="text-sm text-[color:var(--institution-muted)] mt-1">
-                    Busque comprobantes estudiantiles y de alquiler por código, cliente, ambiente, concepto, fechas o usuario que cobró.
+                    Busque comprobantes de pagos y alquileres por código, cliente, ambiente, concepto, fechas o usuario que cobró.
                 </p>
             </div>
 
@@ -322,7 +322,7 @@ export default function BusquedaPagosPage() {
                     <div className="min-w-0 space-y-1.5 md:col-span-2">
                         <Label className="flex min-h-8 items-end text-xs uppercase tracking-widest leading-4 text-[color:var(--institution-muted)]">Búsqueda</Label>
                         <Input
-                            placeholder="Código, estudiante, tipo…"
+                            placeholder="Código, cliente, tipo…"
                             value={q}
                             onChange={(e) => setQ(e.target.value)}
                             className="rounded-sm"
@@ -330,7 +330,7 @@ export default function BusquedaPagosPage() {
                         />
                     </div>
                     <div className="min-w-0 space-y-1.5">
-                        <Label className="flex min-h-8 items-end text-xs uppercase tracking-widest leading-4 text-[color:var(--institution-muted)]">Tipo de pago estudiantil</Label>
+                        <Label className="flex min-h-8 items-end text-xs uppercase tracking-widest leading-4 text-[color:var(--institution-muted)]">Tipo de pago</Label>
                         <Select value={tipo} onValueChange={setTipo}>
                             <SelectTrigger className="rounded-sm" data-testid="busq-tipo-select">
                                 <SelectValue placeholder="Todos" />
@@ -402,7 +402,7 @@ export default function BusquedaPagosPage() {
                             <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Código</TableHead>
                             {isSuperAdmin && <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Oficina</TableHead>}
                             <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Origen</TableHead>
-                            <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Cliente / estudiante</TableHead>
+                            <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Cliente / cliente</TableHead>
                             <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Conceptos y detalle</TableHead>
                             <TableHead className="text-right uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Total comprobante</TableHead>
                             <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Fecha</TableHead>
@@ -418,8 +418,8 @@ export default function BusquedaPagosPage() {
                                     {formatComprobante(p)}
                                 </TableCell>
                                 {isSuperAdmin && <TableCell>{p.office_nombre || "—"}</TableCell>}
-                                <TableCell>{p.origen === "alquiler" ? "Alquiler" : "Estudiantil"}</TableCell>
-                                <TableCell>{p.origen === "alquiler" ? p.cliente_nombre : p.estudiante_nombre || "—"}</TableCell>
+                                <TableCell>{p.origen === "alquiler" ? "Alquiler" : "de cliente"}</TableCell>
+                                <TableCell>{p.origen === "alquiler" ? p.cliente_nombre : p.cliente_nombre || "—"}</TableCell>
                                 <TableCell>
                                     <div className="min-w-[420px]">
                                         <div className="grid grid-cols-[minmax(120px,1fr)_64px_92px_92px] gap-3 border-b pb-1 text-[9px] uppercase tracking-wider text-[color:var(--institution-muted)]">
@@ -538,7 +538,7 @@ export default function BusquedaPagosPage() {
                     {editing && (
                         <div className="grid grid-cols-2 gap-4">
                             <div className="space-y-1.5 col-span-2">
-                                <Label className="text-xs uppercase tracking-widest text-[color:var(--institution-muted)]">Estudiante</Label>
+                                <Label className="text-xs uppercase tracking-widest text-[color:var(--institution-muted)]">Cliente</Label>
                                 <Popover open={editEstOpen} onOpenChange={setEditEstOpen}>
                                     <PopoverTrigger asChild>
                                         <Button
@@ -555,20 +555,20 @@ export default function BusquedaPagosPage() {
                                     </PopoverTrigger>
                                     <PopoverContent className="p-0 rounded-sm" align="start" style={{ width: "var(--radix-popover-trigger-width)" }}>
                                         <Command>
-                                            <CommandInput placeholder="Buscar estudiante…" />
+                                            <CommandInput placeholder="Buscar cliente…" />
                                             <CommandList>
                                                 <CommandEmpty>Sin resultados.</CommandEmpty>
                                                 <CommandGroup>
-                                                     {editEstudiantes.map((e) => (
+                                                     {editClientes.map((e) => (
                                                         <CommandItem
                                                             key={e.id}
                                                             value={`${e.nombre} ${e.ci} ${e.cu || ""} ${e.codigo}`}
                                                             onSelect={() => {
-                                                                setEditForm({ ...editForm, id_estudiante: e.id });
+                                                                setEditForm({ ...editForm, cliente_id: e.id });
                                                                 setEditEstOpen(false);
                                                             }}
                                                         >
-                                                            <Check className={cn("mr-2 h-4 w-4", editForm.id_estudiante === e.id ? "opacity-100" : "opacity-0")} />
+                                                            <Check className={cn("mr-2 h-4 w-4", editForm.cliente_id === e.id ? "opacity-100" : "opacity-0")} />
                                                             <div className="flex-1">
                                                                 <div className="font-medium text-sm">{e.nombre}</div>
                                                                 <div className="text-xs text-[color:var(--institution-muted)]">CI: {e.ci}</div>

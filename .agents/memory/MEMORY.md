@@ -2,6 +2,7 @@
 - [Shared receipt sequence](rental-receipt-sequence.md) — deleted drafts reclaim only the latest unused number; shared payment/rental allocation stays concurrency-safe.
 - [Rental booking consistency](rental-booking-consistency.md) — preserve occupancy on uncertain writes; provisional bookings protect against delayed cross-document commits.
 - [Room rental shifts](rental-room-shifts.md) — each room uses distinct morning, afternoon and night hours; new fixed tariffs and bookings follow the current configuration.
-- [Cross-office rental clients](rental-client-policy.md) — students may rent outside their enrollment office, with exact-identifier lookup for non-superadmins.
+- [Unified shared clients](rental-client-policy.md) — Clientes replaces Persona/Estudiante; clients are shared, while financial operations stay office-scoped.
 - [SQL Server local-only workflow](sqlserver-local-only.md) — never import, test, execute, or connect to `serverSQL.py` in Replit; the user runs it locally.
-- [Fresh SQL identity scope](sql-identity-scope.md) — the user chose a fresh SQL database, manual user codes as SQL primary keys, and unchanged Mongo UUIDs.
+- [Fresh database identities](sql-identity-scope.md) — fresh databases; generated user/client Id is separate from user Código and external directory Id.
+- [Browser verification](browser-verification.md) — distinguish shell test-harness failures from application failures before editing the app.

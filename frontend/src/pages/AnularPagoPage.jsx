@@ -68,7 +68,7 @@ export default function AnularPagoPage() {
     useEffect(() => {
         let cancelled = false;
         setUsuarios([]);
-        apiClient.get("/usuarios/list", {
+        apiClient.get("/reportes/registradores", {
             params: officeId ? { office_id: officeId } : {},
         }).then(({ data }) => {
             if (!cancelled) setUsuarios(data);
@@ -80,7 +80,7 @@ export default function AnularPagoPage() {
 
     const buscar = async (paginaSolicitada = 1) => {
         if (!textoBuscar.trim()) {
-            toast.error("Ingrese código de comprobante o nombre del estudiante");
+            toast.error("Ingrese código de comprobante o nombre del cliente");
             return;
         }
         const currentRequest = ++requestId.current;
@@ -168,7 +168,7 @@ export default function AnularPagoPage() {
                     )}
                     <div className="space-y-1.5 flex-1">
                         <Label className="text-xs uppercase tracking-widest text-[color:var(--institution-muted)]">
-                            Número de comprobante, cliente o estudiante
+                            Número de comprobante, cliente o cliente
                         </Label>
                         <Input
                             placeholder="Ej. 00014, 00014/2026 o nombre"
@@ -198,7 +198,7 @@ export default function AnularPagoPage() {
                             <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Código</TableHead>
                             {isSuperAdmin && <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Oficina</TableHead>}
                             <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Origen</TableHead>
-                            <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Cliente / estudiante</TableHead>
+                            <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Cliente / cliente</TableHead>
                             <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Conceptos y detalle</TableHead>
                             <TableHead className="text-right uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Total comprobante</TableHead>
                             <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Fecha</TableHead>
@@ -214,8 +214,8 @@ export default function AnularPagoPage() {
                                     {formatComprobante(pago)}
                                 </TableCell>
                                 {isSuperAdmin && <TableCell>{pago.office_nombre || "—"}</TableCell>}
-                                <TableCell>{pago.origen === "alquiler" ? "Alquiler" : "Estudiantil"}</TableCell>
-                                <TableCell>{pago.origen === "alquiler" ? pago.cliente_nombre || "—" : pago.estudiante_nombre || "—"}</TableCell>
+                                <TableCell>{pago.origen === "alquiler" ? "Alquiler" : "de cliente"}</TableCell>
+                                <TableCell>{pago.origen === "alquiler" ? pago.cliente_nombre || "—" : pago.cliente_nombre || "—"}</TableCell>
                                 <TableCell>
                                     <div className="min-w-[420px]">
                                         <div className="grid grid-cols-[minmax(120px,1fr)_64px_92px_92px] gap-3 border-b pb-1 text-[9px] uppercase tracking-wider text-[color:var(--institution-muted)]">
@@ -276,7 +276,7 @@ export default function AnularPagoPage() {
                                                 </AlertDialogTitle>
                                                 <AlertDialogDescription>
                                                     El comprobante <strong>{formatComprobante(pago)}</strong> de{" "}
-                                                    <strong>{pago.origen === "alquiler" ? pago.cliente_nombre : pago.estudiante_nombre}</strong> por <strong>Bs. {formatMoney(pago.total)}</strong> quedará anulado y no podrá revertirse.
+                                                    <strong>{pago.origen === "alquiler" ? pago.cliente_nombre : pago.cliente_nombre}</strong> por <strong>Bs. {formatMoney(pago.total)}</strong> quedará anulado y no podrá revertirse.
                                                     {pago.origen === "alquiler" && " El horario del ambiente quedará disponible nuevamente."}
                                                 </AlertDialogDescription>
                                             </AlertDialogHeader>

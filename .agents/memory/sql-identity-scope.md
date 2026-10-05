@@ -1,16 +1,10 @@
 ---
 name: Fresh SQL identity scope
-description: User decisions about SQL recreation, entered user IDs, and the shared frontend contract.
+description: Fresh databases and generated identities separate from user codes.
 ---
 
-The user selected **“Recrear la base desde cero”**, not migration of existing SQL UUIDs, and **“El ID del usuario”** for the three-digit code entered through user CRUD. MongoDB must retain its UUID identifiers.
+The current user decision is to use **new databases**, not migrate old data, and to generate Id in both backends for Clients and Users. User Código is separate from the generated Id. MongoDB retains UUID identities; SQL uses generated numeric identities.
 
-**Why:** These were explicit user choices when offered data preservation versus database recreation, and a separate user code versus the primary key.
+**Why:** The user changed the earlier decision that SQL user Código was the primary key while requesting unified Clients and selectable API imports.
 
-**How to apply:** Do not reintroduce implicit UUID migration or change Mongo primary keys. SQL recreation is performed on the user's local machine, not automatically against a database from Replit. Preserve the shared frontend's JSON contract even when physical SQL names change.
-
-SQL user codes must not be reassigned to another person while historical receipts still refer to their original owner.
-
-**Why:** Unlike UUIDs, manually entered three-digit IDs can be reused; doing so would attribute past receipts to the wrong person.
-
-**How to apply:** Preserve historical identity when changing user deletion or primary-key behavior.
+**How to apply:** Never use an API-provided Id or user Código as the local primary key. Preserve the common frontend contract with string Id representations. SQL recreation remains local to the user; do not automatically wipe data on application startup.

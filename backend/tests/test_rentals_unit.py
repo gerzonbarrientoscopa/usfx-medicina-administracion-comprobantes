@@ -106,16 +106,10 @@ def test_reservations_overlap_but_adjacent_intervals_do_not():
     assert not _intervals_overlap(9 * 60, 10 * 60, 10 * 60, 11 * 60)
 
 
-@pytest.mark.parametrize("client_type", ["persona", "estudiante"])
-def test_rental_accepts_both_payer_catalogs(client_type):
+def test_rental_uses_unified_client_identifier():
     rental = AlquilerCreate(
-        ambiente_id="room-1",
-        tarifa_id="tariff-1",
-        fecha="2026-04-20",
-        desde="09:00",
-        hasta="10:00",
-        cliente_tipo=client_type,
-        cliente_id="client-1",
-        cobrar_ahora=False,
+        ambiente_id="room-1", tarifa_id="tariff-1", fecha="2026-04-20",
+        desde="09:00", hasta="10:00", cliente_id="client-1", cobrar_ahora=False,
     )
-    assert rental.cliente_tipo == client_type
+    assert rental.cliente_id == "client-1"
+    assert "cliente_tipo" not in rental.model_dump()

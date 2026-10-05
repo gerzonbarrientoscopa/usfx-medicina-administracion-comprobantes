@@ -7,7 +7,7 @@ For Windows authentication use SQLSERVER_TRUSTED_AUTH=1.  Connections are
 created lazily; importing this module never contacts a database.
 
 Install Tablas.Sql on a freshly recreated database; legacy UUID SQL schemas
-are not migrated. Entity keys use INT IDENTITY, while users use immutable
+are not migrated. Entity keys use INT IDENTITY, including users and clients. User codes are separate unique
 three-digit codes (000 is reserved for the bootstrap SuperAdmin). JSON keeps
 the shared frontend's field names and string IDs.
 """
@@ -33,6 +33,7 @@ from pydantic import BaseModel, Field, EmailStr, ConfigDict
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
+from client_routes import SQLClientes, register_client_routes
 
 BOLIVIA_TIMEZONE = timezone(timedelta(hours=-4))
 
@@ -97,7 +98,7 @@ JWT_SECRET_KEY = os.getenv("JWT_SECRET") or os.getenv("SESSION_SECRET")
 if not JWT_SECRET_KEY:
     raise RuntimeError("Configure JWT_SECRET o SESSION_SECRET para firmar sesiones.")
 JWT_ALGORITHM = "HS256"
-SUPER_ADMIN_EMAIL = "admin@usfx.bo"
+SUPER_ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "admin@usfx.bo").strip().lower()
 SUPER_ADMIN_ROLE = "SuperAdmin"
 ROLES = ("Administrador", "Caja", "Consultas")
 
@@ -122,6 +123,7 @@ class UserCreate(AnyModel):
 
 class UserUpdate(AnyModel):
     codigo: Optional[str] = Field(default=None, pattern=r"^[0-9]{3}$")
+    email: Optional[EmailStr] = None
     nombre: Optional[str] = None
     rol: Optional[str] = None
     password: Optional[str] = None
@@ -133,19 +135,6 @@ class OfficeCreate(AnyModel):
     prefijo_comprobante: str
     suboficina: str = ""
     activa: bool = True
-
-
-class EstudianteCreate(AnyModel):
-    ci: str
-    cu: str = ""
-    nombre: str
-    gestion: int
-    office_id: Optional[str] = None
-
-
-class PersonaCreate(AnyModel):
-    ci: str
-    nombre: str
 
 
 class TipoPagoCreate(AnyModel):
@@ -181,15 +170,13 @@ class AlquilerCreate(AnyModel):
     fecha: str
     desde: Optional[str] = None
     hasta: Optional[str] = None
-    cliente_tipo: Literal["persona", "estudiante"]
     cliente_id: str
-    cliente_documento: Optional[str] = None
     cobrar_ahora: bool = False
     office_id: Optional[str] = None
 
 
 class PagoCreate(AnyModel):
-    id_estudiante: str
+    cliente_id: str
     fecha_pago: str
     office_id: Optional[str] = None
     id_tipo_pago: Optional[str] = None
@@ -220,7 +207,6 @@ _SQL_COLUMNS = {
     "ambiente_id": "id_ambiente",
     "pago_id": "id_pago",
     "tarifa_id": "id_tarifa",
-    "cliente_tipo": "tipo_cliente",
     "cliente_id": "id_cliente",
     "cliente_nombre": "nombre_cliente",
     "cliente_ci": "ci_cliente",
@@ -236,7 +222,7 @@ _SQL_IDENTIFIER = re.compile(
 )
 _ID_COLUMNS = {
     "id", "office_id", "ambiente_id", "pago_id", "tarifa_id",
-    "cliente_id", "id_estudiante", "id_tipo_pago", "alquiler_id", "origen_id",
+    "cliente_id", "id_tipo_pago", "alquiler_id", "origen_id", "created_by", "edited_by", "anulado_by", "paid_by",
 }
 
 
@@ -669,8 +655,8 @@ async def hydrate_payment(p):
         return p
     oid = p["office_id"]
     student = await sql(
-        "SELECT nombre,ci,cu FROM estudiantes WHERE id=? AND office_id=?",
-        (p["id_estudiante"], oid),
+        "SELECT nombre,ci,cu FROM clientes WHERE id=?",
+        (p["cliente_id"],),
         one=True,
     )
     office_row = await sql(
@@ -688,9 +674,9 @@ async def hydrate_payment(p):
         if p.get("prefijo_comprobante") and p.get("cod_comprobante")
         else None
     )
-    p["estudiante_nombre"] = (student or {}).get("nombre")
-    p["estudiante_ci"] = (student or {}).get("ci")
-    p["estudiante_cu"] = (student or {}).get("cu") or ""
+    p["cliente_nombre"] = (student or {}).get("nombre")
+    p["cliente_ci"] = (student or {}).get("ci")
+    p["cliente_cu"] = (student or {}).get("cu") or ""
     items = await sql(
         """SELECT i.id,i.id_tipo_pago,COALESCE(NULLIF(i.tipo_pago_nombre,N''),t.nombre) tipo_pago_nombre,
                               i.cantidad,i.monto,i.total
@@ -887,7 +873,6 @@ async def delete_office(oid: str, u=Depends(roles(SUPER_ADMIN_ROLE))):
         raise HTTPException(404, "Oficina no encontrada.")
     checks = (
         "usuarios",
-        "estudiantes",
         "tipos_pagos",
         "ambientes",
         "tarifas_ambientes",
@@ -912,13 +897,13 @@ async def users(
     pag: int = Query(1, ge=1),
     tam: int = Query(10, ge=1, le=100),
     office_id: Optional[str] = None,
-    u=Depends(roles("Administrador")),
+    u=Depends(roles("SuperAdmin")),
 ):
     scope, args = await office_scope_sql(u, office_id)
     where = ("WHERE " + scope) if scope else ""
     total = (await sql("SELECT COUNT(*) n FROM usuarios " + where, args, one=True))["n"]
     rows = await sql(
-        "SELECT id,id AS codigo,email,nombre,rol,office_id,created_at FROM usuarios "
+        "SELECT id,codigo,email,nombre,rol,office_id,created_at FROM usuarios "
         + where
         + " ORDER BY nombre OFFSET ? ROWS FETCH NEXT ? ROWS ONLY",
         args + [(pag - 1) * tam, tam],
@@ -927,19 +912,24 @@ async def users(
 
 
 @api.get("/usuarios/list")
+async def users_admin_list(office_id: Optional[str] = None, u=Depends(roles("SuperAdmin"))):
+    return await users_list(office_id, u)
+
+
+@api.get("/reportes/registradores")
 async def users_list(office_id: Optional[str] = None, u=Depends(current)):
     scope, args = await office_scope_sql(u, office_id)
     where = (" WHERE " + scope) if scope else ""
     return await attach_office_names(
         await sql(
-            "SELECT id,id AS codigo,nombre,rol,office_id FROM usuarios" + where + " ORDER BY nombre",
+            "SELECT id,codigo,nombre,rol,office_id FROM usuarios" + where + " ORDER BY nombre",
             args,
         )
     )
 
 
 @api.post("/usuarios", status_code=201)
-async def create_user(b: UserCreate, u=Depends(roles("Administrador"))):
+async def create_user(b: UserCreate, u=Depends(roles("SuperAdmin"))):
     oid = await office(u, b.office_id, True)
     if b.rol not in ROLES:
         raise HTTPException(422, "Rol inválido.")
@@ -958,19 +948,18 @@ async def create_user(b: UserCreate, u=Depends(roles("Administrador"))):
         one=True,
     ):
         raise HTTPException(400, "La oficina ya tiene un administrador.")
-    ident = b.codigo
-    if ident == "000" or await sql("SELECT id FROM usuarios WHERE id=?", (ident,), one=True):
+    if b.codigo == "000" or await sql("SELECT id FROM usuarios WHERE codigo=?", (b.codigo,), one=True):
         raise HTTPException(400, "El código de usuario ya está reservado o registrado.")
-    await sql(
-        "INSERT INTO usuarios(id,email,nombre,rol,office_id,password_hash) VALUES(?,?,?,?,?,?)",
-        (ident, email, b.nombre, b.rol, oid, hashpw(b.password)),
-        write=True,
-    )
+    ident = (await sql(
+        "INSERT INTO usuarios(codigo,email,nombre,rol,office_id,password_hash) OUTPUT INSERTED.id VALUES(?,?,?,?,?,?)",
+        (b.codigo, email, b.nombre, b.rol, oid, hashpw(b.password)),
+        one=True, write=True,
+    ))["id"]
     return (
         await attach_office_names(
             [
                 await sql(
-                    "SELECT id,id AS codigo,email,nombre,rol,office_id,created_at FROM usuarios WHERE id=?",
+                    "SELECT id,codigo,email,nombre,rol,office_id,created_at FROM usuarios WHERE id=?",
                     (ident,),
                     one=True,
                 )
@@ -980,7 +969,7 @@ async def create_user(b: UserCreate, u=Depends(roles("Administrador"))):
 
 
 @api.put("/usuarios/{uid}")
-async def update_user(uid: str, b: UserUpdate, u=Depends(roles("Administrador"))):
+async def update_user(uid: str, b: UserUpdate, u=Depends(roles("SuperAdmin"))):
     target = await sql("SELECT * FROM usuarios WHERE id=?", (uid,), one=True)
     if not target:
         raise HTTPException(404, "Usuario no encontrado.")
@@ -991,7 +980,7 @@ async def update_user(uid: str, b: UserUpdate, u=Depends(roles("Administrador"))
         raise HTTPException(403, "Sin permisos para modificar este usuario.")
     if target["rol"] == SUPER_ADMIN_ROLE:
         raise HTTPException(403, "La cuenta del Super Admin está protegida.")
-    if b.codigo is not None and b.codigo != uid:
+    if b.codigo is not None and b.codigo != target["codigo"]:
         raise HTTPException(400, "El código de usuario no se puede cambiar.")
     if (
         u["rol"] != SUPER_ADMIN_ROLE
@@ -1012,6 +1001,12 @@ async def update_user(uid: str, b: UserUpdate, u=Depends(roles("Administrador"))
         raise HTTPException(403, "No puede cambiar su propio rol.")
     sets = []
     args = []
+    if b.email is not None:
+        email = str(b.email).strip().lower()
+        if await sql("SELECT id FROM usuarios WHERE email_key=LOWER(?) AND id<>?", (email, uid), one=True):
+            raise HTTPException(400, "El email ya está registrado.")
+        sets.append("email=?")
+        args.append(email)
     for col, val in (("nombre", b.nombre), ("rol", b.rol), ("office_id", b.office_id)):
         if col == "office_id" and val is not None:
             val = await office(u, val, True)
@@ -1048,7 +1043,7 @@ async def update_user(uid: str, b: UserUpdate, u=Depends(roles("Administrador"))
         await attach_office_names(
             [
                 await sql(
-                    "SELECT id,id AS codigo,email,nombre,rol,office_id,created_at FROM usuarios WHERE id=?",
+                    "SELECT id,codigo,email,nombre,rol,office_id,created_at FROM usuarios WHERE id=?",
                     (uid,),
                     one=True,
                 )
@@ -1058,7 +1053,7 @@ async def update_user(uid: str, b: UserUpdate, u=Depends(roles("Administrador"))
 
 
 @api.delete("/usuarios/{uid}")
-async def delete_user(uid: str, u=Depends(roles("Administrador"))):
+async def delete_user(uid: str, u=Depends(roles("SuperAdmin"))):
     if uid == u["id"]:
         raise HTTPException(400, "No puedes eliminar tu propio usuario.")
     target = await sql(
@@ -1077,8 +1072,7 @@ async def delete_user(uid: str, u=Depends(roles("Administrador"))):
         raise HTTPException(403, "Sin permisos para eliminar este usuario.")
     if target["rol"] == "Administrador" and u["rol"] != SUPER_ADMIN_ROLE:
         raise HTTPException(403, "Sólo el Super Admin puede eliminar administradores.")
-    # A manually assigned primary key must not be reused for a different person
-    # while historical receipts still identify its original owner.
+    # Preserve the owner of historical receipts, even with generated primary keys.
     if await sql(
         """SELECT TOP 1 1 usado FROM pagos WHERE created_by=? OR edited_by=? OR anulado_by=?
            UNION ALL SELECT TOP 1 1 usado FROM alquileres WHERE paid_by=?""",
@@ -1094,7 +1088,7 @@ async def listing(table, fields, office_id, u, pag, tam, q=None, activos=False):
     where = scope or "1=1"
     if q:
         searchable = {
-            "estudiantes": "(nombre LIKE ? OR ci LIKE ? OR cu LIKE ?)",
+            "clientes": "(nombre LIKE ? OR ci LIKE ? OR cu LIKE ?)",
             "tipos_pagos": "nombre LIKE ?",
             "ambientes": "nombre LIKE ?",
         }[table]
@@ -1108,7 +1102,7 @@ async def listing(table, fields, office_id, u, pag, tam, q=None, activos=False):
         await sql(f"SELECT COUNT(*) n FROM {table} WHERE {where}", args, one=True)
     )["n"]
     ordering = {
-        "estudiantes": "nombre,cu",
+        "clientes": "nombre,cu",
         "tipos_pagos": "nombre,inicio DESC",
         "ambientes": "nombre_key,nombre",
     }.get(table, "nombre")
@@ -1118,185 +1112,6 @@ async def listing(table, fields, office_id, u, pag, tam, q=None, activos=False):
     )
     await attach_office_names(rows)
     return page(rows, total, pag, tam)
-
-
-@api.get("/estudiantes")
-async def students(
-    pag: int = Query(1, ge=1),
-    tam: int = Query(10, ge=1, le=100),
-    textoBuscar: Optional[str] = None,
-    office_id: Optional[str] = None,
-    u=Depends(current),
-):
-    return await listing(
-        "estudiantes",
-        "id,ci,cu,nombre,gestion,office_id",
-        office_id,
-        u,
-        pag,
-        tam,
-        textoBuscar,
-    )
-
-
-@api.post("/estudiantes", status_code=201)
-async def create_student(
-    b: EstudianteCreate, u=Depends(roles("Administrador", "Caja"))
-):
-    oid = await office(u, b.office_id, True)
-    cu = b.cu.strip()
-    if await sql(
-        "SELECT id FROM personas WHERE ci_key=LOWER(LTRIM(RTRIM(?)))", (b.ci,), one=True
-    ):
-        raise HTTPException(400, "Este C.I. ya está registrado como Persona.")
-    if cu and await sql(
-        "SELECT id FROM estudiantes WHERE office_id=? AND cu_key=LOWER(LTRIM(RTRIM(?)))",
-        (oid, cu),
-        one=True,
-    ):
-        raise HTTPException(400, "El estudiante ya existe.")
-    ident = (await sql(
-        "INSERT INTO estudiantes(ci,cu,nombre,gestion,office_id) OUTPUT INSERTED.id VALUES(?,?,?,?,?)",
-        (b.ci, cu, b.nombre, b.gestion, oid),
-        one=True, write=True,
-    ))["id"]
-    return (
-        await attach_office_names(
-            [await sql("SELECT * FROM estudiantes WHERE id=?", (ident,), one=True)]
-        )
-    )[0]
-
-
-@api.put("/estudiantes/{sid}")
-async def update_student(
-    sid: str, b: EstudianteCreate, u=Depends(roles("Administrador"))
-):
-    existing = await sql(
-        "SELECT office_id FROM estudiantes WHERE id=?", (sid,), one=True
-    )
-    if not existing:
-        raise HTTPException(404, "Estudiante no encontrado.")
-    oid = existing["office_id"]
-    await office_scope_sql(u, oid)
-    if b.office_id and b.office_id != oid:
-        raise HTTPException(400, "No se puede cambiar la oficina del estudiante.")
-    cu = b.cu.strip()
-    if await sql(
-        "SELECT id FROM personas WHERE ci_key=LOWER(LTRIM(RTRIM(?)))", (b.ci,), one=True
-    ):
-        raise HTTPException(400, "Este C.I. ya está registrado como Persona.")
-    if cu and await sql(
-        "SELECT id FROM estudiantes WHERE office_id=? AND cu_key=LOWER(LTRIM(RTRIM(?))) AND id<>?",
-        (oid, cu, sid),
-        one=True,
-    ):
-        raise HTTPException(400, "El estudiante ya existe.")
-    await sql(
-        "UPDATE estudiantes SET ci=?,cu=?,nombre=?,gestion=? WHERE id=? AND office_id=?",
-        (b.ci, cu, b.nombre, b.gestion, sid, oid),
-        write=True,
-    )
-    return (
-        await attach_office_names(
-            [await sql("SELECT * FROM estudiantes WHERE id=?", (sid,), one=True)]
-        )
-    )[0]
-
-
-@api.delete("/estudiantes/{sid}")
-async def delete_student(sid: str, u=Depends(roles("Administrador"))):
-    student = await sql(
-        "SELECT office_id FROM estudiantes WHERE id=?", (sid,), one=True
-    )
-    if not student:
-        raise HTTPException(404, "Estudiante no encontrado.")
-    await office_scope_sql(u, student["office_id"])
-    if await sql(
-        "SELECT id FROM pagos WHERE id_estudiante=? AND office_id=?",
-        (sid, student["office_id"]),
-        one=True,
-    ):
-        raise HTTPException(400, "No se puede eliminar: tiene pagos registrados.")
-    await sql(
-        "DELETE FROM estudiantes WHERE id=? AND office_id=?",
-        (sid, student["office_id"]),
-        write=True,
-    )
-    return {"ok": True}
-
-
-@api.get("/personas")
-async def people(
-    pag: int = Query(1, ge=1),
-    tam: int = Query(20, ge=1, le=100),
-    textoBuscar: Optional[str] = None,
-    u=Depends(roles("Administrador")),
-):
-    where = ""
-    args = []
-    if textoBuscar and textoBuscar.strip():
-        where = "WHERE nombre LIKE ? OR ci LIKE ?"
-        args = ["%" + textoBuscar.strip() + "%"] * 2
-    total = (await sql("SELECT COUNT(*) n FROM personas " + where, args, one=True))["n"]
-    rows = await sql(
-        "SELECT * FROM personas "
-        + where
-        + " ORDER BY nombre,ci OFFSET ? ROWS FETCH NEXT ? ROWS ONLY",
-        args + [(pag - 1) * tam, tam],
-    )
-    return page(rows, total, pag, tam)
-
-
-@api.post("/personas", status_code=201)
-async def create_person(b: PersonaCreate, u=Depends(roles("Administrador"))):
-    if await sql(
-        "SELECT id FROM estudiantes WHERE ci_key=LOWER(LTRIM(RTRIM(?)))",
-        (b.ci,),
-        one=True,
-    ):
-        raise HTTPException(400, "Esta persona está registrada como estudiante.")
-    if await sql(
-        "SELECT id FROM personas WHERE ci_key=LOWER(LTRIM(RTRIM(?)))", (b.ci,), one=True
-    ):
-        raise HTTPException(400, "Ya existe una persona registrada con este C.I.")
-    ident = (await sql(
-        "INSERT INTO personas(ci,nombre) OUTPUT INSERTED.id VALUES(?,?)",
-        (b.ci, b.nombre),
-        one=True, write=True,
-    ))["id"]
-    return await sql("SELECT * FROM personas WHERE id=?", (ident,), one=True)
-
-
-@api.put("/personas/{pid}")
-async def update_person(pid: str, b: PersonaCreate, u=Depends(roles("Administrador"))):
-    if not await sql("SELECT id FROM personas WHERE id=?", (pid,), one=True):
-        raise HTTPException(404, "Persona no encontrada.")
-    if await sql(
-        "SELECT id FROM estudiantes WHERE ci_key=LOWER(LTRIM(RTRIM(?)))",
-        (b.ci,),
-        one=True,
-    ):
-        raise HTTPException(400, "Esta persona está registrada como estudiante.")
-    if await sql(
-        "SELECT id FROM personas WHERE ci_key=LOWER(LTRIM(RTRIM(?))) AND id<>?",
-        (b.ci, pid),
-        one=True,
-    ):
-        raise HTTPException(400, "Ya existe una persona registrada con este C.I.")
-    await sql(
-        "UPDATE personas SET ci=?,nombre=? WHERE id=?",
-        (b.ci, b.nombre, pid),
-        write=True,
-    )
-    return await sql("SELECT * FROM personas WHERE id=?", (pid,), one=True)
-
-
-@api.delete("/personas/{pid}")
-async def delete_person(pid: str, u=Depends(roles("Administrador"))):
-    if not await sql("SELECT id FROM personas WHERE id=?", (pid,), one=True):
-        raise HTTPException(404, "Persona no encontrada.")
-    await sql("DELETE FROM personas WHERE id=?", (pid,), write=True)
-    return {"ok": True}
 
 
 @api.get("/tipos-pagos")
@@ -1656,47 +1471,6 @@ async def delete_tariff(tid: str, u=Depends(roles("Administrador"))):
     return {"ok": True}
 
 
-@api.get("/alquileres/clientes")
-async def rental_clients(q: str = "", u=Depends(current)):
-    term = q.strip()
-    if len(term) < 2:
-        return []
-    like = "%" + term + "%"
-    people = await sql(
-        "SELECT TOP 20 N'persona' tipo,id,nombre,ci,CAST(NULL AS nvarchar(50)) cu,CAST(NULL AS nvarchar(200)) office_nombre FROM personas WHERE nombre LIKE ? OR ci LIKE ? ORDER BY nombre",
-        (like, like),
-    )
-    if u["rol"] == SUPER_ADMIN_ROLE:
-        students = await sql(
-            "SELECT TOP 20 N'estudiante' tipo,s.id,s.nombre,s.ci,s.cu,o.nombre office_nombre FROM estudiantes s LEFT JOIN oficinas o ON o.id=s.office_id WHERE s.nombre LIKE ? OR s.ci LIKE ? OR s.cu LIKE ? ORDER BY s.nombre",
-            (like, like, like),
-        )
-        return people + students
-    oid = await office(u)
-    students = await sql(
-        "SELECT TOP 20 N'estudiante' tipo,s.id,s.nombre,s.ci,s.cu,o.nombre office_nombre FROM estudiantes s LEFT JOIN oficinas o ON o.id=s.office_id WHERE s.office_id=? AND (s.nombre LIKE ? OR s.ci LIKE ? OR s.cu LIKE ?) ORDER BY s.nombre",
-        (oid, like, like, like),
-    )
-    remaining = max(0, 20 - len(students))
-    if len(term) >= 3 and remaining:
-        exact = term.strip()
-        students.extend(
-            await sql(
-                """SELECT TOP (?) N'estudiante' tipo,s.id,s.nombre,s.ci,s.cu,o.nombre office_nombre
-                                   FROM estudiantes s LEFT JOIN oficinas o ON o.id=s.office_id
-                                   WHERE s.office_id<>? AND (s.ci_key=LOWER(LTRIM(RTRIM(?))) OR s.cu_key=LOWER(LTRIM(RTRIM(?))))
-                                   ORDER BY s.nombre""",
-                (remaining, oid, exact, exact),
-            )
-        )
-    return people + students
-
-
-@api.post("/alquileres/clientes/persona", status_code=201)
-async def create_rental_person(b: PersonaCreate, u=Depends(roles("Administrador", "Caja"))):
-    return await create_person(b, u)
-
-
 @api.get("/alquileres")
 async def rentals(
     ambiente_id: str,
@@ -1750,33 +1524,9 @@ async def create_rental(b: AlquilerCreate, u=Depends(roles("Administrador", "Caj
     if not room or not tariff or room["office_id"] != oid:
         raise HTTPException(404, "Ambiente o tarifa no encontrados.")
     apply_current_shift(tariff, await room_turnos(b.ambiente_id))
-    if b.cliente_tipo == "persona":
-        payer = await sql(
-            "SELECT id,nombre,ci,NULL cu FROM personas WHERE id=?",
-            (b.cliente_id,),
-            one=True,
-        )
-    else:
-        payer = await sql(
-            "SELECT id,nombre,ci,cu,office_id FROM estudiantes WHERE id=?",
-            (b.cliente_id,),
-            one=True,
-        )
+    payer = await sql("SELECT id,nombre,ci,cu FROM clientes WHERE id=?", (b.cliente_id,), one=True)
     if not payer:
         raise HTTPException(400, "El cliente seleccionado no existe.")
-    if (
-        b.cliente_tipo == "estudiante"
-        and payer.get("office_id") != oid
-        and u["rol"] != SUPER_ADMIN_ROLE
-        and (b.cliente_documento or "").strip().casefold()
-        not in {
-            payer["ci"].strip().casefold(),
-            (payer.get("cu") or "").strip().casefold(),
-        }
-    ):
-        raise HTTPException(
-            400, "Para un estudiante de otra oficina, confirme su C.I. o C.U."
-        )
     rental_date = parse_iso_date(b.fecha, "La fecha debe tener formato YYYY-MM-DD.")
     schedules = await sql(
         "SELECT dia,CONVERT(varchar(5),desde,108) desde,CONVERT(varchar(5),hasta,108) hasta FROM ambiente_horarios WHERE ambiente_id=?",
@@ -1883,15 +1633,13 @@ async def create_rental(b: AlquilerCreate, u=Depends(roles("Administrador", "Caj
                     "El horario solicitado no está cubierto por un bloque disponible.",
                 )
             c.execute(
-                "INSERT INTO alquileres(office_id,ambiente_id,tarifa_id,fecha,cliente_tipo,cliente_id,cliente_documento,cliente_nombre,cliente_ci,cliente_cu,estado,total,cantidad,monto,gestion,confirmation_started_at) OUTPUT INSERTED.id VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,SYSUTCDATETIME())",
+                "INSERT INTO alquileres(office_id,ambiente_id,tarifa_id,fecha,cliente_id,cliente_nombre,cliente_ci,cliente_cu,estado,total,cantidad,monto,gestion,confirmation_started_at) OUTPUT INSERTED.id VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,SYSUTCDATETIME())",
                 (
                     oid,
                     b.ambiente_id,
                     b.tarifa_id,
                     b.fecha,
-                    b.cliente_tipo,
                     b.cliente_id,
-                    b.cliente_documento,
                     payer["nombre"],
                     payer["ci"],
                     payer.get("cu"),
@@ -2162,11 +1910,11 @@ async def create_payment(b: PagoCreate, u=Depends(roles("Administrador", "Caja")
         with _connect() as cn:
             c = cn.cursor()
             c.execute(
-                "SELECT id FROM estudiantes WHERE id=? AND office_id=?",
-                (b.id_estudiante, oid),
+                "SELECT id FROM clientes WHERE id=?",
+                (b.cliente_id,),
             )
             if not c.fetchone():
-                raise HTTPException(400, "Estudiante no encontrado en esta oficina.")
+                raise HTTPException(400, "Cliente no encontrado en esta oficina.")
             item = None
             if b.id_tipo_pago:
                 c.execute(
@@ -2196,12 +1944,12 @@ async def create_payment(b: PagoCreate, u=Depends(roles("Administrador", "Caja")
             type_id = item[0] if item else None
             quantity = item[2] if item else None
             c.execute(
-                """INSERT INTO pagos(office_id,id_estudiante,fecha_pago,gestion,
+                """INSERT INTO pagos(office_id,cliente_id,fecha_pago,gestion,
                          estado,monto,total,id_tipo_pago,cantidad,created_by)
                          OUTPUT INSERTED.id VALUES(?,?,?,?,?,?,?,?,?,?)""",
                 (
                     oid,
-                    b.id_estudiante,
+                    b.cliente_id,
                     payment_date,
                     year,
                     state,
@@ -2451,7 +2199,7 @@ async def payments(
             like = "%" + term + "%"
             clauses.append(
                 """(p.cod_comprobante LIKE ? OR EXISTS(
-                SELECT 1 FROM estudiantes s WHERE s.id=p.id_estudiante AND s.office_id=p.office_id
+                SELECT 1 FROM clientes s WHERE s.id=p.cliente_id
                 AND (s.nombre LIKE ? OR s.ci LIKE ? OR s.cu LIKE ?))
                 OR EXISTS(SELECT 1 FROM pago_items pi JOIN tipos_pagos t ON t.id=pi.id_tipo_pago
                 WHERE pi.pago_id=p.id AND (t.nombre LIKE ? OR pi.tipo_pago_nombre LIKE ?)))"""
@@ -2482,7 +2230,7 @@ async def update_payment(
             c = cn.cursor()
             clause = (" AND " + scope) if scope else ""
             c.execute(
-                "SELECT p.office_id,p.id_estudiante,p.fecha_pago,p.id_tipo_pago,p.cantidad,p.monto,p.total,p.estado,p.anulado FROM pagos p WITH(UPDLOCK,HOLDLOCK) WHERE p.id=?"
+                "SELECT p.office_id,p.cliente_id,p.fecha_pago,p.id_tipo_pago,p.cantidad,p.monto,p.total,p.estado,p.anulado FROM pagos p WITH(UPDLOCK,HOLDLOCK) WHERE p.id=?"
                 + clause,
                 (pid, *scope_args),
             )
@@ -2509,17 +2257,17 @@ async def update_payment(
                 raise HTTPException(400, "No se puede cambiar la oficina de un pago.")
             sets = []
             values = []
-            if b.id_estudiante and b.id_estudiante != p[1]:
+            if b.cliente_id and b.cliente_id != p[1]:
                 c.execute(
-                    "SELECT id FROM estudiantes WHERE id=? AND office_id=?",
-                    (b.id_estudiante, p[0]),
+                    "SELECT id FROM clientes WHERE id=?",
+                    (b.cliente_id,),
                 )
                 if not c.fetchone():
                     raise HTTPException(
-                        400, "Estudiante no encontrado en esta oficina."
+                        400, "Cliente no encontrado en esta oficina."
                     )
-                sets.append("id_estudiante=?")
-                values.append(b.id_estudiante)
+                sets.append("cliente_id=?")
+                values.append(b.cliente_id)
             item = items[0] if items else None
             type_id = item[1] if item else p[3]
             quantity = Decimal(str(item[2] if item else (p[4] or 0)))
@@ -2702,7 +2450,7 @@ async def receipts(
         else:
             like = "%" + term + "%"
             pc.append(
-                """(p.cod_comprobante LIKE ? OR EXISTS(SELECT 1 FROM estudiantes s WHERE s.id=p.id_estudiante AND s.office_id=p.office_id AND (s.nombre LIKE ? OR s.ci LIKE ? OR s.cu LIKE ?))
+                """(p.cod_comprobante LIKE ? OR EXISTS(SELECT 1 FROM clientes s WHERE s.id=p.cliente_id AND (s.nombre LIKE ? OR s.ci LIKE ? OR s.cu LIKE ?))
                        OR EXISTS(SELECT 1 FROM pago_items i JOIN tipos_pagos t ON t.id=i.id_tipo_pago WHERE i.pago_id=p.id AND (t.nombre LIKE ? OR i.tipo_pago_nombre LIKE ?)))"""
             )
             pv.extend([like] * 6)
@@ -2719,7 +2467,7 @@ async def receipts(
     merged = []
     for row in student_rows:
         row = await hydrate_payment(row)
-        row["origen"] = "estudiantil"
+        row["origen"] = "pago"
         merged.append(row)
     for row in rental_rows:
         row = await hydrate_rental(row)
@@ -2824,7 +2572,7 @@ async def reports(
         "alquileres": rentals,
         "totales": {
             "validos": student + rent,
-            "estudiantiles": student,
+            "pagos": student,
             "alquileres": rent,
             "anulados": void_total,
             "diferencia": student + rent - void_total,
@@ -2851,7 +2599,7 @@ async def dashboard(office_id: Optional[str] = None, u=Depends(current)):
         one=True,
     )
     students = (
-        await sql("SELECT COUNT(*) n FROM estudiantes" + suffix, args, one=True)
+        await sql("SELECT COUNT(*) n FROM clientes", (), one=True)
     )["n"]
     types = (await sql("SELECT COUNT(*) n FROM tipos_pagos" + suffix, args, one=True))[
         "n"
@@ -2866,7 +2614,7 @@ async def dashboard(office_id: Optional[str] = None, u=Depends(current)):
     )
     office_name = (office_row or {}).get("nombre") or "Todas las oficinas"
     return {
-        "estudiantes": students,
+        "clientes": students,
         "tipospagos": types,
         "pagos_hoy": p["n"],
         "monto_hoy": float(p["total"]),
@@ -2885,7 +2633,7 @@ async def root():
     return {"message": "Comprobantes USFX SQL Server"}
 
 
-app.include_router(api)
+
 
 
 async def reconcile_startup():
@@ -2894,8 +2642,7 @@ async def reconcile_startup():
     required = (
         "oficinas",
         "usuarios",
-        "personas",
-        "estudiantes",
+        "clientes",
         "tipos_pagos",
         "ambientes",
         "ambiente_horarios",
@@ -3013,7 +2760,7 @@ async def reconcile_startup():
     )
     if not admin:
         await sql(
-            "INSERT INTO usuarios(id,email,nombre,rol,password_hash) VALUES(?,?,?,?,?)",
+            "INSERT INTO usuarios(codigo,email,nombre,rol,password_hash) VALUES(?,?,?,?,?)",
             ("000", email, name, SUPER_ADMIN_ROLE, hashpw(password)),
             write=True,
         )
@@ -3049,4 +2796,6 @@ app.add_middleware(
 )
 
 
+
+register_client_routes(api, SQLClientes(sql), roles("Administrador", "Caja"), roles("Administrador", "Caja"), roles("SuperAdmin"))
 app.include_router(api)

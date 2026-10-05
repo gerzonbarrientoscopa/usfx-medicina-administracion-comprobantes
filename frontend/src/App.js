@@ -8,8 +8,7 @@ import { Toaster } from "@/components/ui/sonner";
 
 import LoginPage from "@/pages/LoginPage";
 import DashboardPage from "@/pages/DashboardPage";
-import EstudiantesPage from "@/pages/EstudiantesPage";
-import PersonasPage from "@/pages/PersonasPage";
+import ClientesPage from "@/pages/ClientesPage";
 import TiposPagosPage from "@/pages/TiposPagosPage";
 import AmbientesPage from "@/pages/AmbientesPage";
 import UsuariosPage from "@/pages/UsuariosPage";
@@ -49,21 +48,11 @@ function App() {
                         }
                     />
                     <Route
-                        path="/estudiantes"
+                        path="/clientes"
                         element={
-                            <ProtectedRoute roles={["Administrador"]}>
+                            <ProtectedRoute roles={["Administrador", "Caja"]}>
                                 <AppLayout>
-                                    <EstudiantesPage />
-                                </AppLayout>
-                            </ProtectedRoute>
-                        }
-                    />
-                    <Route
-                        path="/personas"
-                        element={
-                            <ProtectedRoute roles={["Administrador"]}>
-                                <AppLayout>
-                                    <PersonasPage />
+                                    <ClientesPage />
                                 </AppLayout>
                             </ProtectedRoute>
                         }
@@ -101,7 +90,7 @@ function App() {
                     <Route
                         path="/usuarios"
                         element={
-                            <ProtectedRoute roles={["Administrador"]}>
+                            <ProtectedRoute roles={["SuperAdmin"]}>
                                 <AppLayout>
                                     <UsuariosPage />
                                 </AppLayout>

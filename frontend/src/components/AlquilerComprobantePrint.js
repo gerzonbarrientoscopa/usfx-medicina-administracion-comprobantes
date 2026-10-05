@@ -4,7 +4,6 @@ const escapeHTML = (value) => String(value ?? "").replace(/[&<>"']/g, (c) => ({ 
 const money = (n) => Number(n || 0).toLocaleString("es-BO", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 export function buildAlquilerComprobanteHTML(rental) {
-  const person = rental.cliente_tipo === "persona";
   const isVoided = Boolean(rental?.anulado || rental?.estado === "cancelado");
   const suboficina = String(rental.suboficina || "").trim();
   const ranges = (rental.tramos || []).map((r) => `${escapeHTML(r.desde)}–${escapeHTML(r.hasta)}`).join(" · ") || "Jornada completa";
@@ -17,9 +16,9 @@ export function buildAlquilerComprobanteHTML(rental) {
   ${isVoided ? '<div class="void-stamp" aria-label="Comprobante anulado">ANULADO</div>' : ""}
   <header class="head"><div><div class="institution">Universidad Mayor, Real y Pontificia de San Francisco Xavier</div><div class="office">${escapeHTML(rental.office_nombre || "Oficina")}</div>${suboficina ? `<div class="suboffice">${escapeHTML(suboficina)}</div>` : ""}</div><div class="code"><div class="label">Comprobante</div>${escapeHTML(rental.comprobante_display || rental.cod_comprobante || `AL-${rental.id}`)}</div></header>
   <div class="title">Recibo de alquiler de ambiente</div>
-  <div class="row"><span class="label">Cliente · ${person ? "Persona" : "Estudiante"}</span><strong>${escapeHTML(rental.cliente_nombre)}</strong></div>
+  <div class="row"><span class="label">Cliente</span><strong>${escapeHTML(rental.cliente_nombre)}</strong></div>
   <div class="row"><span class="label">C.I.</span><strong>${escapeHTML(rental.cliente_ci || "—")}</strong></div>
-  ${person ? "" : `<div class="row"><span class="label">C.U.</span><strong>${escapeHTML(rental.cliente_cu || "—")}</strong></div>`}
+  <div class="row"><span class="label">C.U.</span><strong>${escapeHTML(rental.cliente_cu || "—")}</strong></div>
   <div class="row"><span class="label">Ambiente</span><strong>${escapeHTML(rental.ambiente_nombre)}</strong></div>
   <div class="row"><span class="label">Fecha de uso</span><strong>${escapeHTML(date)}</strong></div>
   <div class="row"><span class="label">Fecha de pago</span><strong>${escapeHTML(paymentDate)}</strong></div>

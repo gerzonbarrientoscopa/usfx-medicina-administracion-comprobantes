@@ -55,9 +55,10 @@ def mongo_rental_api():
             unique=True,
             partialFilterExpression={"estado": "pagado"},
         )
-        await db.personas.create_index("id", unique=True)
-        await db.personas.create_index("ci_key", unique=True)
-        await db.estudiantes.create_index("id", unique=True)
+        await db.clientes.create_index("id", unique=True)
+        await db.clientes.create_index("ci_key", unique=True, partialFilterExpression={"ci_key": {"$gt": ""}})
+        await db.clientes.create_index("cu_key", unique=True, partialFilterExpression={"cu_key": {"$gt": ""}})
+        await db.clientes.create_index("id", unique=True)
 
         office_a, office_b = "office-a", "office-b"
         for office_id, prefix in ((office_a, "RTA"), (office_b, "RTB")):
@@ -82,13 +83,13 @@ def mongo_rental_api():
             }
             ambientes.append(ambiente)
             await db.ambientes.insert_one(ambiente)
-        await db.personas.insert_one({
+        await db.clientes.insert_one({
             "id": "person-a", "ci": "CI-P-001", "ci_key": "ci-p-001",
             "nombre": "Persona Rental",
         })
-        await db.estudiantes.insert_one({
-            "id": "student-b", "office_id": office_b, "ci": "CI-S-001",
-            "cu": "CU-001", "nombre": "Estudiante Rental", "gestion": 2026,
+        await db.clientes.insert_one({
+            "id": "student-b", "ci": "CI-S-001", "ci_key": "ci-s-001", "cu_key": "cu-001",
+            "cu": "CU-001", "nombre": "Cliente Rental",
         })
         state.update(
             office_a=office_a, office_b=office_b, monday=monday,
@@ -142,7 +143,7 @@ def _tariff_payload(ambiente_id, **overrides):
 def _rental_payload(ambiente_id, tarifa_id, fecha, start="09:00", end="10:00", **overrides):
     payload = {
         "ambiente_id": ambiente_id, "tarifa_id": tarifa_id, "fecha": fecha,
-        "desde": start, "hasta": end, "cliente_tipo": "persona",
+        "desde": start, "hasta": end,
         "cliente_id": "person-a", "cobrar_ahora": False,
     }
     payload.update(overrides)
@@ -384,37 +385,16 @@ def test_booking_clients_schedule_overlap_adjacency_and_concurrency(mongo_rental
                 json=_rental_payload(mongo_rental_api["ambiente_a"], tariff_id, fecha, "09:00", "10:00"),
             )
             assert person_booking.status_code == 201, person_booking.text
-            assert person_booking.json()["cliente_tipo"] == "persona"
+            assert person_booking.json()["cliente_id"] == "person-a"
             assert person_booking.json()["cliente_nombre"] == "Persona Rental"
 
-            adjacent_student = await client.post(
-                f"{API}/alquileres",
-                json=_rental_payload(
-                    mongo_rental_api["ambiente_a"], tariff_id, fecha, "10:00", "11:00",
-                    cliente_tipo="estudiante", cliente_id="student-b",
+            adjacent_client = await client.post(
+                f"{API}/alquileres", json=_rental_payload(
+                    mongo_rental_api["ambiente_a"], tariff_id, fecha, "10:00", "11:00", cliente_id="student-b",
                 ),
             )
-            assert adjacent_student.status_code == 400
-            wrong_proof = await client.post(
-                f"{API}/alquileres",
-                json=_rental_payload(
-                    mongo_rental_api["ambiente_a"], tariff_id, fecha, "10:00", "11:00",
-                    cliente_tipo="estudiante", cliente_id="student-b",
-                    cliente_documento="not-the-student-document",
-                ),
-            )
-            assert wrong_proof.status_code == 400
-            adjacent_student = await client.post(
-                f"{API}/alquileres",
-                json=_rental_payload(
-                    mongo_rental_api["ambiente_a"], tariff_id, fecha, "10:00", "11:00",
-                    cliente_tipo="estudiante", cliente_id="student-b",
-                    cliente_documento=" ci-s-001 ",
-                ),
-            )
-            assert adjacent_student.status_code == 201, adjacent_student.text
-            assert adjacent_student.json()["cliente_tipo"] == "estudiante"
-            assert adjacent_student.json()["cliente_cu"] == "CU-001"
+            assert adjacent_client.status_code == 201, adjacent_client.text
+            assert adjacent_client.json()["cliente_cu"] == "CU-001"
 
             overlap = await client.post(
                 f"{API}/alquileres",
@@ -634,112 +614,6 @@ def test_rentals_and_tariffs_reject_cross_office_access(mongo_rental_api):
     mongo_rental_api["loop"].run_until_complete(run())
 
 
-def test_person_and_student_ci_are_mutually_exclusive(mongo_rental_api):
-    async def run():
-        async with await _client(_actor()) as client:
-            duplicate_person = await client.post(
-                f"{API}/personas", json={"ci": " ci-s-001 ", "nombre": "Duplicate student CI"}
-            )
-            assert duplicate_person.status_code == 400
-
-            persona = await client.post(
-                f"{API}/personas", json={"ci": "CI-P-001", "nombre": "Existing persona"}
-            )
-            assert persona.status_code == 400  # seeded global Persona CI
-            persona = await client.post(
-                f"{API}/personas", json={"ci": "CI-PERSON-2", "nombre": "Existing persona"}
-            )
-            assert persona.status_code == 201, persona.text
-            persona_update = await client.put(
-                f'{API}/personas/{persona.json()["id"]}',
-                json={"ci": " ci-s-001 ", "nombre": "Changed to student CI"},
-            )
-            assert persona_update.status_code == 400
-
-            student_payload = {
-                "ci": "ci-p-001", "cu": "CU-PERSON-DUP", "nombre": "Duplicate persona CI",
-                "gestion": 2026, "office_id": mongo_rental_api["office_a"],
-            }
-            student_create = await client.post(f"{API}/estudiantes", json=student_payload)
-            assert student_create.status_code == 400
-
-            allowed_student = await client.post(
-                f"{API}/estudiantes",
-                json={**student_payload, "ci": "CI-STUDENT-UPDATE", "cu": "CU-STUDENT-UPDATE"},
-            )
-            assert allowed_student.status_code == 201, allowed_student.text
-            student_update = await client.put(
-                f'{API}/estudiantes/{allowed_student.json()["id"]}',
-                json={**student_payload, "cu": "CU-STUDENT-UPDATE"},
-            )
-            assert student_update.status_code == 400
-
-    mongo_rental_api["loop"].run_until_complete(run())
-
-
-def test_customer_search_limits_cross_office_students_to_exact_identifiers(mongo_rental_api):
-    async def run():
-        await mongo_rental_api["db"].estudiantes.insert_one({
-            "id": "student-local-search", "office_id": mongo_rental_api["office_a"],
-            "ci": "LOCAL-CI-123", "cu": "LOCAL-CU-123",
-            "nombre": "Unique Local Learner", "gestion": 2026,
-        })
-        async with await _client(_actor()) as client:
-            partial = await client.get(f"{API}/alquileres/clientes", params={"q": "Learner"})
-            assert partial.status_code == 200
-            partial_students = [result for result in partial.json() if result["tipo"] == "estudiante"]
-            assert [result["id"] for result in partial_students] == ["student-local-search"]
-
-            partial_cross = await client.get(f"{API}/alquileres/clientes", params={"q": "Rental"})
-            assert all(
-                result["id"] != "student-b"
-                for result in partial_cross.json()
-                if result["tipo"] == "estudiante"
-            )
-            short_cross = await client.get(f"{API}/alquileres/clientes", params={"q": "CI"})
-            assert all(result["id"] != "student-b" for result in short_cross.json())
-
-            exact_ci = await client.get(f"{API}/alquileres/clientes", params={"q": "ci-s-001"})
-            student_hit = next(result for result in exact_ci.json() if result["id"] == "student-b")
-            assert student_hit["tipo"] == "estudiante"
-            assert student_hit["office_nombre"] == "Integration office-b"
-            assert "office_id" not in student_hit
-
-            exact_cu = await client.get(f"{API}/alquileres/clientes", params={"q": "CU-001"})
-            assert any(result["id"] == "student-b" for result in exact_cu.json())
-
-        async with await _client(_actor("SuperAdmin", None)) as super_client:
-            global_partial = await super_client.get(
-                f"{API}/alquileres/clientes", params={"q": "Rental"}
-            )
-            assert any(result["id"] == "student-b" for result in global_partial.json())
-
-        async with await _client(_actor("Caja")) as caja_client:
-            created_person = await caja_client.post(
-                f"{API}/alquileres/clientes/persona",
-                json={"ci": "CI-RENTAL-NEW-PERSON", "nombre": "Rental Client"},
-            )
-            assert created_person.status_code == 201, created_person.text
-            assert created_person.json()["ci"] == "CI-RENTAL-NEW-PERSON"
-
-            searchable_person = await caja_client.get(
-                f"{API}/alquileres/clientes", params={"q": "CI-RENTAL-NEW-PERSON"}
-            )
-            assert any(
-                result["id"] == created_person.json()["id"]
-                and result["tipo"] == "persona"
-                for result in searchable_person.json()
-            )
-
-            general_person_create = await caja_client.post(
-                f"{API}/personas",
-                json={"ci": "CI-RENTAL-NEW-PERSON-2", "nombre": "Not Allowed Here"},
-            )
-            assert general_person_create.status_code == 403
-
-    mongo_rental_api["loop"].run_until_complete(run())
-
-
 def test_startup_reconciliation_repairs_stranded_rentals_and_occupancy(mongo_rental_api):
     async def run():
         db = mongo_rental_api["db"]
@@ -844,7 +718,7 @@ def test_startup_succeeds_after_canceled_room_is_deleted(empty_startup_database)
                 {"turno": "noche", "desde": "18:00", "hasta": "22:00"},
             ],
         })
-        await db.personas.insert_one({
+        await db.clientes.insert_one({
             "id": "person-a", "ci": "STARTUP-CI", "ci_key": "startup-ci",
             "nombre": "Startup Person",
         })
@@ -1459,7 +1333,7 @@ def test_concurrent_rental_and_deleted_pago_draft_reuses_only_current_tail(mongo
     async def run():
         db = mongo_rental_api["db"]
         year = datetime.now(timezone.utc).year
-        await db.estudiantes.insert_one({
+        await db.clientes.insert_one({
             "id": "counter-student-a", "office_id": mongo_rental_api["office_a"],
             "ci": "COUNTER-CI", "cu": "COUNTER-CU", "nombre": "Counter Test",
             "gestion": year,
@@ -1500,7 +1374,7 @@ def test_concurrent_rental_and_deleted_pago_draft_reuses_only_current_tail(mongo
             draft = await client.post(
                 f"{API}/pagos",
                 json={
-                    "id_estudiante": "counter-student-a",
+                    "cliente_id": "counter-student-a",
                     "fecha_pago": date.today().isoformat(),
                     "office_id": mongo_rental_api["office_a"],
                 },
@@ -1520,7 +1394,7 @@ def test_concurrent_rental_and_deleted_pago_draft_reuses_only_current_tail(mongo
             next_pago = await client.post(
                 f"{API}/pagos",
                 json={
-                    "id_estudiante": "counter-student-a",
+                    "cliente_id": "counter-student-a",
                     "fecha_pago": date.today().isoformat(),
                     "office_id": mongo_rental_api["office_a"],
                     "id_tipo_pago": "counter-type-a",
@@ -1549,7 +1423,7 @@ def test_discarding_nonlatest_draft_does_not_rewind_past_newer_receipt(mongo_ren
     async def run():
         db = mongo_rental_api["db"]
         year = datetime.now(timezone.utc).year
-        await db.estudiantes.insert_one({
+        await db.clientes.insert_one({
             "id": "counter-student-b", "office_id": mongo_rental_api["office_a"],
             "ci": "COUNTER-CI-B", "cu": "COUNTER-CU-B", "nombre": "Counter Test B",
             "gestion": year,
@@ -1563,7 +1437,7 @@ def test_discarding_nonlatest_draft_does_not_rewind_past_newer_receipt(mongo_ren
             draft = await client.post(
                 f"{API}/pagos",
                 json={
-                    "id_estudiante": "counter-student-b",
+                    "cliente_id": "counter-student-b",
                     "fecha_pago": date.today().isoformat(),
                     "office_id": mongo_rental_api["office_a"],
                 },
@@ -1572,7 +1446,7 @@ def test_discarding_nonlatest_draft_does_not_rewind_past_newer_receipt(mongo_ren
             issued = await client.post(
                 f"{API}/pagos",
                 json={
-                    "id_estudiante": "counter-student-b",
+                    "cliente_id": "counter-student-b",
                     "fecha_pago": date.today().isoformat(),
                     "office_id": mongo_rental_api["office_a"],
                     "id_tipo_pago": "counter-type-b",
@@ -1588,7 +1462,7 @@ def test_discarding_nonlatest_draft_does_not_rewind_past_newer_receipt(mongo_ren
             next_receipt = await client.post(
                 f"{API}/pagos",
                 json={
-                    "id_estudiante": "counter-student-b",
+                    "cliente_id": "counter-student-b",
                     "fecha_pago": date.today().isoformat(),
                     "office_id": mongo_rental_api["office_a"],
                     "id_tipo_pago": "counter-type-b",

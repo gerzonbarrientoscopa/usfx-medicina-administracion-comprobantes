@@ -21,6 +21,8 @@ from pymongo.errors import DuplicateKeyError
 from pathlib import Path
 from datetime import datetime, date, timezone, timedelta
 from typing import List, Optional, Literal
+from client_models import Cliente, ClienteCreate
+from client_routes import MongoClientes, register_client_routes
 
 BOLIVIA_TIMEZONE = timezone(timedelta(hours=-4))
 
@@ -58,7 +60,7 @@ def _format_response_date(value, field):
 def _format_response_dates(value):
     if isinstance(value, dict):
         # Rental receipt text is derived for responses only, never persisted.
-        if ("cliente_tipo" in value and "id" in value) or value.get("origen") == "alquiler":
+        if ("ambiente_id" in value and "id" in value) or value.get("origen") == "alquiler":
             value = {
                 **value,
                 "comprobante_display": format_receipt_display(
@@ -144,6 +146,7 @@ class UserCreate(BaseModel):
 
 class UserUpdate(BaseModel):
     codigo: Optional[str] = Field(default=None, pattern=r"^[0-9]{3}$")
+    email: Optional[EmailStr] = None
     nombre: Optional[str] = None
     rol: Optional[Literal["Administrador", "Caja", "Consultas"]] = None
     password: Optional[str] = Field(default=None, min_length=4)
@@ -202,52 +205,8 @@ class LoginResponse(BaseModel):
     usuario: UserPublic
 
 
-class EstudianteBase(BaseModel):
-    ci: str
-    cu: Optional[str] = ""
-    nombre: str
-    gestion: int
-    office_id: Optional[str] = None
-    office_nombre: Optional[str] = None
-
-
-class EstudianteCreate(EstudianteBase):
-    pass
-
-
-class Estudiante(EstudianteBase):
-    id: str    
-
-
-class PaginacionEstudiantes(BaseModel):
-    items: List[Estudiante]
-    total: int
-    page: int
-    size: int
-    pages: int
-
-
-class PersonaBase(BaseModel):
-    ci: str = Field(min_length=1, max_length=30)
-    nombre: str = Field(min_length=1, max_length=200)
-
-    @field_validator("ci", "nombre", mode="before")
-    @classmethod
-    def normalize_person_text(cls, value):
-        return value.strip() if isinstance(value, str) else value
-
-
-class PersonaCreate(PersonaBase):
-    pass
-
-
-class Persona(PersonaBase):
-    id: str
-    created_at: Optional[str] = None
-
-
-class PaginacionPersonas(BaseModel):
-    items: List[Persona]
+class PaginacionClientes(BaseModel):
+    items: List[Cliente]
     total: int
     page: int
     size: int
@@ -384,17 +343,9 @@ class AlquilerCreate(BaseModel):
     fecha: str
     desde: Optional[str] = None
     hasta: Optional[str] = None
-    cliente_tipo: Literal["persona", "estudiante"]
     cliente_id: str
-    cliente_documento: Optional[str] = None
     cobrar_ahora: bool
     office_id: Optional[str] = None
-
-    @field_validator("cliente_documento", mode="before")
-    @classmethod
-    def normalize_client_document(cls, value):
-        return value.strip() if isinstance(value, str) else value
-
 
 class PaginacionAmbientes(BaseModel):
     items: List[Ambiente]
@@ -405,7 +356,7 @@ class PaginacionAmbientes(BaseModel):
 
 
 class PagoBase(BaseModel):
-    id_estudiante: str
+    cliente_id: str
     fecha_pago: str  # YYYY-MM-DD
     office_id: Optional[str] = None
     office_nombre: Optional[str] = None
@@ -442,9 +393,9 @@ class Pago(PagoBase):
     prefijo_comprobante: Optional[str] = None
     comprobante_display: Optional[str] = None
     suboficina: Optional[str] = None
-    estudiante_nombre: Optional[str] = None
-    estudiante_ci: Optional[str] = None
-    estudiante_cu: Optional[str] = ""
+    cliente_nombre: Optional[str] = None
+    cliente_ci: Optional[str] = None
+    cliente_cu: Optional[str] = ""
     tipo_pago_nombre: Optional[str] = None
     anulado: bool = False
     anulado_at: Optional[str] = None
@@ -748,7 +699,6 @@ async def delete_office(
     await _office_exists(office_id)
     for collection in (
         db.usuarios,
-        db.estudiantes,
         db.tipos_pagos,
         db.ambientes,
         db.pagos,
@@ -770,7 +720,7 @@ async def get_users(
     pag: int = Query(1, ge=1, description="Número de página"),
     tam: int = Query(10, ge=1, le=100, description="Elementos por página"),
     office_id: Optional[str] = None,
-    user: dict = Depends(require_roles("Administrador")),
+    user: dict = Depends(require_roles("SuperAdmin")),
 ):
     filt = await office_scope(user, office_id)
     salto = (pag - 1) * tam
@@ -791,6 +741,13 @@ async def get_users(
     }
 
 @api.get("/usuarios/list")
+async def get_users_admin_minimal(
+    office_id: Optional[str] = None, user: dict = Depends(require_roles("SuperAdmin"))
+):
+    return await get_users_minimal(office_id, user)
+
+
+@api.get("/reportes/registradores")
 async def get_users_minimal(
     office_id: Optional[str] = None, user: dict = Depends(get_current_user)
 ):
@@ -805,7 +762,7 @@ async def get_users_minimal(
 
 @api.post("/usuarios", response_model=UserPublic, status_code=201)
 async def create_user(
-    usuario: UserCreate, current: dict = Depends(require_roles("Administrador"))
+    usuario: UserCreate, current: dict = Depends(require_roles("SuperAdmin"))
 ):
     email = usuario.email.lower().strip()
     if email == SUPER_ADMIN_EMAIL or await db.usuarios.find_one({"email": email}):
@@ -837,7 +794,7 @@ async def create_user(
 
 @api.put("/usuarios/{user_id}", response_model=UserPublic)
 async def update_user(
-    user_id: str, usuario: UserUpdate, current: dict = Depends(require_roles("Administrador"))
+    user_id: str, usuario: UserUpdate, current: dict = Depends(require_roles("SuperAdmin"))
 ):
     scope = await office_scope(current)
     target = await db.usuarios.find_one({"id": user_id, **scope}, {"_id": 0})
@@ -854,6 +811,11 @@ async def update_user(
             raise HTTPException(status_code=403, detail="No puede cambiar su propio rol.")
 
     update = {}
+    if usuario.email is not None:
+        email = str(usuario.email).strip().lower()
+        if await db.usuarios.find_one({"email": email, "id": {"$ne": user_id}}):
+            raise HTTPException(400, "El email ya está registrado.")
+        update["email"] = email
     if usuario.codigo is not None:
         if target.get("codigo") and usuario.codigo != target["codigo"]:
             raise HTTPException(status_code=400, detail="El código de usuario no se puede cambiar.")
@@ -896,7 +858,7 @@ async def update_user(
 
 @api.delete("/usuarios/{user_id}")
 async def delete_user(
-    user_id: str, current: dict = Depends(require_roles("Administrador"))
+    user_id: str, current: dict = Depends(require_roles("SuperAdmin"))
 ):
     if user_id == current["id"]:
         raise HTTPException(
@@ -913,221 +875,6 @@ async def delete_user(
     if target["rol"] == "Administrador" and current["rol"] != SUPER_ADMIN_ROLE:
         raise HTTPException(status_code=403, detail="Sólo el Super Admin puede eliminar administradores.")
     await db.usuarios.delete_one({"id": user_id, **scope})
-    return {"ok": True}
-
-
-async def ensure_person_is_not_student(ci: str):
-    normalized_ci = ci.strip()
-    student = await db.estudiantes.find_one(
-        {
-            "ci": {
-                "$regex": rf"^\s*{re.escape(normalized_ci)}\s*$",
-                "$options": "i",
-            }
-        },
-        {"_id": 1},
-    )
-    if student:
-        raise HTTPException(
-            status_code=400,
-            detail="Esta persona está registrada como estudiante y no puede agregarse aquí.",
-        )
-
-
-async def ensure_student_is_not_person(ci: str):
-    normalized_ci = ci.strip()
-    person = await db.personas.find_one(
-        {
-            "ci": {
-                "$regex": rf"^\s*{re.escape(normalized_ci)}\s*$",
-                "$options": "i",
-            }
-        },
-        {"_id": 1},
-    )
-    if person:
-        raise HTTPException(
-            status_code=400,
-            detail="Este C.I. ya está registrado como Persona y no puede agregarse como estudiante.",
-        )
-
-
-# ----------------------------- CRUD Estudiantes -----------------------------
-@api.get("/estudiantes", response_model=PaginacionEstudiantes)
-async def get_estudiantes(
-    pag: int = Query(1, ge=1, description="Número de página"),
-    tam: int = Query(10, ge=1, le=100, description="Elementos por página"),
-    textoBuscar: Optional[str] = None,
-    office_id: Optional[str] = None,
-    user: dict = Depends(get_current_user),
-):
-    filt = await office_scope(user, office_id)
-    if textoBuscar:
-        search = re.escape(textoBuscar.strip())
-        filt["$or"] = [
-            {"ci": {"$regex": search, "$options": "i"}},
-            {"cu": {"$regex": search, "$options": "i"}},
-            {"nombre": {"$regex": search, "$options": "i"}},
-        ]
-    salto = (pag - 1) * tam
-    total_estudiantes = await db.estudiantes.count_documents(filt)
-    cursor = db.estudiantes.find(filt, {"_id": 0}) \
-                        .sort([("nombre", 1), ("cu", 1)]) \
-                        .skip(salto) \
-                        .limit(tam)
-    estudiantes_dict = await attach_office_names(await cursor.to_list(length=tam))
-    estudiantes_validados = [Estudiante(**u) for u in estudiantes_dict]
-    total_paginas = (total_estudiantes + tam - 1) // tam if total_estudiantes > 0 else 1
-    return {
-        "items": estudiantes_validados,
-        "total": total_estudiantes,
-        "page": pag,
-        "size": tam,
-        "pages": total_paginas,
-    }
-
-
-@api.post("/estudiantes", response_model=Estudiante, status_code=201)
-async def create_estudiante(
-    estudiante: EstudianteCreate,
-    user: dict = Depends(require_roles("Administrador", "Caja")),
-):
-    office_id = await office_for_write(user, estudiante.office_id)
-    await ensure_student_is_not_person(estudiante.ci)
-    if estudiante.cu and await db.estudiantes.find_one(
-        {"office_id": office_id, "cu": estudiante.cu}
-    ):
-        raise HTTPException(status_code=400, detail="El estudiante ya existe.")
-    estudiante_dict = estudiante.model_dump(exclude={"office_id", "office_nombre"})
-    estudiante_dict.update({"id": str(uuid.uuid4()), "office_id": office_id})
-    await db.estudiantes.insert_one(estudiante_dict)
-    await attach_office_names([estudiante_dict])
-    return Estudiante(**estudiante_dict)
-
-
-@api.put("/estudiantes/{est_id}", response_model=Estudiante)
-async def update_estudiante(
-    est_id: str,
-    estudiante: EstudianteCreate,
-    user: dict = Depends(require_roles("Administrador")),
-):
-    scope = await office_scope(user)
-    target = await db.estudiantes.find_one({"id": est_id, **scope}, {"_id": 0})
-    if not target:
-        raise HTTPException(status_code=404, detail="Estudiante no encontrado.")
-    await ensure_student_is_not_person(estudiante.ci)
-    if estudiante.office_id and estudiante.office_id != target["office_id"]:
-        raise HTTPException(status_code=400, detail="No se puede cambiar la oficina de un estudiante.")
-    if estudiante.cu and await db.estudiantes.find_one({
-        "office_id": target["office_id"], "cu": estudiante.cu, "id": {"$ne": est_id}
-    }):
-        raise HTTPException(status_code=400, detail="El estudiante ya existe.")
-    update = estudiante.model_dump(exclude={"office_id", "office_nombre"})
-    await db.estudiantes.update_one({"id": est_id, **scope}, {"$set": update})
-    updated = await db.estudiantes.find_one({"id": est_id}, {"_id": 0})
-    await attach_office_names([updated])
-    return Estudiante(**updated)
-
-
-@api.delete("/estudiantes/{est_id}")
-async def delete_estudiante(
-    est_id: str, user: dict = Depends(require_roles("Administrador"))
-):
-    scope = await office_scope(user)
-    target = await db.estudiantes.find_one({"id": est_id, **scope}, {"_id": 0})
-    if not target:
-        raise HTTPException(status_code=404, detail="Estudiante no encontrado.")
-    if await db.pagos.find_one({"id_estudiante": est_id, "office_id": target["office_id"]}):
-        raise HTTPException(
-            status_code=400, detail="No se puede eliminar: tiene pagos registrados."
-        )
-    await db.estudiantes.delete_one({"id": est_id, **scope})
-    return {"ok": True}
-
-
-# ----------------------------- CRUD Personas -----------------------------
-@api.get("/personas", response_model=PaginacionPersonas)
-async def get_personas(
-    pag: int = Query(1, ge=1),
-    tam: int = Query(20, ge=1, le=100),
-    textoBuscar: Optional[str] = None,
-    user: dict = Depends(require_roles("Administrador")),
-):
-    filt = {}
-    if textoBuscar and textoBuscar.strip():
-        search = re.escape(textoBuscar.strip())
-        filt["$or"] = [
-            {"ci": {"$regex": search, "$options": "i"}},
-            {"nombre": {"$regex": search, "$options": "i"}},
-        ]
-    total = await db.personas.count_documents(filt)
-    cursor = db.personas.find(filt, {"_id": 0}).sort(
-        [("nombre", 1), ("ci", 1)]
-    ).skip((pag - 1) * tam).limit(tam)
-    personas = await cursor.to_list(length=tam)
-    return {
-        "items": [Persona(**item) for item in personas],
-        "total": total,
-        "page": pag,
-        "size": tam,
-        "pages": max(1, (total + tam - 1) // tam),
-    }
-
-
-@api.post("/personas", response_model=Persona, status_code=201)
-async def create_persona(
-    persona: PersonaCreate, user: dict = Depends(require_roles("Administrador"))
-):
-    await ensure_person_is_not_student(persona.ci)
-    persona_dict = persona.model_dump()
-    persona_dict.update(
-        {
-            "id": str(uuid.uuid4()),
-            "ci_key": persona.ci.casefold(),
-            "created_at": iso(datetime.now(timezone.utc)),
-        }
-    )
-    try:
-        await db.personas.insert_one(persona_dict)
-    except DuplicateKeyError:
-        raise HTTPException(
-            status_code=400,
-            detail="Ya existe una persona registrada con este C.I.",
-        )
-    return Persona(**persona_dict)
-
-
-@api.put("/personas/{persona_id}", response_model=Persona)
-async def update_persona(
-    persona_id: str,
-    persona: PersonaCreate,
-    user: dict = Depends(require_roles("Administrador")),
-):
-    target = await db.personas.find_one({"id": persona_id}, {"_id": 0})
-    if not target:
-        raise HTTPException(status_code=404, detail="Persona no encontrada.")
-    await ensure_person_is_not_student(persona.ci)
-    update = persona.model_dump()
-    update["ci_key"] = persona.ci.casefold()
-    try:
-        await db.personas.update_one({"id": persona_id}, {"$set": update})
-    except DuplicateKeyError:
-        raise HTTPException(
-            status_code=400,
-            detail="Ya existe una persona registrada con este C.I.",
-        )
-    updated = await db.personas.find_one({"id": persona_id}, {"_id": 0})
-    return Persona(**updated)
-
-
-@api.delete("/personas/{persona_id}")
-async def delete_persona(
-    persona_id: str, user: dict = Depends(require_roles("Administrador"))
-):
-    target = await db.personas.find_one({"id": persona_id}, {"_id": 0})
-    if not target:
-        raise HTTPException(status_code=404, detail="Persona no encontrada.")
-    await db.personas.delete_one({"id": persona_id})
     return {"ok": True}
 
 
@@ -1625,63 +1372,6 @@ async def delete_tarifa_ambiente(
     return {"ok": True}
 
 
-@api.get("/alquileres/clientes")
-async def search_alquiler_clientes(q: str = "", user: dict = Depends(require_roles(*_RENTAL_ROLES))):
-    term = q.strip()
-    if len(term) < 2:
-        return []
-    pattern = re.escape(term)
-    personas = await db.personas.find(
-        {"$or": [{"ci": {"$regex": pattern, "$options": "i"}}, {"nombre": {"$regex": pattern, "$options": "i"}}]},
-        {"_id": 0, "id": 1, "nombre": 1, "ci": 1},
-    ).sort("nombre", 1).limit(20).to_list(20)
-    matches = [{"tipo": "persona", "id": item["id"], "nombre": item["nombre"], "ci": item["ci"]} for item in personas]
-
-    projection = {"_id": 0, "id": 1, "nombre": 1, "ci": 1, "cu": 1, "office_id": 1}
-    student_search = {"$or": [
-        {"ci": {"$regex": pattern, "$options": "i"}},
-        {"cu": {"$regex": pattern, "$options": "i"}},
-        {"nombre": {"$regex": pattern, "$options": "i"}},
-    ]}
-    if user.get("rol") == SUPER_ADMIN_ROLE:
-        students = await db.estudiantes.find(student_search, projection).sort("nombre", 1).limit(20).to_list(20)
-    else:
-        own_office_id = (await office_scope(user))["office_id"]
-        own_filter = {"$and": [{"office_id": own_office_id}, student_search]}
-        students = await db.estudiantes.find(own_filter, projection).sort("nombre", 1).limit(20).to_list(20)
-        remaining = 20 - len(students)
-        if len(term) >= 3 and remaining:
-            exact = {"$regex": rf"^\s*{pattern}\s*$", "$options": "i"}
-            cross_filter = {
-                "$and": [
-                    {"office_id": {"$exists": True, "$ne": own_office_id}},
-                    {"$or": [{"ci": exact}, {"cu": exact}]},
-                ]
-            }
-            cross_office_students = await db.estudiantes.find(
-                cross_filter, projection
-            ).sort("nombre", 1).limit(remaining).to_list(remaining)
-            students.extend(cross_office_students)
-    await attach_office_names(students)
-    for item in students:
-        entry = {
-            "tipo": "estudiante", "id": item["id"], "nombre": item["nombre"],
-            "ci": item["ci"], "office_nombre": item.get("office_nombre"),
-        }
-        if item.get("cu") is not None:
-            entry["cu"] = item.get("cu")
-        matches.append(entry)
-    return matches
-
-
-@api.post("/alquileres/clientes/persona", response_model=Persona, status_code=201)
-async def create_alquiler_persona(
-    persona: PersonaCreate,
-    user: dict = Depends(require_roles(*_RENTAL_ROLES)),
-):
-    return await create_persona(persona, user)
-
-
 def _validate_rental_date(text: str) -> date:
     try:
         parsed = datetime.strptime(text, "%Y-%m-%d").date()
@@ -1704,30 +1394,9 @@ async def _build_rental(user: dict, body: AlquilerCreate) -> dict:
     _apply_current_shift(tariff, ambiente)
     if body.office_id and body.office_id != ambiente["office_id"]:
         raise HTTPException(status_code=400, detail="La oficina no coincide con el ambiente.")
-    payer_collection = db.personas if body.cliente_tipo == "persona" else db.estudiantes
-    payer_filter = {"id": body.cliente_id}
-    if body.cliente_tipo == "estudiante":
-        # Student ownership does not constrain rental venue ownership.
-        pass
-    payer = await payer_collection.find_one(payer_filter, {"_id": 0})
+    payer = await db.clientes.find_one({"id": body.cliente_id}, {"_id": 0})
     if not payer:
-        raise HTTPException(status_code=400, detail="El cliente seleccionado no existe.")
-    if (
-        body.cliente_tipo == "estudiante"
-        and user.get("rol") != SUPER_ADMIN_ROLE
-        and payer.get("office_id") != ambiente["office_id"]
-    ):
-        proof = (body.cliente_documento or "").strip().casefold()
-        valid_documents = {
-            str(payer.get("ci", "")).strip().casefold(),
-            str(payer.get("cu", "")).strip().casefold(),
-        }
-        valid_documents.discard("")
-        if not proof or proof not in valid_documents:
-            raise HTTPException(
-                status_code=400,
-                detail="Para un estudiante de otra oficina, confirme su C.I. o C.U.",
-            )
+        raise HTTPException(400, "El cliente seleccionado no existe.")
     blocks = _schedule_blocks(ambiente, rental_day)
     modalidad = tariff["modalidad"]
     if modalidad in ("hora", "actividad"):
@@ -1772,9 +1441,9 @@ async def _build_rental(user: dict, body: AlquilerCreate) -> dict:
         "id": rental_id, "office_id": ambiente["office_id"], "office_nombre": office["nombre"],
         "suboficina": office.get("suboficina", "") or "",
         "ambiente_id": ambiente["id"], "ambiente_nombre": ambiente["nombre"], "fecha": body.fecha,
-        "tramos": tramos, "cliente_tipo": body.cliente_tipo, "cliente_id": payer["id"],
+        "tramos": tramos, "cliente_id": payer["id"],
         "cliente_nombre": payer["nombre"], "cliente_ci": payer["ci"],
-        "cliente_cu": payer.get("cu") if body.cliente_tipo == "estudiante" else None,
+        "cliente_cu": payer.get("cu", ""),
         "tarifa_id": tariff["id"], "tarifa_nombre": tariff["nombre"], "modalidad": modalidad,
         "monto": cents / 100, "cantidad": float(quantity), "total": total_cents / 100,
         "estado": "reservado", "cod_comprobante": None, "gestion": None,
@@ -2288,13 +1957,13 @@ async def preview_comprobante(
 
 
 # ----------------------------- Pagos CRUD -----------------------------
-# Aggregation pipeline stages that join estudiantes, tipos de pago y usuarios
+# Aggregation pipeline stages that join clientes, tipos de pago y usuarios
 # in a single round-trip to MongoDB. Used by list endpoints to avoid N+1.
 _PAGO_HYDRATE_PIPELINE = [
     {
         "$lookup": {
-            "from": "estudiantes",
-            "localField": "id_estudiante",
+            "from": "clientes",
+            "localField": "cliente_id",
             "foreignField": "id",
             "as": "_est",
         }
@@ -2333,9 +2002,9 @@ _PAGO_HYDRATE_PIPELINE = [
     },
     {
         "$addFields": {
-            "estudiante_nombre": {"$arrayElemAt": ["$_est.nombre", 0]},
-            "estudiante_ci": {"$arrayElemAt": ["$_est.ci", 0]},
-            "estudiante_cu": {"$ifNull": [{"$arrayElemAt": ["$_est.cu", 0]}, ""]},
+            "cliente_nombre": {"$arrayElemAt": ["$_est.nombre", 0]},
+            "cliente_ci": {"$arrayElemAt": ["$_est.ci", 0]},
+            "cliente_cu": {"$ifNull": [{"$arrayElemAt": ["$_est.cu", 0]}, ""]},
             "created_by_name": {"$arrayElemAt": ["$_cu.nombre", 0]},
             "edited_by_name": {"$arrayElemAt": ["$_eu.nombre", 0]},
             "office_nombre": {"$arrayElemAt": ["$_office.nombre", 0]},
@@ -2443,8 +2112,8 @@ async def _pago_item_snapshot(
 async def _hydrate_pago(pago: dict) -> dict:
     """Hydrate a receipt and normalize legacy one-item records for the UI."""
     office_id = pago["office_id"]
-    estudiante = await db.estudiantes.find_one(
-        {"id": pago["id_estudiante"], "office_id": office_id}, {"_id": 0}
+    cliente = await db.clientes.find_one(
+        {"id": pago["cliente_id"]}, {"_id": 0}
     )
     office = await db.oficinas.find_one(
         {"id": office_id},
@@ -2463,9 +2132,9 @@ async def _hydrate_pago(pago: dict) -> dict:
         if pago.get("prefijo_comprobante")
         else None
     )
-    pago["estudiante_nombre"] = estudiante["nombre"] if estudiante else None
-    pago["estudiante_ci"] = estudiante["ci"] if estudiante else None
-    pago["estudiante_cu"] = estudiante.get("cu", "") if estudiante else ""
+    pago["cliente_nombre"] = cliente["nombre"] if cliente else None
+    pago["cliente_ci"] = cliente["ci"] if cliente else None
+    pago["cliente_cu"] = cliente.get("cu", "") if cliente else ""
 
     # Old receipts have a single concept on the receipt document itself.
     items = pago.get("items")
@@ -2543,11 +2212,11 @@ async def create_pago(
     pago: PagoCreate, usuario: dict = Depends(require_roles("Administrador", "Caja"))
 ):
     office_id = await office_for_write(usuario, pago.office_id)
-    estudiante = await db.estudiantes.find_one(
-        {"id": pago.id_estudiante, "office_id": office_id}, {"_id": 0}
+    cliente = await db.clientes.find_one(
+        {"id": pago.cliente_id}, {"_id": 0}
     )
-    if not estudiante:
-        raise HTTPException(status_code=400, detail="Estudiante no encontrado en esta oficina.")
+    if not cliente:
+        raise HTTPException(status_code=400, detail="Cliente no encontrado.")
     items = []
     estado = "borrador"
     if pago.id_tipo_pago:
@@ -2581,7 +2250,7 @@ async def create_pago(
         "estado": estado,
         "fecha_pago": pago.fecha_pago,
         "office_id": office_id,
-        "id_estudiante": pago.id_estudiante,
+        "cliente_id": pago.cliente_id,
         "anulado": False,
         "anulado_at": None,
         "anulado_by": None,
@@ -2785,7 +2454,7 @@ async def get_pagos(
             rng["$lte"] = fecha_hasta
         filt["fecha_pago"] = rng
 
-    # If q is present, filter by comprobante, estudiante or tipo de pago.
+    # If q is present, filter by comprobante, cliente or tipo de pago.
     ql = q.strip() if q else ""
     if ql:
         extra_or = []
@@ -2808,13 +2477,11 @@ async def get_pagos(
             extra_or.append(
                 {"cod_comprobante": {"$regex": escaped_q, "$options": "i"}}
             )
-        # Match by estudiante: look up matching estudiantes ids
+        # Match by cliente: look up matching clientes ids
         est_ids = [
             e["id"]
-            async for e in db.estudiantes.find(
-                {
-                    **scope,
-                    "$or": [
+            async for e in db.clientes.find(
+                {"$or": [
                         {"nombre": {"$regex": escaped_q, "$options": "i"}},
                         {"ci": {"$regex": escaped_q, "$options": "i"}},
                         {"cu": {"$regex": escaped_q, "$options": "i"}},
@@ -2824,7 +2491,7 @@ async def get_pagos(
             )
         ]
         if est_ids:
-            extra_or.append({"id_estudiante": {"$in": est_ids}})
+            extra_or.append({"cliente_id": {"$in": est_ids}})
         tp_ids = [
             t["id"]
             async for t in db.tipos_pagos.find(
@@ -2933,15 +2600,15 @@ async def buscar_comprobantes(
         else:
             student_or = [{"cod_comprobante": {"$regex": escaped, "$options": "i"}}]
             rental_or = [{"cod_comprobante": {"$regex": escaped, "$options": "i"}}]
-        est_ids = [e["id"] async for e in db.estudiantes.find(
-            {**scope, "$or": [
+        est_ids = [e["id"] async for e in db.clientes.find(
+            {"$or": [
                 {"nombre": {"$regex": escaped, "$options": "i"}},
                 {"ci": {"$regex": escaped, "$options": "i"}},
                 {"cu": {"$regex": escaped, "$options": "i"}},
             ]}, {"_id": 0, "id": 1},
         )]
         if est_ids:
-            student_or.append({"id_estudiante": {"$in": est_ids}})
+            student_or.append({"cliente_id": {"$in": est_ids}})
         tp_ids = [t["id"] async for t in db.tipos_pagos.find(
             {**scope, "nombre": {"$regex": escaped, "$options": "i"}},
             {"_id": 0, "id": 1},
@@ -2963,7 +2630,7 @@ async def buscar_comprobantes(
     pipeline = [
         {"$match": students},
         *_PAGO_HYDRATE_PIPELINE,
-        {"$addFields": {"origen": "estudiantil"}},
+        {"$addFields": {"origen": "pago"}},
         {"$unionWith": {"coll": "alquileres", "pipeline": [
             {"$match": rentals},
             {"$lookup": {
@@ -3018,12 +2685,12 @@ async def update_pago(
 
     update: dict = {}
 
-    if body.id_estudiante and body.id_estudiante != pago["id_estudiante"]:
-        if not await db.estudiantes.find_one(
-            {"id": body.id_estudiante, "office_id": pago["office_id"]}
+    if body.cliente_id and body.cliente_id != pago["cliente_id"]:
+        if not await db.clientes.find_one(
+            {"id": body.cliente_id}
         ):
-            raise HTTPException(status_code=400, detail="Estudiante no encontrado en esta oficina")
-        update["id_estudiante"] = body.id_estudiante
+            raise HTTPException(status_code=400, detail="Cliente no encontrado")
+        update["cliente_id"] = body.cliente_id
 
     itemized = isinstance(stored_items, list) and len(stored_items) == 1
     current_item = stored_items[0] if itemized else {}
@@ -3194,9 +2861,9 @@ async def reportes(
     alquileres = await db.alquileres.find(
         rental_filter, {"_id": 0, "intervals": 0}
     ).sort("fecha_pago", 1).to_list(None)
-    total_estudiantil = sum(float(p["total"]) for p in validos)
+    total_pago = sum(float(p["total"]) for p in validos)
     total_alquileres = sum(float(a["total"]) for a in alquileres)
-    total_validos = total_estudiantil + total_alquileres
+    total_validos = total_pago + total_alquileres
     total_anulados = sum(float(p["total"]) for p in anulados)
     selected_office = (
         await db.oficinas.find_one({"id": scope["office_id"]}, {"_id": 0, "nombre": 1})
@@ -3211,7 +2878,7 @@ async def reportes(
         "alquileres": alquileres,
         "totales": {
             "validos": total_validos,
-            "estudiantiles": total_estudiantil,
+            "pagos": total_pago,
             "alquileres": total_alquileres,
             "anulados": total_anulados,
             "diferencia": total_validos - total_anulados,
@@ -3227,7 +2894,7 @@ async def dashboard_stats(
 ):
     scope = await office_scope(user, office_id)
     today = date.today().isoformat()
-    estudiantes_count = await db.estudiantes.count_documents(scope)
+    clientes_count = await db.clientes.count_documents({})
     tipospagos_count = await db.tipos_pagos.count_documents(scope)
     pagos_hoy_count = await db.pagos.count_documents(
         {
@@ -3258,7 +2925,7 @@ async def dashboard_stats(
         if scope.get("office_id") else None
     )
     return {
-        "estudiantes": estudiantes_count,
+        "clientes": clientes_count,
         "tipospagos": tipospagos_count,
         "pagos_hoy": pagos_hoy_count,
         "monto_hoy": monto_hoy,
@@ -3414,38 +3081,9 @@ async def startup():
         partialFilterExpression={"office_id": {"$type": "string"}, "rol": "Administrador"},
         name="one_admin_per_office",
     )
-    await db.estudiantes.create_index("id", unique=True)
-    await db.estudiantes.create_index("ci")
-    await db.estudiantes.create_index("office_id")
-    duplicate_personas = await db.personas.aggregate(
-        [
-            {"$group": {"_id": "$ci_key", "count": {"$sum": 1}}},
-            {"$match": {"count": {"$gt": 1}}},
-            {"$limit": 1},
-        ]
-    ).to_list(1)
-    if duplicate_personas:
-        raise RuntimeError(
-            "No se puede unificar Personas: hay C.I. duplicados entre oficinas. "
-            "Consolide esos registros antes de iniciar la aplicación."
-        )
-    persona_indexes = await db.personas.index_information()
-    if "person_ci_per_office" in persona_indexes:
-        await db.personas.drop_index("person_ci_per_office")
-    await db.personas.update_many(
-        {},
-        {"$unset": {"office_id": "", "office_nombre": ""}},
-    )
-    await db.personas.create_index("id", unique=True)
-    await db.personas.create_index(
-        "ci_key", unique=True, name="person_ci_global"
-    )
-    await db.estudiantes.create_index(
-        [("office_id", 1), ("cu", 1)],
-        unique=True,
-        partialFilterExpression={"office_id": {"$type": "string"}, "cu": {"$gt": ""}},
-        name="student_cu_per_office",
-    )
+    await db.clientes.create_index("id", unique=True)
+    for key in ("ci_key", "cu_key"):
+        await db.clientes.create_index(key, unique=True, partialFilterExpression={key: {"$gt": ""}})
     await db.tipos_pagos.create_index("id", unique=True)
     await db.tipos_pagos.create_index(
         [("office_id", 1), ("nombre_key", 1)],
@@ -3482,7 +3120,7 @@ async def startup():
     await db.pagos.create_index([("office_id", 1), ("fecha_pago", 1)])
     await db.pagos.create_index("fecha_pago")
     await db.pagos.create_index("created_by")
-    await db.pagos.create_index("id_estudiante")
+    await db.pagos.create_index("cliente_id")
     await db.pagos.create_index("id_tipo_pago")
     await reconcile_payment_counters()
 
@@ -3568,6 +3206,7 @@ app.add_middleware(
 )
 
 
+register_client_routes(api, MongoClientes(lambda: db), require_roles("Administrador", "Caja"), require_roles("Administrador", "Caja"), require_roles("SuperAdmin"))
 app.include_router(api)
 
 logging.basicConfig(

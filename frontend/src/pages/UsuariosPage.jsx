@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { apiClient, formatApiError } from "@/lib/api";
+import { ImportSelection } from "@/components/ImportSelection";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -35,7 +36,6 @@ const EMPTY = { codigo: "", email: "", nombre: "", password: "", rol: "Caja" };
 export default function UsuariosPage() {
   const { user } = useAuth();
   const isSuperAdmin = user?.rol === "SuperAdmin";
-  const isAdministrador = user?.rol === "Administrador";
   const [usuarios, setUsuarios] = useState([]);
   const [oficinas, setOficinas] = useState([]);
   const [officeFilter, setOfficeFilter] = useState("all");
@@ -106,6 +106,7 @@ export default function UsuariosPage() {
     try {
       if (editingUsuario) {
         const payload = {
+          email: formData.email,
           nombre: formData.nombre,
           rol: formData.rol,
           ...(isSuperAdmin ? { office_id: formData.office_id } : {}),
@@ -175,7 +176,7 @@ export default function UsuariosPage() {
 
   const canManage = (usuario) =>
     usuario.rol !== "SuperAdmin" &&
-    (isSuperAdmin || (isAdministrador && usuario.rol !== "Administrador"));
+    isSuperAdmin;
 
   const handleOpenChange = (isOpen) => {
     setOpen(isOpen);
@@ -233,6 +234,7 @@ export default function UsuariosPage() {
             </Select>
           </div>
         )}
+        <ImportSelection kind="usuarios" onSelect={(row) => { setEditingUsuario(null); setFormData({ ...EMPTY, office_id: "", ...row }); setOpen(true); }} />
         <Dialog open={open} onOpenChange={handleOpenChange}>
           <DialogTrigger asChild>
             <Button
@@ -250,6 +252,7 @@ export default function UsuariosPage() {
               </DialogTitle>
             </DialogHeader>
             <form onSubmit={handleSubmit} className="space-y-4">
+              <p className="text-xs text-[color:var(--institution-muted)]">{editingUsuario ? `Id: ${editingUsuario.id}` : "El Id se generará automáticamente al guardar."}</p>
               <div className="space-y-1.5">
                 <Label htmlFor="user-code" className="text-xs uppercase tracking-widest text-[color:var(--institution-muted)]">
                   Código de usuario (3 dígitos)
@@ -296,7 +299,6 @@ export default function UsuariosPage() {
                     setFormData({ ...formData, email: e.target.value })
                   }
                   required
-                  disabled={!!editingUsuario}
                   data-testid="user-email-input"
                   className="rounded-sm"
                 />
@@ -403,10 +405,13 @@ export default function UsuariosPage() {
           <TableHeader>
             <TableRow style={{ backgroundColor: "var(--institution-cream)" }}>
               <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">
+                Id
+              </TableHead>
+              <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">
                 Código
               </TableHead>
               <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">
-                Nombre
+                Nombre completo
               </TableHead>
               <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">
                 Email
@@ -425,6 +430,7 @@ export default function UsuariosPage() {
           <TableBody>
             {usuarios.map((usuario) => (
               <TableRow key={usuario.id} data-testid={`user-row-${usuario.id}`}>
+                <TableCell className="font-mono text-xs">{usuario.id}</TableCell>
                 <TableCell>{usuario.codigo || "—"}</TableCell>
                 <TableCell className="font-medium">{usuario.nombre}</TableCell>
                 <TableCell>{usuario.email}</TableCell>
@@ -469,7 +475,7 @@ export default function UsuariosPage() {
             {usuarios.length === 0 && (
               <TableRow>
                 <TableCell
-                  colSpan={6}
+                  colSpan={7}
                   className="text-center py-12 text-sm text-[color:var(--institution-muted)]"
                 >
                   Sin usuarios registrados.

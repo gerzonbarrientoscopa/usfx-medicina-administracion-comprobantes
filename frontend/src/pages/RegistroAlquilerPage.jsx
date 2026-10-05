@@ -47,12 +47,10 @@ export default function RegistroAlquilerPage() {
   const [customerSearchFailed, setCustomerSearchFailed] = useState(false);
   const [customer, setCustomer] = useState(null);
   const [newClientOpen, setNewClientOpen] = useState(false);
-  const [newClientType, setNewClientType] = useState("");
   const [newClientForm, setNewClientForm] = useState(() => ({
     ci: "",
     cu: "",
     nombre: "",
-    gestion: new Date().getFullYear(),
   }));
   const [creatingClient, setCreatingClient] = useState(false);
   const [date, setDate] = useState("");
@@ -141,7 +139,7 @@ export default function RegistroAlquilerPage() {
     let cancelled = false;
     const timer = window.setTimeout(async () => {
       try {
-        const { data } = await apiClient.get("/alquileres/clientes", { params: { q: customerQuery.trim() } });
+        const { data } = await apiClient.get("/clientes/buscar", { params: { q: customerQuery.trim() } });
         if (!cancelled) {
           setCustomers(Array.isArray(data) ? data : []);
           setCustomerSearchFailed(false);
@@ -221,11 +219,7 @@ export default function RegistroAlquilerPage() {
     const printWindow = chargeNow ? window.open("", "ALQUILER_PRINT", "height=760,width=820") : null;
     setSaving(true);
     try {
-      const payload = { ambiente_id: ambienteId, tarifa_id: tarifaId, fecha: date, cliente_tipo: customer.tipo, cliente_id: customer.id, cobrar_ahora: chargeNow };
-      if (customer.tipo === "estudiante") {
-        const documento = customer.ci || customer.cu;
-        if (documento) payload.cliente_documento = String(documento);
-      }
+      const payload = { ambiente_id: ambienteId, tarifa_id: tarifaId, fecha: date, cliente_id: customer.id, cobrar_ahora: chargeNow };
       if (officeId) payload.office_id = officeId;
       if (!isWholeDay) { payload.desde = start; payload.hasta = end; }
       const { data } = await apiClient.post("/alquileres", payload);
@@ -246,49 +240,25 @@ export default function RegistroAlquilerPage() {
     }
     finally { setSaving(false); }
   };
-  const openNewClient = (type) => {
-    setNewClientType(type);
+  const openNewClient = () => {
     setNewClientForm({
       ci: "",
       cu: "",
       nombre: "",
-      gestion: new Date().getFullYear(),
-    });
+      });
     setNewClientOpen(true);
   };
   const createNewClient = async (event) => {
     event.preventDefault();
-    if (newClientType === "estudiante" && !officeId) {
-      return toast.error("Seleccione una oficina.");
-    }
     setCreatingClient(true);
     try {
-      const payload = newClientType === "estudiante"
-        ? {
-          ci: newClientForm.ci,
-          cu: newClientForm.cu,
-          nombre: newClientForm.nombre,
-          gestion: Number(newClientForm.gestion),
-          office_id: officeId,
-        }
-        : { ci: newClientForm.ci, nombre: newClientForm.nombre };
-      const endpoint = newClientType === "estudiante"
-        ? "/estudiantes"
-        : "/alquileres/clientes/persona";
-      const { data } = await apiClient.post(endpoint, payload);
-      setCustomer({
-        ...data,
-        tipo: newClientType,
-        office_nombre: data.office_nombre || (newClientType === "estudiante" ? officeName : undefined),
-      });
+      const { data } = await apiClient.post("/clientes", newClientForm);
+      setCustomer(data);
       setCustomerQuery("");
       setCustomers([]);
       setCustomerSearchFailed(false);
       setNewClientOpen(false);
-      setNewClientType("");
-      toast.success(newClientType === "estudiante"
-        ? "Estudiante registrado y seleccionado."
-        : "Persona registrada y seleccionada.");
+      toast.success("Cliente registrado y seleccionado.");
     } catch (error) {
       toast.error(formatApiError(error) || "No se pudo registrar al cliente.");
     } finally {
@@ -376,19 +346,17 @@ export default function RegistroAlquilerPage() {
 
       <aside className="space-y-4 rounded-sm border bg-white p-5" style={{ borderColor: "var(--institution-border)" }}>
         <div><div className="section-eyebrow">Nueva reserva</div><h2 className="mt-1 font-serif-display text-2xl">Datos del alquiler</h2></div>
-        <div className="space-y-1.5"><Label htmlFor="rental-customer-search">Buscar persona o estudiante</Label><div className="relative"><Search size={15} className="absolute left-3 top-3 text-[color:var(--institution-muted)]"/><Input id="rental-customer-search" value={customerQuery} onChange={(e) => { setCustomerQuery(e.target.value); setCustomer(null); }} placeholder="Nombre o documento (mín. 2)" className="rounded-sm pl-9"/></div>
+        <div className="space-y-1.5"><Label htmlFor="rental-customer-search">Buscar cliente</Label><div className="relative"><Search size={15} className="absolute left-3 top-3 text-[color:var(--institution-muted)]"/><Input id="rental-customer-search" value={customerQuery} onChange={(e) => { setCustomerQuery(e.target.value); setCustomer(null); }} placeholder="Nombre o documento (mín. 2)" className="rounded-sm pl-9"/></div>
           {customerLoading && <p className="text-xs text-[color:var(--institution-muted)]">Buscando en el registro…</p>}
-          {customerQuery.trim().length >= 2 && !customerLoading && <div className="max-h-48 divide-y overflow-y-auto rounded-sm border" style={{ borderColor: "var(--institution-border)" }}>{customers.length ? customers.map((item) => <button key={`${item.tipo}-${item.id}`} type="button" onClick={() => { setCustomer(item); setCustomerQuery(""); setCustomers([]); }} className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left hover:bg-[color:var(--institution-cream)]"><span className="min-w-0"><span className="block truncate text-sm font-medium">{item.nombre}</span><span className="block text-xs text-[color:var(--institution-muted)]">{item.tipo === "persona" ? "Persona" : "Estudiante"} · CI {item.ci || "—"}{item.cu ? ` · CU ${item.cu}` : ""}</span>{item.tipo === "estudiante" && item.office_nombre && <span className="mt-0.5 block text-[10px] font-medium text-[color:var(--institution-burgundy)]">Oficina: {item.office_nombre}</span>}</span><Check size={15} className="shrink-0 opacity-0"/></button>) : <p className="p-3 text-sm text-[color:var(--institution-muted)]">{customerSearchFailed ? "No se pudo completar la búsqueda." : "No hay coincidencias para esta búsqueda."}</p>}</div>}
+          {customerQuery.trim().length >= 2 && !customerLoading && <div className="max-h-48 divide-y overflow-y-auto rounded-sm border" style={{ borderColor: "var(--institution-border)" }}>{customers.length ? customers.map((item) => <button key={item.id} type="button" onClick={() => { setCustomer(item); setCustomerQuery(""); setCustomers([]); }} className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left hover:bg-[color:var(--institution-cream)]"><span className="min-w-0"><span className="block truncate text-sm font-medium">{item.nombre}</span><span className="block text-xs text-[color:var(--institution-muted)]">Cliente · CI {item.ci || "—"}{item.cu ? ` · CU ${item.cu}` : ""}</span></span><Check size={15} className="shrink-0 opacity-0"/></button>) : <p className="p-3 text-sm text-[color:var(--institution-muted)]">{customerSearchFailed ? "No se pudo completar la búsqueda." : "No hay coincidencias para esta búsqueda."}</p>}</div>}
           {customerQuery.trim().length >= 2 && !customerLoading && !customerSearchFailed && customers.length === 0 && <div className="flex flex-wrap gap-2">
-            <Button type="button" size="sm" variant="outline" className="rounded-sm" onClick={() => openNewClient("estudiante")} data-testid="rental-create-student">
-              <Plus size={14} className="mr-1"/> Nuevo estudiante
-            </Button>
-            <Button type="button" size="sm" variant="outline" className="rounded-sm" onClick={() => openNewClient("persona")} data-testid="rental-create-person">
-              <Plus size={14} className="mr-1"/> Nueva persona
+            <Button type="button" size="sm" variant="outline" className="rounded-sm" onClick={openNewClient} data-testid="rental-create-client">
+              <Plus size={14} className="mr-1"/> Nuevo cliente
             </Button>
           </div>}
         </div>
-        {customer && <div className="flex items-start justify-between gap-3 rounded-sm border p-3" style={{ borderColor: "var(--institution-border)", background: "var(--institution-cream)" }}><div><div className="text-[10px] uppercase tracking-widest text-[color:var(--institution-muted)]">{customer.tipo === "persona" ? "Persona" : "Estudiante"}</div><div className="mt-1 text-sm font-medium">{customer.nombre}</div><div className="text-xs text-[color:var(--institution-muted)]">CI {customer.ci || "—"}{customer.cu ? ` · CU ${customer.cu}` : ""}</div>{customer.tipo === "estudiante" && customer.office_nombre && <div className="mt-1 text-xs font-medium text-[color:var(--institution-burgundy)]">Oficina del estudiante: {customer.office_nombre}</div>}</div><Button variant="ghost" size="sm" onClick={() => setCustomer(null)}>Cambiar</Button></div>}
+        <ImportSelection kind="clientes" onSelect={(row) => { setNewClientForm(row); setNewClientOpen(true); }} />
+        {customer && <div className="flex items-start justify-between gap-3 rounded-sm border p-3" style={{ borderColor: "var(--institution-border)", background: "var(--institution-cream)" }}><div><div className="text-[10px] uppercase tracking-widest text-[color:var(--institution-muted)]">Cliente</div><div className="mt-1 text-sm font-medium">{customer.nombre}</div><div className="text-xs text-[color:var(--institution-muted)]">CI {customer.ci || "—"}{customer.cu ? ` · CU ${customer.cu}` : ""}</div></div><Button variant="ghost" size="sm" onClick={() => setCustomer(null)}>Cambiar</Button></div>}
         <div className="space-y-1.5"><Label htmlFor="rental-date">Fecha de uso</Label><Input id="rental-date" type="date" value={date} onChange={(e) => { const value = e.target.value; setDate(value); setStart(""); setEnd(""); if (value) { const selectedDate = parseDate(value); selectedDate.setDate(selectedDate.getDate() - ((selectedDate.getDay() + 6) % 7)); setAnchor(fmtDate(selectedDate)); } }} className="rounded-sm"/></div>
         {tarifa && <div className="space-y-3 rounded-sm border p-3" style={{ borderColor: "var(--institution-border)" }}><div className="flex items-center justify-between gap-2"><div><div className="text-[10px] uppercase tracking-widest text-[color:var(--institution-muted)]">Horario</div><div className="mt-1 text-sm font-medium">{tarifa.modalidad === "dia" ? "Jornada completa" : SHIFT_MODALITIES.includes(tarifa.modalidad) ? `${SHIFT_LABELS[tarifa.modalidad]} · ${tarifa.desde}–${tarifa.hasta}` : start ? `${start}${end ? `–${end}` : " · seleccione fin"}` : "Seleccione inicio en agenda"}</div></div><Clock3 size={17} className="text-[color:var(--institution-muted)]"/></div>
           {tarifa.modalidad === "dia" && <p className="text-xs text-[color:var(--institution-muted)]">Se reservarán automáticamente todos los tramos del horario registrado para ese día.</p>}
@@ -405,39 +373,28 @@ export default function RegistroAlquilerPage() {
     <Dialog open={newClientOpen} onOpenChange={(open) => {
       if (creatingClient && !open) return;
       setNewClientOpen(open);
-      if (!open) setNewClientType("");
     }}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>
-            {newClientType === "estudiante" ? "Nuevo estudiante" : "Nueva persona"}
+            Nuevo cliente
           </DialogTitle>
         </DialogHeader>
         <form onSubmit={createNewClient} className="grid grid-cols-2 gap-4" data-testid="rental-new-client-form">
-          {newClientType === "estudiante" && <div className="space-y-1.5">
-            <Label htmlFor="rental-new-client-gestion">Gestión</Label>
-            <Input
-              id="rental-new-client-gestion"
-              type="number"
-              value={newClientForm.gestion}
-              onChange={(event) => setNewClientForm({ ...newClientForm, gestion: event.target.value })}
-              required
-              className="rounded-sm"
-            />
-          </div>}
-          <div className={`space-y-1.5 ${newClientType === "persona" ? "col-span-2" : ""}`}>
+          <div className="col-span-2"><ImportSelection kind="clientes" onSelect={setNewClientForm} /></div>
+          <div className="space-y-1.5">
             <Label htmlFor="rental-new-client-ci">C.I.</Label>
             <Input
               id="rental-new-client-ci"
               value={newClientForm.ci}
               onChange={(event) => setNewClientForm({ ...newClientForm, ci: event.target.value })}
-              required
+              required={!newClientForm.cu.trim()}
               className="rounded-sm"
               autoComplete="off"
               data-testid="rental-new-client-ci"
             />
           </div>
-          {newClientType === "estudiante" && <div className="space-y-1.5">
+          <div className="space-y-1.5">
             <Label htmlFor="rental-new-client-cu">C.U.</Label>
             <Input
               id="rental-new-client-cu"
@@ -445,7 +402,7 @@ export default function RegistroAlquilerPage() {
               onChange={(event) => setNewClientForm({ ...newClientForm, cu: event.target.value })}
               className="rounded-sm"
             />
-          </div>}
+          </div>
           <div className="col-span-2 space-y-1.5">
             <Label htmlFor="rental-new-client-name">Nombre completo</Label>
             <Input

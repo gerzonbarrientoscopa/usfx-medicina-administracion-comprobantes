@@ -96,7 +96,7 @@ export default function ReportesPage() {
         setCreatedBy("");
         setUsuarios([]);
         const params = officeId ? { office_id: officeId } : {};
-        apiClient.get("/usuarios/list", { params })
+        apiClient.get("/reportes/registradores", { params })
             .then((r) => {
                 if (!cancelled) setUsuarios(r.data);
             })
@@ -137,11 +137,11 @@ export default function ReportesPage() {
 
     const reportOfficeName = data?.office_nombre || officeName;
     const reportRows = sortReportReceipts([
-        ...(data?.pagos || []).map((pago) => ({ ...pago, origen: "Estudiantil" })),
+        ...(data?.pagos || []).map((pago) => ({ ...pago, origen: "de cliente" })),
         ...(data?.alquileres || []).map((alquiler) => ({
             ...alquiler,
             origen: "Alquiler",
-            estudiante_nombre: alquiler.cliente_nombre,
+            cliente_nombre: alquiler.cliente_nombre,
             items: [{
                 tipo_pago_nombre: `${alquiler.ambiente_nombre} · ${alquiler.tarifa_nombre}`,
                 cantidad: alquiler.cantidad,
@@ -182,7 +182,7 @@ export default function ReportesPage() {
                 reportRows,
                 (pago, rowSpan) => [
                     groupedPdfCell(formatComprobante(pago), rowSpan),
-                    groupedPdfCell(`${pago.origen}: ${pago.estudiante_nombre || ""}`, rowSpan),
+                    groupedPdfCell(`${pago.origen}: ${pago.cliente_nombre || ""}`, rowSpan),
                     groupedPdfCell(formatDate(pago.fecha_pago), rowSpan),
                 ],
                 (pago, { item, amount }) => [
@@ -203,7 +203,7 @@ export default function ReportesPage() {
             autoTable(doc, {
                 startY: finalY,
                 body: [
-                    ["", "", "", "ESTUDIANTILES", formatMoney(data.totales.estudiantiles), ""],
+                    ["", "", "", "PAGOS", formatMoney(data.totales.pagos), ""],
                     ["", "", "", "ALQUILERES", formatMoney(data.totales.alquileres), ""],
                     ["", "", "", "TOTAL VÁLIDOS", formatMoney(data.totales.validos), ""],
                     ["", "", "", "TOTAL ANULADOS", "", formatMoney(data.totales.anulados)],
@@ -219,7 +219,7 @@ export default function ReportesPage() {
                 filtered,
                 (pago, rowSpan) => [
                     groupedPdfCell(formatComprobante(pago), rowSpan),
-                    groupedPdfCell(`${pago.origen}: ${pago.estudiante_nombre || ""}`, rowSpan),
+                    groupedPdfCell(`${pago.origen}: ${pago.cliente_nombre || ""}`, rowSpan),
                     groupedPdfCell(formatDate(pago.fecha_pago), rowSpan),
                 ],
                 (_pago, { item, amount }) => [
@@ -241,7 +241,7 @@ export default function ReportesPage() {
             autoTable(doc, {
                 startY: finalY,
                 body: modo === "validos" ? [
-                    ["", "", "", "", "ESTUDIANTILES", formatMoney(data.totales.estudiantiles)],
+                    ["", "", "", "", "PAGOS", formatMoney(data.totales.pagos)],
                     ["", "", "", "", "ALQUILERES", formatMoney(data.totales.alquileres)],
                     ["", "", "", "", "TOTAL", formatMoney(total)],
                 ] : [["", "", "", "", "TOTAL", formatMoney(total)]],
@@ -268,7 +268,7 @@ export default function ReportesPage() {
                 return reportConceptRows(pago).map(({ item, amount }) => ({
                     Comprobante: formatComprobante(pago),
                     Origen: pago.origen,
-                    Cliente: pago.estudiante_nombre || "",
+                    Cliente: pago.cliente_nombre || "",
                     Fecha: formatDate(pago.fecha_pago),
                     Concepto: item?.tipo_pago_nombre || "Sin conceptos",
                     Cantidad: item?.cantidad ?? "",
@@ -279,7 +279,7 @@ export default function ReportesPage() {
                 }));
             });
             rows.push({});
-            rows.push({ Comprobante: "ESTUDIANTILES", Valido: data.totales.estudiantiles });
+            rows.push({ Comprobante: "PAGOS", Valido: data.totales.pagos });
             rows.push({ Comprobante: "ALQUILERES", Valido: data.totales.alquileres });
             rows.push({ Comprobante: "TOTAL VÁLIDOS", Valido: data.totales.validos });
             rows.push({ Comprobante: "TOTAL ANULADOS", Anulado: data.totales.anulados });
@@ -290,7 +290,7 @@ export default function ReportesPage() {
                 return reportConceptRows(pago).map(({ item, amount }) => ({
                     Comprobante: formatComprobante(pago),
                     Origen: pago.origen,
-                    Cliente: pago.estudiante_nombre || "",
+                    Cliente: pago.cliente_nombre || "",
                     Fecha: formatDate(pago.fecha_pago),
                     Concepto: item?.tipo_pago_nombre || "Sin conceptos",
                     Cantidad: item?.cantidad ?? "",
@@ -300,7 +300,7 @@ export default function ReportesPage() {
             });
             rows.push({});
             if (modo === "validos") {
-                rows.push({ Comprobante: "ESTUDIANTILES", Total: data.totales.estudiantiles });
+                rows.push({ Comprobante: "PAGOS", Total: data.totales.pagos });
                 rows.push({ Comprobante: "ALQUILERES", Total: data.totales.alquileres });
             }
             rows.push({
@@ -478,7 +478,7 @@ export default function ReportesPage() {
                                             Bs. {formatMoney(data.totales.validos)}
                                         </div>
                                         <div className="text-xs text-[color:var(--institution-muted)]">{data.totales.count_validos} comprobantes</div>
-                                        <div className="text-xs text-[color:var(--institution-muted)]">Estudiantiles: Bs. {formatMoney(data.totales.estudiantiles)}</div>
+                                        <div className="text-xs text-[color:var(--institution-muted)]">de clientes: Bs. {formatMoney(data.totales.pagos)}</div>
                                         <div className="text-xs text-[color:var(--institution-muted)]">Alquileres: Bs. {formatMoney(data.totales.alquileres)} ({data.alquileres.length})</div>
                                     </div>
                                     <div>
@@ -523,7 +523,7 @@ export default function ReportesPage() {
                                                         )}
                                                         {first && (
                                                             <TableCell rowSpan={concepts.length} className="align-middle">
-                                                                {pago.origen} · {pago.estudiante_nombre}
+                                                                {pago.origen} · {pago.cliente_nombre}
                                                             </TableCell>
                                                         )}
                                                         {first && (
@@ -559,7 +559,7 @@ export default function ReportesPage() {
                                                     </TableCell>
                                                     <TableCell className="text-right font-mono-num font-semibold">
                                                         {formatMoney(data.totales.validos)}
-                                                        <div className="text-xs font-normal">Estudiantiles: {formatMoney(data.totales.estudiantiles)} · Alquileres: {formatMoney(data.totales.alquileres)}</div>
+                                                        <div className="text-xs font-normal">de clientes: {formatMoney(data.totales.pagos)} · Alquileres: {formatMoney(data.totales.alquileres)}</div>
                                                     </TableCell>
                                                     <TableCell className="text-right font-mono-num font-semibold">{formatMoney(data.totales.anulados)}</TableCell>
                                                 </TableRow>

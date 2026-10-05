@@ -100,8 +100,8 @@ export default function DashboardPage() {
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                 <StatCard
-                    label="Estudiantes registrados"
-                    value={stats?.estudiantes ?? "—"}
+                    label="Clientes registrados"
+                    value={stats?.clientes ?? "—"}
                     icon={GraduationCap}
                     accent="var(--institution-navy)"
                 />

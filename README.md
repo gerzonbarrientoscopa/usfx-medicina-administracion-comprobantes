@@ -173,11 +173,12 @@ Todos los endpoints están prefijados con `/api`. JWT vía cookie `access_token`
 - `GET  /api/auth/me`
 - `POST /api/auth/logout`
 
-### Estudiantes (admin, caja para crear)
-- `GET /api/estudiantes?q=`
-- `POST /api/estudiantes`
-- `PUT /api/estudiantes/{id}`
-- `DELETE /api/estudiantes/{id}`
+### Clientes (SuperAdmin, Administrador y Caja)
+- `GET /api/clientes?textoBuscar=` — catálogo compartido, paginado.
+- `POST /api/clientes` — `{ ci, cu, nombre }`; Id generado en backend.
+- `PUT /api/clientes/{id}`
+- `DELETE /api/clientes/{id}` — bloqueado si tiene pagos o alquileres.
+- `GET /api/clientes/importacion?q=` — consultar servicio externo y seleccionar un registro.
 
 ### Tipos de Pago (admin)
 - `GET /api/tipospagos`
@@ -194,17 +195,50 @@ Todos los endpoints están prefijados con `/api`. JWT vía cookie `access_token`
 ### Reportes (admin)
 - `GET /api/reportes?periodo=diario|semanal|mensual|rango[&desde&hasta]`
 
-### Usuarios (admin)
-- CRUD `/api/users`
+### Usuarios (solo SuperAdmin)
+- CRUD `/api/usuarios`; Código separado del Id generado.
+- `GET /api/usuarios/importacion?q=` — consulta del directorio configurable.
+- `GET /api/reportes/registradores` — nombres/Ids para filtrar reportes dentro de la oficina; no administración de usuarios.
 
 ---
 
-## 🗃️ Migración desde MySQL
+## Inicio desde cero e importación
 
-La base de datos original era MySQL relacional (`SqlComprobantes.sql`). La estructura ha sido migrada a colecciones MongoDB:
+No se migran los catálogos anteriores de Estudiantes y Personas. Ambos backends
+utilizan Clientes con Id generado, C.I., C.U. y Nombre completo. Al menos un
+C.I. o C.U. debe existir; cada identificador no vacío es único en todo el catálogo.
+MongoDB genera UUIDs; SQL Server utiliza INT IDENTITY. El frontend trata todos
+los Id como cadenas. Los pagos y alquileres envían cliente_id.
 
-| MySQL          | MongoDB            | Notas |
-|----------------|--------------------|-------|
+### SQL Server local
+
+Mantenga juntos los archivos del directorio backend (incluidos client_models.py,
+client_routes.py e import_services.py); instale requirements-sql.txt en su equipo.
+Detenga serverSQL.py. Para **borrar todos los datos locales** de ComprobantesDB,
+ejecute backend/ReiniciarLocal.Sql (destructivo); luego backend/Tablas.Sql e inicie
+serverSQL.py. El inicio crea únicamente el SuperAdmin de las variables ADMIN_*.
+Tablas.Sql no borra bases existentes y rechaza esquemas incompatibles.
+Si usa otro nombre de base, ajuste ambos scripts y SQLSERVER_DATABASE.
+Nunca se conecta ni ejecuta serverSQL.py desde Replit.
+
+### Directorios externos
+
+Configure CLIENTS_IMPORT_API_URL y USERS_IMPORT_API_URL en el entorno del
+backend; opcionalmente CLIENTS_IMPORT_API_TOKEN / USERS_IMPORT_API_TOKEN para
+Bearer. No ponga tokens en variables REACT_APP_* ni en el frontend.
+Cada URL se consulta mediante GET y devuelve una lista JSON:
+
+- Clientes: [{"CI":"123", "CU":"456", "Nombre Completo":"Nombre Apellido"}]
+- Usuarios: [{"Código":"007", "Nombre Completo":"Nombre Apellido", "Email":"persona@example.com"}]
+
+Se aceptan también las claves canónicas ci/cu/nombre y codigo/nombre/email.
+Los Id externos se descartan. En “Importar desde API” seleccione un resultado,
+revise el formulario y confirme; los usuarios requieren además contraseña,
+rol y oficina. No se crean registros automáticamente al consultar el servicio.
+Servicios ausentes, inaccesibles o con formato inválido muestran errores explícitos.
+Sincronización masiva/automática no forma parte de esta importación seleccionable.
+
+----------------|--------------------|-------|
 | `personas`     | `estudiantes`      | Agrega campo `codigo` requerido. |
 | `tipospagos`   | `tipospagos`       | Nuevo campo `codigo`. |
 | `pagos`        | `pagos`            | Nuevos campos: `total`, `anulado`, `anulado_at`, `anulado_by`, `created_by`. |

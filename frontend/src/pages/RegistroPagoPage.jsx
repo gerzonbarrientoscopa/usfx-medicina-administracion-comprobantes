@@ -66,7 +66,7 @@ export default function RegistroPagoPage() {
         isSuperAdmin, offices, officeId, officeName, selectedOfficeId, setSelectedOfficeId,
     } = useOfficeScope();
     const draftStorageKey = officeId ? `usfx-pago-borrador-${officeId}` : null;
-    const [estudiantes, setEstudiantes] = useState([]);
+    const [clientes, setClientes] = useState([]);
     const [tiposPago, setTiposPago] = useState([]);
     const catalogRequest = useRef(0);
 
@@ -82,14 +82,14 @@ export default function RegistroPagoPage() {
 
     const [newEstOpen, setNewEstOpen] = useState(false);
     const [newEst, setNewEst] = useState(NEW_EST_EMPTY);
-    const [creatingEstudiante, setCreatingEstudiante] = useState(false);
+    const [creatingCliente, setCreatingCliente] = useState(false);
 
     const [submitting, setSubmitting] = useState(false);
 
     const loadAll = useCallback(async () => {
         const requestId = ++catalogRequest.current;
         if (isSuperAdmin && !officeId) {
-            setEstudiantes([]);
+            setClientes([]);
             setTiposPago([]);
             return;
         }
@@ -107,10 +107,10 @@ export default function RegistroPagoPage() {
             ];
         };
         const [students, types] = await Promise.all([
-            loadPages("/estudiantes"), loadPages("/tipos-pagos"),
+            loadPages("/clientes"), loadPages("/tipos-pagos"),
         ]);
         if (requestId === catalogRequest.current) {
-            setEstudiantes(students);
+            setClientes(students);
             setTiposPago(types);
         }
     }, [officeId, isSuperAdmin]);
@@ -134,10 +134,10 @@ export default function RegistroPagoPage() {
                 }
                 setPago(data);
                 setSelectedEst({
-                    id: data.id_estudiante,
-                    nombre: data.estudiante_nombre,
-                    ci: data.estudiante_ci,
-                    cu: data.estudiante_cu,
+                    id: data.cliente_id,
+                    nombre: data.cliente_nombre,
+                    ci: data.cliente_ci,
+                    cu: data.cliente_cu,
                 });
             })
             .catch(() => {
@@ -156,11 +156,11 @@ export default function RegistroPagoPage() {
 
     const generarComprobante = async () => {
         if (!officeId) return toast.error("Seleccione una oficina.");
-        if (!selectedEst) return toast.error("Seleccione un estudiante.");
+        if (!selectedEst) return toast.error("Seleccione un cliente.");
         setSubmitting(true);
         try {
             const { data } = await apiClient.post("/pagos", {
-                id_estudiante: selectedEst.id,
+                cliente_id: selectedEst.id,
                 fecha_pago: fechaPago,
                 office_id: officeId,
             });
@@ -245,16 +245,14 @@ export default function RegistroPagoPage() {
     const onCreateNewEst = async (e) => {
         e.preventDefault();
         if (!officeId) return toast.error("Seleccione una oficina.");
-        setCreatingEstudiante(true);
+        setCreatingCliente(true);
         try {
-            const { data } = await apiClient.post("/estudiantes", {
+            const { data } = await apiClient.post("/clientes", {
                 ci: newEst.ci,
                 cu: newEst.cu,
                 nombre: newEst.nombre,
-                gestion: Number(newEst.gestion),
-                office_id: officeId,
             });
-            toast.success("Estudiante registrado");
+            toast.success("Cliente registrado");
             await loadAll();
             setSelectedEst(data);
             setNewEst(NEW_EST_EMPTY);
@@ -273,7 +271,7 @@ export default function RegistroPagoPage() {
                 toast.error("Error al guardar los cambios.");
             }
         } finally {
-            setCreatingEstudiante(false);
+            setCreatingCliente(false);
         }
     };
 
@@ -283,7 +281,7 @@ export default function RegistroPagoPage() {
                 <div className="section-eyebrow">Caja</div>
                 <h1 className="font-serif-display text-4xl mt-1">Registro de Pago</h1>
                 <p className="text-sm text-[color:var(--institution-muted)] mt-1">
-                    Seleccione un estudiante, genere el comprobante y agregue los conceptos del catálogo.
+                    Seleccione un cliente, genere el comprobante y agregue los conceptos del catálogo.
                 </p>
             </div>
 
@@ -318,7 +316,7 @@ export default function RegistroPagoPage() {
                         )}
                         <div className="space-y-1.5">
                             <Label className="text-xs uppercase tracking-widest text-[color:var(--institution-muted)]">
-                                Estudiante
+                                Cliente
                             </Label>
                             <div className="flex gap-2">
                                 <Popover open={estOpen} onOpenChange={setEstOpen}>
@@ -328,23 +326,23 @@ export default function RegistroPagoPage() {
                                             role="combobox"
                                             disabled={!officeId || Boolean(pago)}
                                             className="rounded-sm justify-between flex-1 font-normal"
-                                            data-testid="estudiante-select-btn"
+                                            data-testid="cliente-select-btn"
                                         >
                                             <span className="truncate">
                                                 {selectedEst
                                                     ? `${selectedEst.nombre} — CI: ${selectedEst.ci}`
-                                                    : "Buscar estudiante…"}
+                                                    : "Buscar cliente…"}
                                             </span>
                                             <ChevronsUpDown size={14} className="ml-2 opacity-50" />
                                         </Button>
                                     </PopoverTrigger>
                                     <PopoverContent className="p-0 rounded-sm" align="start" style={{ width: "var(--radix-popover-trigger-width)" }}>
                                         <Command>
-                                            <CommandInput placeholder="Nombre, CI o CU…" data-testid="estudiante-search-input" />
+                                            <CommandInput placeholder="Nombre, CI o CU…" data-testid="cliente-search-input" />
                                             <CommandList>
                                                 <CommandEmpty>Sin resultados.</CommandEmpty>
                                                 <CommandGroup>
-                                                    {estudiantes.map((e) => (
+                                                    {clientes.map((e) => (
                                                         <CommandItem
                                                             key={e.id}
                                                             value={`${e.nombre} ${e.ci} ${e.cu || ""}`}
@@ -379,7 +377,7 @@ export default function RegistroPagoPage() {
                                     className="rounded-sm"
                                     onClick={() => setNewEstOpen(true)}
                                     disabled={!officeId || Boolean(pago)}
-                                    data-testid="add-new-estudiante-btn"
+                                    data-testid="add-new-cliente-btn"
                                 >
                                     <Plus size={14} className="mr-1" /> Nuevo
                                 </Button>
@@ -416,7 +414,7 @@ export default function RegistroPagoPage() {
 
                         <div className="space-y-2 pt-2">
                             <Row label="Oficina" value={officeName || "—"} />
-                            <Row label="Estudiante" value={selectedEst ? `${selectedEst.nombre}` : "—"} />
+                            <Row label="Cliente" value={selectedEst ? `${selectedEst.nombre}` : "—"} />
                             <Row label="C.I." value={selectedEst?.ci || "—"} />
                             <Row label="Fecha de pago" value={formatDate(pago.fecha_pago || fechaPago)} />
                         </div>
@@ -572,30 +570,20 @@ export default function RegistroPagoPage() {
                 </CardContent>
             </Card>
 
-            {/* New estudiante dialog */}
+            {/* New cliente dialog */}
             <Dialog open={newEstOpen} onOpenChange={setNewEstOpen}>
                 <DialogContent className="rounded-sm">
                     <DialogHeader>
-                        <DialogTitle className="font-serif-display text-2xl">Nuevo estudiante</DialogTitle>
+                        <DialogTitle className="font-serif-display text-2xl">Nuevo cliente</DialogTitle>
                     </DialogHeader>
                     <form onSubmit={onCreateNewEst} className="grid grid-cols-2 gap-4" data-testid="new-est-popup-form">
-                        <div className="space-y-1.5">
-                            <Label className="text-xs uppercase tracking-widest text-[color:var(--institution-muted)]">Gestión</Label>
-                            <Input
-                                type="number"
-                                value={newEst.gestion}
-                                onChange={(e) => setNewEst({ ...newEst, gestion: e.target.value })}
-                                required
-                                className="rounded-sm"
-                                data-testid="new-est-gestion"
-                            />
-                        </div>
+                        <div className="col-span-2"><ImportSelection kind="clientes" onSelect={setNewEst} /></div>
                         <div className="space-y-1.5">
                             <Label className="text-xs uppercase tracking-widest text-[color:var(--institution-muted)]">C.I.</Label>
                             <Input
                                 value={newEst.ci}
                                 onChange={(e) => setNewEst({ ...newEst, ci: e.target.value })}
-                                required
+                                required={!newEst.cu.trim()}
                                 className="rounded-sm"
                                 data-testid="new-est-ci"
                             />
@@ -622,12 +610,12 @@ export default function RegistroPagoPage() {
                         <DialogFooter className="col-span-2">
                             <Button
                                 type="submit"
-                                disabled={creatingEstudiante}
+                                disabled={creatingCliente}
                                 className="rounded-sm text-white"
                                 style={{ backgroundColor: "var(--institution-burgundy)" }}
                                 data-testid="new-est-save"
                             >
-                                {creatingEstudiante ? "Registrando…" : "Registrar y seleccionar"}
+                                {creatingCliente ? "Registrando…" : "Registrar y seleccionar"}
                             </Button>
                         </DialogFooter>
                     </form>
