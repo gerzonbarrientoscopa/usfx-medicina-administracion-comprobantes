@@ -137,7 +137,7 @@ export default function ReportesPage() {
 
     const reportOfficeName = data?.office_nombre || officeName;
     const reportRows = sortReportReceipts([
-        ...(data?.pagos || []).map((pago) => ({ ...pago, origen: "de cliente" })),
+        ...(data?.pagos || []).map((pago) => ({ ...pago, origen: "Cobro" })),
         ...(data?.alquileres || []).map((alquiler) => ({
             ...alquiler,
             origen: "Alquiler",
@@ -182,7 +182,7 @@ export default function ReportesPage() {
                 reportRows,
                 (pago, rowSpan) => [
                     groupedPdfCell(formatComprobante(pago), rowSpan),
-                    groupedPdfCell(`${pago.origen}: ${pago.cliente_nombre || ""}`, rowSpan),
+                    groupedPdfCell(pago.origen, rowSpan),
                     groupedPdfCell(formatDate(pago.fecha_pago), rowSpan),
                 ],
                 (pago, { item, amount }) => [
@@ -193,7 +193,7 @@ export default function ReportesPage() {
             );
             autoTable(doc, {
                 startY: 134,
-                head: [["Comprobante", "Origen / cliente", "Fecha", "Concepto", "Válido (Bs.)", "Anulado (Bs.)"]],
+                head: [["Comprobante", "Origen", "Fecha", "Concepto", "Válido (Bs.)", "Anulado (Bs.)"]],
                 body: rows,
                 styles: { fontSize: 9, cellPadding: 5 },
                 headStyles: { fillColor: [122, 32, 53], textColor: 255 },
@@ -219,7 +219,7 @@ export default function ReportesPage() {
                 filtered,
                 (pago, rowSpan) => [
                     groupedPdfCell(formatComprobante(pago), rowSpan),
-                    groupedPdfCell(`${pago.origen}: ${pago.cliente_nombre || ""}`, rowSpan),
+                    groupedPdfCell(pago.origen, rowSpan),
                     groupedPdfCell(formatDate(pago.fecha_pago), rowSpan),
                 ],
                 (_pago, { item, amount }) => [
@@ -230,7 +230,7 @@ export default function ReportesPage() {
             );
             autoTable(doc, {
                 startY: 134,
-                head: [["Comprobante", "Origen / cliente", "Fecha", "Concepto", "Cant.", "Total (Bs.)"]],
+                head: [["Comprobante", "Origen", "Fecha", "Concepto", "Cant.", "Total (Bs.)"]],
                 body: rows,
                 styles: { fontSize: 9, cellPadding: 5 },
                 headStyles: { fillColor: [122, 32, 53], textColor: 255 },
@@ -502,7 +502,7 @@ export default function ReportesPage() {
                                     <TableHeader>
                                         <TableRow style={{ backgroundColor: "var(--institution-cream)" }}>
                                             <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Comprobante</TableHead>
-                                            <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Origen / cliente</TableHead>
+                                            <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Origen</TableHead>
                                             <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Fecha</TableHead>
                                             <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Concepto</TableHead>
                                             <TableHead className="text-right uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Válido (Bs.)</TableHead>
@@ -523,7 +523,7 @@ export default function ReportesPage() {
                                                         )}
                                                         {first && (
                                                             <TableCell rowSpan={concepts.length} className="align-middle">
-                                                                {pago.origen} · {pago.cliente_nombre}
+                                                                {pago.origen}
                                                             </TableCell>
                                                         )}
                                                         {first && (
