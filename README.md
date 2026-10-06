@@ -252,6 +252,9 @@ El correlativo del comprobante usa `findOneAndUpdate` con `$inc` (atómico) sobr
 ## 🧪 Testing
 
 - Backend: `pytest` (instalado en `requirements.txt`).
+- Pruebas opt-in del DDL y backend SQL Server local: sigue
+  [`backend/tests/sqlserver_local/README.md`](backend/tests/sqlserver_local/README.md).
+  Ejecútalas únicamente en tu equipo contra una base `USFX_TEST_*` nueva.
 - Lint: `ruff` / `eslint`.
 - Smoke test rápido con `curl`:
 
