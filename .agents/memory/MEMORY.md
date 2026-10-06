@@ -5,4 +5,5 @@
 - [Unified shared clients](rental-client-policy.md) — Clientes replaces Persona/Estudiante; clients are shared, while financial operations stay office-scoped.
 - [SQL Server local-only workflow](sqlserver-local-only.md) — never import, test, execute, or connect to `serverSQL.py` in Replit; the user runs it locally.
 - [Fresh database identities](sql-identity-scope.md) — fresh databases; generated user/client Id is separate from user Código and external directory Id.
+- [User code format](user-code-format.md) — user codes are three alphanumeric characters; `000` remains reserved.
 - [Browser verification](browser-verification.md) — distinguish shell test-harness failures from application failures before editing the app.

@@ -117,8 +117,8 @@ def test_directory_normalizes_names_discards_ids_and_requires_valid_fields():
         {"Id": "untrusted", "CI": " 100 ", "CU": " A ", "Nombre Completo": " Nombre "}, "clientes"
     ) == {"ci": "100", "cu": "A", "nombre": "Nombre"}
     assert import_services.normalize_record(
-        {"Id": "untrusted", "Código": "007", "Nombre Completo": "Usuario", "Email": "usuario@example.com"}, "usuarios"
-    ) == {"codigo": "007", "nombre": "Usuario", "email": "usuario@example.com"}
+        {"Id": "untrusted", "Código": "A07", "Nombre Completo": "Usuario", "Email": "usuario@example.com"}, "usuarios"
+    ) == {"codigo": "A07", "nombre": "Usuario", "email": "usuario@example.com"}
     with pytest.raises(ValidationError):
         ClienteCreate(ci=" ", cu="", nombre="Nombre")
     with pytest.raises(ValidationError):

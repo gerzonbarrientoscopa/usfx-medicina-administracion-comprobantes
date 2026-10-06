@@ -94,8 +94,8 @@ export default function UsuariosPage() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!/^[0-9]{3}$/.test(formData.codigo) || formData.codigo === "000") {
-      toast.error("Ingresa un código de tres dígitos entre 001 y 999.");
+    if (!/^[A-Za-z0-9]{3}$/.test(formData.codigo) || formData.codigo === "000") {
+      toast.error("Ingresa un código alfanumérico de 3 caracteres; 000 está reservado.");
       return;
     }
     if (isSuperAdmin && !formData.office_id) {
@@ -255,16 +255,15 @@ export default function UsuariosPage() {
               <p className="text-xs text-[color:var(--institution-muted)]">{editingUsuario ? `Id: ${editingUsuario.id}` : "El Id se generará automáticamente al guardar."}</p>
               <div className="space-y-1.5">
                 <Label htmlFor="user-code" className="text-xs uppercase tracking-widest text-[color:var(--institution-muted)]">
-                  Código de usuario (3 dígitos)
+                  Código de usuario (3 caracteres alfanuméricos)
                 </Label>
                 <Input
                   id="user-code"
                   value={formData.codigo}
                   onChange={(e) => setFormData({ ...formData, codigo: e.target.value })}
-                  inputMode="numeric"
-                  pattern="[0-9]{3}"
+                  pattern="[A-Za-z0-9]{3}"
                   maxLength={3}
-                  placeholder="001"
+                  placeholder="A01"
                   required
                   disabled={!!editingUsuario?.codigo}
                   data-testid="user-code-input"

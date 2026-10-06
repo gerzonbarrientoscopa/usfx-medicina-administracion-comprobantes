@@ -45,7 +45,7 @@ CREATE TABLE dbo.usuarios (
  created_at datetime2(3) NOT NULL CONSTRAINT DF_usuarios_created DEFAULT SYSUTCDATETIME(),
   CONSTRAINT UQ_usuarios_email UNIQUE(email_key), CONSTRAINT FK_usuarios_oficina FOREIGN KEY(id_oficina) REFERENCES dbo.oficinas(id),
   CONSTRAINT CK_usuarios_rol CHECK(rol IN(N'SuperAdmin',N'Administrador',N'Caja',N'Consultas')),
-   CONSTRAINT CK_usuarios_codigo CHECK(codigo COLLATE Latin1_General_100_BIN2 LIKE '[0-9][0-9][0-9]'),
+    CONSTRAINT CK_usuarios_codigo CHECK(codigo COLLATE Latin1_General_100_BIN2 LIKE '[A-Za-z0-9][A-Za-z0-9][A-Za-z0-9]'),
    CONSTRAINT CK_usuarios_superadmin CHECK((codigo='000' AND rol=N'SuperAdmin') OR (codigo<>'000' AND rol<>N'SuperAdmin'))
 );
 IF NOT EXISTS(SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID(N'dbo.usuarios') AND name=N'IX_usuarios_un_admin')

@@ -17,6 +17,7 @@ def test_schema_identity_keys_and_separate_user_code():
         assert re.search(r"\bid int IDENTITY\(1,1\)", body), table
     users = SCHEMA.split("CREATE TABLE dbo.usuarios (", 1)[1].split(");", 1)[0]
     assert "codigo char(3)" in users and "UQ_usuarios_codigo UNIQUE" in users
+    assert "LIKE '[A-Za-z0-9][A-Za-z0-9][A-Za-z0-9]'" in users
     assert "CREATE TABLE dbo.estudiantes" not in SCHEMA
     assert "CREATE TABLE dbo.personas" not in SCHEMA
 

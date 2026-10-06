@@ -8,7 +8,7 @@ created lazily; importing this module never contacts a database.
 
 Install Tablas.Sql on a freshly recreated database; legacy UUID SQL schemas
 are not migrated. Entity keys use INT IDENTITY, including users and clients. User codes are separate unique
-three-digit codes (000 is reserved for the bootstrap SuperAdmin). JSON keeps
+three-character alphanumeric codes (000 is reserved for the bootstrap SuperAdmin). JSON keeps
 the shared frontend's field names and string IDs.
 """
 
@@ -113,7 +113,7 @@ class LoginRequest(AnyModel):
 
 
 class UserCreate(AnyModel):
-    codigo: str = Field(pattern=r"^[0-9]{3}$")
+    codigo: str = Field(pattern=r"^[A-Za-z0-9]{3}$")
     email: EmailStr
     nombre: str
     password: str = Field(min_length=4)
@@ -122,7 +122,7 @@ class UserCreate(AnyModel):
 
 
 class UserUpdate(AnyModel):
-    codigo: Optional[str] = Field(default=None, pattern=r"^[0-9]{3}$")
+    codigo: Optional[str] = Field(default=None, pattern=r"^[A-Za-z0-9]{3}$")
     email: Optional[EmailStr] = None
     nombre: Optional[str] = None
     rol: Optional[str] = None

@@ -136,7 +136,7 @@ class UserPublic(BaseModel):
 
 
 class UserCreate(BaseModel):
-    codigo: str = Field(pattern=r"^[0-9]{3}$")
+    codigo: str = Field(pattern=r"^[A-Za-z0-9]{3}$")
     email: EmailStr
     nombre: str
     password: str = Field(min_length=4)
@@ -145,7 +145,7 @@ class UserCreate(BaseModel):
 
 
 class UserUpdate(BaseModel):
-    codigo: Optional[str] = Field(default=None, pattern=r"^[0-9]{3}$")
+    codigo: Optional[str] = Field(default=None, pattern=r"^[A-Za-z0-9]{3}$")
     email: Optional[EmailStr] = None
     nombre: Optional[str] = None
     rol: Optional[Literal["Administrador", "Caja", "Consultas"]] = None

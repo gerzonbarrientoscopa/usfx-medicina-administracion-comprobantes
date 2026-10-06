@@ -26,7 +26,7 @@ class Cliente(ClienteCreate):
 
 class UsuarioDirectorio(BaseModel):
     model_config = ConfigDict(extra="ignore")
-    codigo: str = Field(pattern=r"^[0-9]{3}$")
+    codigo: str = Field(pattern=r"^[A-Za-z0-9]{3}$")
     nombre: str = Field(min_length=1, max_length=200)
     email: EmailStr
 

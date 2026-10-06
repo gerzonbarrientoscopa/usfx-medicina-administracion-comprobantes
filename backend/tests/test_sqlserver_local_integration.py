@@ -499,7 +499,7 @@ def test_role_office_scoping_and_real_crud(local_sql):
         f"{API}/usuarios",
         headers=admin,
         json={
-            "codigo": "104",
+            "codigo": "A04",
             "email": f"sql-transient-{local_sql['suffix']}@example.com",
             "nombre": "Usuario transitorio",
             "password": TEST_PASSWORD,
