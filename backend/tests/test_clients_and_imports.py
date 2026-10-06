@@ -91,6 +91,32 @@ def test_clients_work_in_payments_edit_search_receipts_and_rentals(mongo_rental_
                 "id_clasificador": "test-budget-classifier",
             })
             assert concept.status_code == 201, concept.text
+        async with await _client(_actor("SuperAdmin")) as superadmin:
+            same_name_other_office = await superadmin.post(
+                f"{API}/conceptos-recaudacion",
+                json={
+                    "codigo": "10002",
+                    "nombre": "Concepto Clientes",
+                    "monto": 10,
+                    "inicio": state["monday"],
+                    "id_clasificador": "test-budget-classifier",
+                    "office_id": state["office_b"],
+                },
+            )
+            assert same_name_other_office.status_code == 201, same_name_other_office.text
+            duplicate_global_code = await superadmin.post(
+                f"{API}/conceptos-recaudacion",
+                json={
+                    "codigo": "10001",
+                    "nombre": "Otro concepto",
+                    "monto": 10,
+                    "inicio": state["monday"],
+                    "id_clasificador": "test-budget-classifier",
+                    "office_id": state["office_b"],
+                },
+            )
+            assert duplicate_global_code.status_code == 400, duplicate_global_code.text
+            assert "sistema" in duplicate_global_code.json()["detail"]
         async with await _client(_actor("Caja")) as client:
             one = (await client.post(f"{API}/clientes", json={"ci": "100-X", "cu": "CU100", "nombre": "Primer Cliente"})).json()
             two = (await client.post(f"{API}/clientes", json={"ci": "200-X", "nombre": "Segundo Cliente"})).json()

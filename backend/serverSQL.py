@@ -1263,11 +1263,11 @@ async def create_concept(b: TipoPagoCreate, u=Depends(roles("Administrador"))):
         raise HTTPException(400, "Ingrese el nombre del concepto.")
     await active_classifier_sql(b.id_clasificador)
     duplicate = await sql(
-        "SELECT id FROM tipos_pagos WHERE office_id=? AND codigo=?",
-        (oid, b.codigo), one=True,
+        "SELECT id FROM tipos_pagos WHERE codigo=?",
+        (b.codigo,), one=True,
     )
     if duplicate:
-        raise HTTPException(400, "El código del concepto ya existe en esta oficina.")
+        raise HTTPException(400, "El código del concepto ya existe en el sistema.")
     ident = (await sql(
         """INSERT INTO tipos_pagos
              (office_id,codigo,id_clasificador,nombre,monto,descripcion,inicio,fin)
@@ -1295,11 +1295,11 @@ async def update_concept(
         raise HTTPException(400, "Ingrese el nombre del concepto.")
     await active_classifier_sql(b.id_clasificador)
     duplicate = await sql(
-        "SELECT id FROM tipos_pagos WHERE office_id=? AND codigo=? AND id<>?",
-        (oid, b.codigo, tid), one=True,
+        "SELECT id FROM tipos_pagos WHERE codigo=? AND id<>?",
+        (b.codigo, tid), one=True,
     )
     if duplicate:
-        raise HTTPException(400, "El código del concepto ya existe en esta oficina.")
+        raise HTTPException(400, "El código del concepto ya existe en el sistema.")
     await sql(
         """UPDATE tipos_pagos SET codigo=?,id_clasificador=?,nombre=?,monto=?,
              descripcion=?,inicio=?,fin=? WHERE id=? AND office_id=?""",

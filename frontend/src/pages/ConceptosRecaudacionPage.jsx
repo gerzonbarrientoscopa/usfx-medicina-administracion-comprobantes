@@ -129,7 +129,7 @@ export default function ConceptosRecaudacionPage() {
       toast.error("Seleccione un clasificador presupuestario activo.");
       return;
     }
-    if (!/^\d{5}$/.test(formData.codigo)) {
+    if (!/^[0-9]{5}$/.test(formData.codigo)) {
       toast.error("El código del concepto debe tener cinco dígitos.");
       return;
     }

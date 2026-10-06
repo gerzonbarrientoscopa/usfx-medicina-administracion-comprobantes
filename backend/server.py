@@ -1052,7 +1052,7 @@ async def get_tipos_pagos(
         filt["id_clasificador"] = {
             "$in": [item["id"] for item in active_classifiers]
         }
-        filt["codigo"] = {"$regex": r"^\d{5}$"}
+        filt["codigo"] = {"$regex": r"^[0-9]{5}$"}
     salto = (pag - 1) * tam
     total_tipos = await db.tipos_pagos.count_documents(filt)
     cursor = db.tipos_pagos.find(filt, {"_id": 0}) \
@@ -1086,6 +1086,11 @@ async def create_tipo_pago(
     if not nombre:
         raise HTTPException(status_code=400, detail="Ingrese el nombre del concepto.")
     await require_active_classifier(tipo.id_clasificador)
+    if await db.tipos_pagos.find_one({"codigo": tipo.codigo}, {"_id": 1}):
+        raise HTTPException(
+            status_code=400,
+            detail="El código del concepto ya existe en el sistema.",
+        )
     tipo_dict = tipo.model_dump(exclude={"office_id", "office_nombre"})
     tipo_dict.update({
         "id": str(uuid.uuid4()), "office_id": office_id,
@@ -1096,7 +1101,9 @@ async def create_tipo_pago(
     except DuplicateKeyError:
         raise HTTPException(
             status_code=400,
-            detail="El nombre o código del concepto ya existe en esta oficina.",
+            detail=(
+                "El nombre ya existe en esta oficina o el código ya existe en el sistema."
+            ),
         )
     await attach_office_names([tipo_dict])
     await attach_classifier_names([tipo_dict])
@@ -1118,6 +1125,14 @@ async def update_tipopago(
     if not nombre:
         raise HTTPException(status_code=400, detail="Ingrese el nombre del concepto.")
     await require_active_classifier(tipo.id_clasificador)
+    if await db.tipos_pagos.find_one(
+        {"codigo": tipo.codigo, "id": {"$ne": tipo_id}},
+        {"_id": 1},
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="El código del concepto ya existe en el sistema.",
+        )
     update = tipo.model_dump(exclude={"office_id", "office_nombre"})
     update.update({"nombre": nombre, "nombre_key": nombre.casefold()})
     try:
@@ -1125,7 +1140,9 @@ async def update_tipopago(
     except DuplicateKeyError:
         raise HTTPException(
             status_code=400,
-            detail="El nombre o código del concepto ya existe en esta oficina.",
+            detail=(
+                "El nombre ya existe en esta oficina o el código ya existe en el sistema."
+            ),
         )
     updated = await db.tipos_pagos.find_one({"id": tipo_id}, {"_id": 0})
     await attach_office_names([updated])
@@ -3285,14 +3302,14 @@ async def startup():
         name="type_name_per_office",
     )
     await db.tipos_pagos.create_index(
-        [("office_id", 1), ("codigo", 1)],
+        "codigo",
         unique=True,
-        partialFilterExpression={
-            "office_id": {"$type": "string"},
-            "codigo": {"$type": "string"},
-        },
-        name="concept_code_per_office",
+        partialFilterExpression={"codigo": {"$type": "string"}},
+        name="concept_code_global",
     )
+    type_indexes = await db.tipos_pagos.index_information()
+    if "concept_code_per_office" in type_indexes:
+        await db.tipos_pagos.drop_index("concept_code_per_office")
     await db.ambientes.create_index("id", unique=True)
     await db.ambientes.create_index(
         [("office_id", 1), ("nombre_key", 1)],
