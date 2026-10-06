@@ -2712,7 +2712,13 @@ async def reports(
         pv,
     )
     rs, rv = await office_scope_sql(u, office_id, "a.office_id")
-    rc = ["a.estado=N'pagado'", "a.fecha_pago>=?", "a.fecha_pago<DATEADD(day,1,?)"]
+    rc = [
+        "a.estado IN (N'pagado',N'cancelado')",
+        "a.cod_comprobante IS NOT NULL",
+        "LTRIM(RTRIM(a.cod_comprobante))<>N''",
+        "a.fecha_pago>=?",
+        "a.fecha_pago<DATEADD(day,1,?)",
+    ]
     ra = [d, h]
     if rs:
         rc.append(rs)
@@ -2728,11 +2734,25 @@ async def reports(
     )
     pagos = [await hydrate_payment(p) for p in pagos]
     rentals = [await hydrate_rental(r) for r in rentals]
+    rentals = [
+        {
+            **rental,
+            "anulado": bool(
+                rental.get("anulado")
+                or rental.get("estado") in {"cancelado", "anulado"}
+            ),
+        }
+        for rental in rentals
+    ]
     valid = [p for p in pagos if not p["anulado"]]
     voided = [p for p in pagos if p["anulado"]]
+    valid_rentals = [rental for rental in rentals if not rental["anulado"]]
+    voided_rentals = [rental for rental in rentals if rental["anulado"]]
     student = sum(float(p["total"]) for p in valid)
-    rent = sum(float(x["total"]) for x in rentals)
-    void_total = sum(float(p["total"]) for p in voided)
+    rent = sum(float(x["total"]) for x in valid_rentals)
+    void_total = sum(float(p["total"]) for p in voided) + sum(
+        float(rental["total"]) for rental in voided_rentals
+    )
     office_id_value = None
     office_name = "Todas las oficinas"
     if scope:
@@ -2754,8 +2774,8 @@ async def reports(
             "alquileres": rent,
             "anulados": void_total,
             "diferencia": student + rent - void_total,
-            "count_validos": len(valid) + len(rentals),
-            "count_anulados": len(voided),
+            "count_validos": len(valid) + len(valid_rentals),
+            "count_anulados": len(voided) + len(voided_rentals),
         },
     }
 

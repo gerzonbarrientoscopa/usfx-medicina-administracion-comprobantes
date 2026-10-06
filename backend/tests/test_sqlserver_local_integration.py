@@ -654,6 +654,23 @@ def test_shared_receipts_idempotent_rental_payment_and_annulments(local_sql):
         f"{API}/alquileres/{rental_id}/anular", headers=admin
     ).status_code == 200
 
+    report_response = client.get(
+        f"{API}/reportes",
+        params={"periodo": "rango", "desde": date_paid, "hasta": date_paid},
+        headers=admin,
+    )
+    assert report_response.status_code == 200, report_response.text
+    report = report_response.json()
+    assert any(
+        str(payment["id"]) == str(payment_one_row["id"]) and payment["anulado"]
+        for payment in report["pagos"]
+    )
+    assert any(
+        str(rental["id"]) == str(rental_id) and rental["anulado"]
+        for rental in report["alquileres"]
+    )
+    assert report["totales"]["count_anulados"] == 2
+
     stored_payment_columns = local_sql["read"](
         """SELECT name FROM sys.columns
            WHERE object_id IN (OBJECT_ID(N'dbo.pagos'),OBJECT_ID(N'dbo.alquileres'))

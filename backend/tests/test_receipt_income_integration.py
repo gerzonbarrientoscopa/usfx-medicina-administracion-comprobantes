@@ -39,6 +39,11 @@ def test_income_and_receipt_search(mongo_rental_api):
         }
         await db.alquileres.insert_many([
             {"id": "paid-rental", "estado": "pagado", **rental},
+            {
+                "id": "void-rental",
+                "estado": "cancelado",
+                **{**rental, "total": 40.0, "cod_comprobante": "00006"},
+            },
             {"id": "reserved-rental", "estado": "reservado", **{**rental, "cod_comprobante": None}},
             {"id": "cancelled-rental", "estado": "cancelado", **{**rental, "cod_comprobante": None}},
             {"id": "other-office-rental", "estado": "pagado",
@@ -51,12 +56,23 @@ def test_income_and_receipt_search(mongo_rental_api):
             response = await client.get(f"{API}/reportes", params=params)
             assert response.status_code == 200, response.text
             report = response.json()
-            assert [a["id"] for a in report["alquileres"]] == ["paid-rental"]
+            assert {a["id"] for a in report["alquileres"]} == {
+                "paid-rental",
+                "void-rental",
+            }
+            assert next(
+                a for a in report["alquileres"] if a["id"] == "void-rental"
+            )["anulado"] is True
+            assert any(
+                p["id"] == "void-payment" and p["anulado"] is True
+                for p in report["pagos"]
+            )
             assert report["totales"]["pagos"] == 25
             assert report["totales"]["alquileres"] == 60
             assert report["totales"]["validos"] == 85
-            assert report["totales"]["anulados"] == 8
+            assert report["totales"]["anulados"] == 48
             assert report["totales"]["count_validos"] == 2
+            assert report["totales"]["count_anulados"] == 2
             by_user = await client.get(f"{API}/reportes", params={
                 **params, "created_by": "user-Administrador-office-a",
             })
@@ -67,25 +83,30 @@ def test_income_and_receipt_search(mongo_rental_api):
             search = {"fecha_desde": day, "fecha_hasta": day}
             found = await client.get(f"{API}/comprobantes", params=search)
             assert found.status_code == 200, found.text
-            assert found.json()["total"] == 3
+            assert found.json()["total"] == 4
             assert {p["origen"] for p in found.json()["items"]} == {"alquiler", "pago"}
             matched_user = await client.get(f"{API}/comprobantes", params={
                 **search, "created_by": "user-Administrador-office-a",
             })
-            assert matched_user.json()["total"] == 3
+            assert matched_user.json()["total"] == 4
             student = await client.get(f"{API}/comprobantes", params={
                 **search, "q": f"RTA-00001 / {year}",
             })
             assert [p["id"] for p in student.json()["items"]] == ["student-payment"]
             for term in (f"RTA-00003 / {year}", "Cliente Alquiler", "Sala Mayor"):
                 result = await client.get(f"{API}/comprobantes", params={**search, "q": term})
-                assert [p["id"] for p in result.json()["items"]] == ["paid-rental"]
+                expected = (
+                    {"paid-rental"}
+                    if term == f"RTA-00003 / {year}"
+                    else {"paid-rental", "void-rental"}
+                )
+                assert {p["id"] for p in result.json()["items"]} == expected
             typed = await client.get(f"{API}/comprobantes", params={**search, "id_tipo_pago": "any"})
             assert typed.json()["total"] == 0
             other_user = await client.get(f"{API}/comprobantes", params={**search, "created_by": "other"})
             assert other_user.json()["total"] == 0
             page = await client.get(f"{API}/comprobantes", params={**search, "tam": 1, "pag": 2})
-            assert page.json()["total"] == 3 and page.json()["pages"] == 3
+            assert page.json()["total"] == 4 and page.json()["pages"] == 4
             after = await client.get(f"{API}/comprobantes", params={"fecha_desde": next_day, "fecha_hasta": next_day})
             assert [p["id"] for p in after.json()["items"]] == ["other-date-rental"]
         async with await _client(_actor("SuperAdmin", "office-a")) as admin:

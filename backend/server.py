@@ -3062,17 +3062,38 @@ async def reportes(
 
     validos = [p for p in pagos if not p.get("anulado")]
     anulados = [p for p in pagos if p.get("anulado")]
-    rental_filter = {**scope, "estado": "pagado",
-                     "fecha_pago": {"$gte": d, "$lt": (end_date + timedelta(days=1)).isoformat()}}
+    rental_filter = {
+        **scope,
+        "estado": {"$in": ["pagado", "cancelado"]},
+        "cod_comprobante": {"$exists": True, "$nin": [None, ""]},
+        "fecha_pago": {
+            "$gte": d,
+            "$lt": (end_date + timedelta(days=1)).isoformat(),
+        },
+    }
     if created_by:
         rental_filter["paid_by"] = created_by
     alquileres = await db.alquileres.find(
         rental_filter, {"_id": 0, "intervals": 0}
     ).sort("fecha_pago", 1).to_list(None)
+    alquileres = [
+        {
+            **alquiler,
+            "anulado": bool(
+                alquiler.get("anulado")
+                or alquiler.get("estado") in {"cancelado", "anulado"}
+            ),
+        }
+        for alquiler in alquileres
+    ]
+    alquileres_validos = [a for a in alquileres if not a["anulado"]]
+    alquileres_anulados = [a for a in alquileres if a["anulado"]]
     total_pago = sum(float(p["total"]) for p in validos)
-    total_alquileres = sum(float(a["total"]) for a in alquileres)
+    total_alquileres = sum(float(a["total"]) for a in alquileres_validos)
     total_validos = total_pago + total_alquileres
-    total_anulados = sum(float(p["total"]) for p in anulados)
+    total_anulados = sum(float(p["total"]) for p in anulados) + sum(
+        float(a["total"]) for a in alquileres_anulados
+    )
     selected_office = (
         await db.oficinas.find_one({"id": scope["office_id"]}, {"_id": 0, "nombre": 1})
         if scope.get("office_id") else None
@@ -3090,8 +3111,8 @@ async def reportes(
             "alquileres": total_alquileres,
             "anulados": total_anulados,
             "diferencia": total_validos - total_anulados,
-            "count_validos": len(validos) + len(alquileres),
-            "count_anulados": len(anulados),
+            "count_validos": len(validos) + len(alquileres_validos),
+            "count_anulados": len(anulados) + len(alquileres_anulados),
         },
     }
 

@@ -4,7 +4,7 @@ import { formatDate, toISODate } from "@/lib/dateFormat";
 import { formatComprobante } from "@/lib/receipt";
 import { reportConceptRows } from "@/lib/reportConceptRows";
 import { buildReportPdfRows } from "@/lib/reportPdfRows";
-import { sortReportReceipts } from "@/lib/sortReportReceipts";
+import { buildReportRows } from "@/lib/reportRows";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -136,21 +136,7 @@ export default function ReportesPage() {
     }, [officeId]);
 
     const reportOfficeName = data?.office_nombre || officeName;
-    const reportRows = sortReportReceipts([
-        ...(data?.pagos || []).map((pago) => ({ ...pago, origen: "Cobro" })),
-        ...(data?.alquileres || []).map((alquiler) => ({
-            ...alquiler,
-            origen: "Alquiler",
-            cliente_nombre: alquiler.cliente_nombre,
-            items: [{
-                tipo_pago_nombre: `${alquiler.ambiente_nombre} · ${alquiler.tarifa_nombre}`,
-                cantidad: alquiler.cantidad,
-                monto: alquiler.monto,
-                total: alquiler.total,
-            }],
-            anulado: false,
-        })),
-    ]);
+    const reportRows = buildReportRows(data?.pagos, data?.alquileres);
 
     const buildPDF = (modo) => {
         if (!data) return;
