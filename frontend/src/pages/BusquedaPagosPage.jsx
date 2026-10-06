@@ -418,7 +418,7 @@ export default function BusquedaPagosPage() {
                                     {formatComprobante(p)}
                                 </TableCell>
                                 {isSuperAdmin && <TableCell>{p.office_nombre || "—"}</TableCell>}
-                                <TableCell>{p.origen === "alquiler" ? "Alquiler" : "de cliente"}</TableCell>
+                                <TableCell>{p.origen === "alquiler" ? "Alquiler" : "Cobro"}</TableCell>
                                 <TableCell>{p.origen === "alquiler" ? p.cliente_nombre : p.cliente_nombre || "—"}</TableCell>
                                 <TableCell>
                                     <div className="min-w-[420px]">

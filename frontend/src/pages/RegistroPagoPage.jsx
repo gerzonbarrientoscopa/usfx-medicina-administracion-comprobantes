@@ -261,7 +261,7 @@ export default function RegistroPagoPage() {
                                 </Select>
                             </div>
                         ) : (
-                            <div className="text-sm text-[color:var(--institution-muted)]">Oficina: {officeName}</div>
+                            <div className="text-sm text-[color:var(--institution-muted)]"><span className="uppercase">Oficina</span>: {officeName}</div>
                         )}
                         <ClienteField
                             officeId={officeId}
