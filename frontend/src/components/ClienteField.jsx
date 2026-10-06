@@ -91,7 +91,7 @@ export function ClienteField({
       <div className="space-y-1.5">
         <Label
           htmlFor={`${searchInputId}-button`}
-          className="text-xs uppercase tracking-widest text-[color:var(--institution-muted)]"
+          className="text-xs tracking-widest text-[color:var(--institution-muted)]"
         >
           Cliente
         </Label>

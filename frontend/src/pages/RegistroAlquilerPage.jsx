@@ -7,16 +7,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
-import { ChevronLeft, ChevronRight, CalendarDays, Clock3, Search, Check, Printer, RefreshCw, Plus } from "lucide-react";
+import { ChevronLeft, ChevronRight, CalendarDays, Clock3, Printer, RefreshCw } from "lucide-react";
 import { printAlquilerComprobante } from "@/components/AlquilerComprobantePrint";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogFooter,
-} from "@/components/ui/dialog";
-import { ImportSelection } from "@/components/ImportSelection";
+import { ClienteField } from "@/components/ClienteField";
 
 const DAY_NAMES = ["domingo", "lunes", "martes", "miercoles", "jueves", "viernes", "sabado"];
 const fmtDate = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
@@ -42,18 +35,7 @@ export default function RegistroAlquilerPage() {
   const [catalogLoading, setCatalogLoading] = useState(false);
   const [calendarLoading, setCalendarLoading] = useState(false);
   const [calendarError, setCalendarError] = useState("");
-  const [customerQuery, setCustomerQuery] = useState("");
-  const [customers, setCustomers] = useState([]);
-  const [customerLoading, setCustomerLoading] = useState(false);
-  const [customerSearchFailed, setCustomerSearchFailed] = useState(false);
   const [customer, setCustomer] = useState(null);
-  const [newClientOpen, setNewClientOpen] = useState(false);
-  const [newClientForm, setNewClientForm] = useState(() => ({
-    ci: "",
-    cu: "",
-    nombre: "",
-  }));
-  const [creatingClient, setCreatingClient] = useState(false);
   const [date, setDate] = useState("");
   const [start, setStart] = useState("");
   const [end, setEnd] = useState("");
@@ -79,7 +61,6 @@ export default function RegistroAlquilerPage() {
     setTarifaId("");
     setReservas([]);
     setCustomer(null);
-    setCustomerQuery("");
     setDate("");
     setStart("");
     setEnd("");
@@ -126,36 +107,6 @@ export default function RegistroAlquilerPage() {
     finally { setCalendarLoading(false); }
   }, [ambienteId, dates, isSuperAdmin, officeId]);
   useEffect(() => { loadCalendar(); }, [loadCalendar]);
-
-  useEffect(() => {
-    if (customerQuery.trim().length < 2) {
-      setCustomers([]);
-      setCustomerLoading(false);
-      setCustomerSearchFailed(false);
-      return undefined;
-    }
-    setCustomers([]);
-    setCustomerLoading(true);
-    setCustomerSearchFailed(false);
-    let cancelled = false;
-    const timer = window.setTimeout(async () => {
-      try {
-        const { data } = await apiClient.get("/clientes/buscar", { params: { q: customerQuery.trim() } });
-        if (!cancelled) {
-          setCustomers(Array.isArray(data) ? data : []);
-          setCustomerSearchFailed(false);
-        }
-      } catch (e) {
-        if (!cancelled) {
-          setCustomers([]);
-          setCustomerSearchFailed(true);
-          toast.error(formatApiError(e) || "No se pudo buscar al cliente.");
-        }
-      }
-      finally { if (!cancelled) setCustomerLoading(false); }
-    }, 280);
-    return () => { cancelled = true; window.clearTimeout(timer); };
-  }, [customerQuery]);
 
   useEffect(() => {
     if (!date || !tarifa) return;
@@ -241,31 +192,6 @@ export default function RegistroAlquilerPage() {
     }
     finally { setSaving(false); }
   };
-  const openNewClient = () => {
-    setNewClientForm({
-      ci: "",
-      cu: "",
-      nombre: "",
-      });
-    setNewClientOpen(true);
-  };
-  const createNewClient = async (event) => {
-    event.preventDefault();
-    setCreatingClient(true);
-    try {
-      const { data } = await apiClient.post("/clientes", newClientForm);
-      setCustomer(data);
-      setCustomerQuery("");
-      setCustomers([]);
-      setCustomerSearchFailed(false);
-      setNewClientOpen(false);
-      toast.success("Cliente registrado y seleccionado.");
-    } catch (error) {
-      toast.error(formatApiError(error) || "No se pudo registrar al cliente.");
-    } finally {
-      setCreatingClient(false);
-    }
-  };
   const payLater = async (rental) => {
     const printWindow = window.open("", "ALQUILER_PRINT", "height=760,width=820");
     setSaving(true);
@@ -298,7 +224,7 @@ export default function RegistroAlquilerPage() {
 
   return <div className="space-y-6" data-testid="registro-alquiler-page">
     <header className="flex flex-wrap items-end justify-between gap-4"><div><div className="section-eyebrow">Operaciones · Espacios</div><h1 className="font-serif-display mt-1 text-4xl">Registro de Alquiler</h1><p className="mt-1 max-w-2xl text-sm text-[color:var(--institution-muted)]">Consulte disponibilidad, reserve un ambiente y emita el comprobante de pago.</p></div>
-      {isSuperAdmin ? <div className="w-full max-w-xs space-y-1.5"><Label htmlFor="alquiler-office">Oficina</Label><select id="alquiler-office" value={selectedOfficeId} onChange={(e) => { setSelectedOfficeId(e.target.value); setAmbientes([]); setAmbienteId(""); setTarifas([]); setTarifaId(""); setReservas([]); setCustomer(null); setCustomerQuery(""); setDate(""); setStart(""); setEnd(""); setLastSaved(null); }} className="h-10 w-full rounded-sm border border-input bg-background px-3 text-sm"><option value="">Seleccione una oficina</option>{offices.filter((o) => o.activa).map((o) => <option key={o.id} value={o.id}>{o.nombre}</option>)}</select></div> : <div className="text-xs text-[color:var(--institution-muted)]">Oficina · <b>{officeName || user?.office_nombre || "—"}</b></div>}
+      {isSuperAdmin ? <div className="w-full max-w-xs space-y-1.5"><Label htmlFor="alquiler-office">Oficina</Label><select id="alquiler-office" value={selectedOfficeId} onChange={(e) => { setSelectedOfficeId(e.target.value); setAmbientes([]); setAmbienteId(""); setTarifas([]); setTarifaId(""); setReservas([]); setCustomer(null); setDate(""); setStart(""); setEnd(""); setLastSaved(null); }} className="h-10 w-full rounded-sm border border-input bg-background px-3 text-sm"><option value="">Seleccione una oficina</option>{offices.filter((o) => o.activa).map((o) => <option key={o.id} value={o.id}>{o.nombre}</option>)}</select></div> : <div className="text-xs text-[color:var(--institution-muted)]">Oficina · <b>{officeName || user?.office_nombre || "—"}</b></div>}
     </header>
 
     {isSuperAdmin && !officeId ? <div className="rounded-sm border bg-white p-10 text-center" style={{ borderColor: "var(--institution-border)" }}><CalendarDays className="mx-auto mb-3 text-[color:var(--institution-muted)]"/><h2 className="font-serif-display text-2xl">Seleccione oficina</h2><p className="mt-1 text-sm text-[color:var(--institution-muted)]">La agenda y el catálogo corresponden a una oficina.</p></div> :
@@ -347,17 +273,22 @@ export default function RegistroAlquilerPage() {
 
       <aside className="space-y-4 rounded-sm border bg-white p-5" style={{ borderColor: "var(--institution-border)" }}>
         <div><div className="section-eyebrow">Nueva reserva</div><h2 className="mt-1 font-serif-display text-2xl">Datos del alquiler</h2></div>
-        <div className="space-y-1.5"><Label htmlFor="rental-customer-search">Buscar cliente</Label><div className="relative"><Search size={15} className="absolute left-3 top-3 text-[color:var(--institution-muted)]"/><Input id="rental-customer-search" value={customerQuery} onChange={(e) => { setCustomerQuery(e.target.value); setCustomer(null); }} placeholder="Nombre o documento (mín. 2)" className="rounded-sm pl-9"/></div>
-          {customerLoading && <p className="text-xs text-[color:var(--institution-muted)]">Buscando en el registro…</p>}
-          {customerQuery.trim().length >= 2 && !customerLoading && <div className="max-h-48 divide-y overflow-y-auto rounded-sm border" style={{ borderColor: "var(--institution-border)" }}>{customers.length ? customers.map((item) => <button key={item.id} type="button" onClick={() => { setCustomer(item); setCustomerQuery(""); setCustomers([]); }} className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left hover:bg-[color:var(--institution-cream)]"><span className="min-w-0"><span className="block truncate text-sm font-medium">{item.nombre}</span><span className="block text-xs text-[color:var(--institution-muted)]">Cliente · CI {item.ci || "—"}{item.cu ? ` · CU ${item.cu}` : ""}</span></span><Check size={15} className="shrink-0 opacity-0"/></button>) : <p className="p-3 text-sm text-[color:var(--institution-muted)]">{customerSearchFailed ? "No se pudo completar la búsqueda." : "No hay coincidencias para esta búsqueda."}</p>}</div>}
-          {customerQuery.trim().length >= 2 && !customerLoading && !customerSearchFailed && customers.length === 0 && <div className="flex flex-wrap gap-2">
-            <Button type="button" size="sm" variant="outline" className="rounded-sm" onClick={openNewClient} data-testid="rental-create-client">
-              <Plus size={14} className="mr-1"/> Nuevo cliente
-            </Button>
-          </div>}
-        </div>
-        <ImportSelection kind="clientes" onSelect={(row) => { setNewClientForm(row); setNewClientOpen(true); }} />
-        {customer && <div className="flex items-start justify-between gap-3 rounded-sm border p-3" style={{ borderColor: "var(--institution-border)", background: "var(--institution-cream)" }}><div><div className="text-[10px] uppercase tracking-widest text-[color:var(--institution-muted)]">Cliente</div><div className="mt-1 text-sm font-medium">{customer.nombre}</div><div className="text-xs text-[color:var(--institution-muted)]">CI {customer.ci || "—"}{customer.cu ? ` · CU ${customer.cu}` : ""}</div></div><Button variant="ghost" size="sm" onClick={() => setCustomer(null)}>Cambiar</Button></div>}
+        <ClienteField
+          officeId={officeId}
+          selectedCliente={customer}
+          onSelectCliente={setCustomer}
+          disabled={saving}
+          searchInputId="rental-customer-search"
+          searchInputTestId="rental-customer-search"
+          createButtonTestId="rental-create-client"
+          formTestId="rental-new-client-form"
+          fieldTestIds={{
+            ci: "rental-new-client-ci",
+            cu: "rental-new-client-cu",
+            nombre: "rental-new-client-name",
+            save: "rental-new-client-save",
+          }}
+        />
         <div className="space-y-1.5"><Label htmlFor="rental-date">Fecha de uso</Label><Input id="rental-date" type="date" value={date} onChange={(e) => { const value = e.target.value; setDate(value); setStart(""); setEnd(""); if (value) { const selectedDate = parseDate(value); selectedDate.setDate(selectedDate.getDate() - ((selectedDate.getDay() + 6) % 7)); setAnchor(fmtDate(selectedDate)); } }} className="rounded-sm"/></div>
         {tarifa && <div className="space-y-3 rounded-sm border p-3" style={{ borderColor: "var(--institution-border)" }}><div className="flex items-center justify-between gap-2"><div><div className="text-[10px] uppercase tracking-widest text-[color:var(--institution-muted)]">Horario</div><div className="mt-1 text-sm font-medium">{tarifa.modalidad === "dia" ? "Jornada completa" : SHIFT_MODALITIES.includes(tarifa.modalidad) ? `${SHIFT_LABELS[tarifa.modalidad]} · ${tarifa.desde}–${tarifa.hasta}` : start ? `${start}${end ? `–${end}` : " · seleccione fin"}` : "Seleccione inicio en agenda"}</div></div><Clock3 size={17} className="text-[color:var(--institution-muted)]"/></div>
           {tarifa.modalidad === "dia" && <p className="text-xs text-[color:var(--institution-muted)]">Se reservarán automáticamente todos los tramos del horario registrado para ese día.</p>}
@@ -371,72 +302,5 @@ export default function RegistroAlquilerPage() {
          <div className="border-t pt-4" style={{ borderColor: "var(--institution-border)" }}><h3 className="text-xs font-semibold uppercase tracking-widest text-[color:var(--institution-muted)]">Reservas de esta semana</h3><div className="mt-2 max-h-56 space-y-2 overflow-y-auto">{reservas.filter((r) => r.estado !== "cancelado").length ? reservas.filter((r) => r.estado !== "cancelado").map((r) => <div key={r.id} className="rounded-sm border p-2.5" style={{ borderColor: "var(--institution-border)" }}><div className="flex items-start justify-between gap-2"><div><div className="text-xs font-medium">{formatDate(r.fecha)} · {r.ambiente_nombre}</div><div className="mt-1 text-xs text-[color:var(--institution-muted)]">{(r.tramos || []).map((x) => `${x.desde}–${x.hasta}`).join(", ") || "Jornada completa"} · {r.cliente_nombre}</div></div><span className={`shrink-0 rounded-full px-2 py-0.5 text-[9px] uppercase ${r.estado === "pagado" ? "bg-[#e5eee8] text-[#425c4d]" : "bg-[#f3ead7] text-[#826628]"}`}>{r.estado}</span></div>{r.estado === "reservado" && <div className="mt-2 flex gap-2"><Button size="sm" className="h-7 rounded-sm text-white" style={{ backgroundColor: "var(--institution-navy)" }} disabled={saving} onClick={() => payLater(r)}>Pagar e imprimir</Button><Button size="sm" variant="outline" className="h-7 rounded-sm" disabled={saving} onClick={() => cancelReservation(r)}>Cancelar</Button></div>}</div>) : <p className="py-2 text-xs text-[color:var(--institution-muted)]">{calendarLoading ? "Cargando agenda…" : "No hay reservas activas esta semana."}</p>}</div></div>
       </aside>
     </div>}
-    <Dialog open={newClientOpen} onOpenChange={(open) => {
-      if (creatingClient && !open) return;
-      setNewClientOpen(open);
-    }}>
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle>
-            Nuevo cliente
-          </DialogTitle>
-        </DialogHeader>
-        <form onSubmit={createNewClient} className="grid grid-cols-2 gap-4" data-testid="rental-new-client-form">
-          <div className="col-span-2"><ImportSelection kind="clientes" onSelect={setNewClientForm} /></div>
-          <div className="space-y-1.5">
-            <Label htmlFor="rental-new-client-ci">C.I.</Label>
-            <Input
-              id="rental-new-client-ci"
-              value={newClientForm.ci}
-              onChange={(event) => setNewClientForm({ ...newClientForm, ci: event.target.value })}
-              required={!newClientForm.cu.trim()}
-              className="rounded-sm"
-              autoComplete="off"
-              data-testid="rental-new-client-ci"
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="rental-new-client-cu">C.U.</Label>
-            <Input
-              id="rental-new-client-cu"
-              value={newClientForm.cu}
-              onChange={(event) => setNewClientForm({ ...newClientForm, cu: event.target.value })}
-              className="rounded-sm"
-            />
-          </div>
-          <div className="col-span-2 space-y-1.5">
-            <Label htmlFor="rental-new-client-name">Nombre completo</Label>
-            <Input
-              id="rental-new-client-name"
-              value={newClientForm.nombre}
-              onChange={(event) => setNewClientForm({ ...newClientForm, nombre: event.target.value })}
-              required
-              className="rounded-sm"
-              data-testid="rental-new-client-name"
-            />
-          </div>
-          <DialogFooter className="col-span-2">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => setNewClientOpen(false)}
-              disabled={creatingClient}
-              className="rounded-sm"
-            >
-              Cancelar
-            </Button>
-            <Button
-              type="submit"
-              disabled={creatingClient}
-              className="rounded-sm text-white"
-              style={{ backgroundColor: "var(--institution-burgundy)" }}
-              data-testid="rental-new-client-save"
-            >
-              {creatingClient ? "Registrando…" : "Registrar y seleccionar"}
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
   </div>;
 }

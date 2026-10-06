@@ -19,24 +19,15 @@ import {
     PopoverContent,
     PopoverTrigger,
 } from "@/components/ui/popover";
-import {
-    Dialog,
-    DialogContent,
-    DialogHeader,
-    DialogTitle,
-    DialogFooter,
-} from "@/components/ui/dialog";
-import { Check, ChevronsUpDown, Plus, Printer, FileCheck2, X } from "lucide-react";
+import { Check, ChevronsUpDown, Printer, FileCheck2, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { printComprobante } from "@/components/ComprobantePrint";
 import { useOfficeScope } from "@/hooks/useOfficeScope";
 import { formatComprobante } from "@/lib/receipt";
+import { ClienteField } from "@/components/ClienteField";
 import {
     Select, SelectTrigger, SelectValue, SelectContent, SelectItem,
 } from "@/components/ui/select";
-import { ImportSelection } from "@/components/ImportSelection";
-
-const NEW_EST_EMPTY = { ci: "", cu: "", nombre: "", gestion: new Date().getFullYear() };
 
 const readSavedDraftId = (key) => {
     try {
@@ -67,30 +58,23 @@ export default function RegistroPagoPage() {
         isSuperAdmin, offices, officeId, officeName, selectedOfficeId, setSelectedOfficeId,
     } = useOfficeScope();
     const draftStorageKey = officeId ? `usfx-pago-borrador-${officeId}` : null;
-    const [clientes, setClientes] = useState([]);
     const [tiposPago, setTiposPago] = useState([]);
     const catalogRequest = useRef(0);
 
     const [selectedEst, setSelectedEst] = useState(null);
     const [selectedTipo, setSelectedTipo] = useState(null);
 
-    const [estOpen, setEstOpen] = useState(false);
     const [tpOpen, setTpOpen] = useState(false);
     
     const [pago, setPago] = useState(null);
     const [cantidad, setCantidad] = useState("1");
     const [fechaPago] = useState(new Date().toISOString().substring(0, 10));
 
-    const [newEstOpen, setNewEstOpen] = useState(false);
-    const [newEst, setNewEst] = useState(NEW_EST_EMPTY);
-    const [creatingCliente, setCreatingCliente] = useState(false);
-
     const [submitting, setSubmitting] = useState(false);
 
     const loadAll = useCallback(async () => {
         const requestId = ++catalogRequest.current;
         if (isSuperAdmin && !officeId) {
-            setClientes([]);
             setTiposPago([]);
             return;
         }
@@ -107,11 +91,8 @@ export default function RegistroPagoPage() {
                 ...rest.flatMap((response) => response.data.items),
             ];
         };
-        const [students, types] = await Promise.all([
-            loadPages("/clientes"), loadPages("/tipos-pagos"),
-        ]);
+        const types = await loadPages("/tipos-pagos");
         if (requestId === catalogRequest.current) {
-            setClientes(students);
             setTiposPago(types);
         }
     }, [officeId, isSuperAdmin]);
@@ -243,39 +224,6 @@ export default function RegistroPagoPage() {
             setSubmitting(false);
         }
     };
-    const onCreateNewEst = async (e) => {
-        e.preventDefault();
-        if (!officeId) return toast.error("Seleccione una oficina.");
-        setCreatingCliente(true);
-        try {
-            const { data } = await apiClient.post("/clientes", {
-                ci: newEst.ci,
-                cu: newEst.cu,
-                nombre: newEst.nombre,
-            });
-            toast.success("Cliente registrado");
-            await loadAll();
-            setSelectedEst(data);
-            setNewEst(NEW_EST_EMPTY);
-            setNewEstOpen(false);
-        } catch (err) {
-            const serverDetail = err.response?.data?.detail;
-            if (Array.isArray(serverDetail)) {
-                const primerError = serverDetail[0];
-                const campo = primerError.loc
-                    ? primerError.loc[primerError.loc.length - 1]
-                    : "campo";
-                toast.error(`Error en '${campo}': ${primerError.msg}`);
-            } else if (typeof serverDetail === "string") {
-                toast.error(serverDetail);
-            } else {
-                toast.error("Error al guardar los cambios.");
-            }
-        } finally {
-            setCreatingCliente(false);
-        }
-    };
-
     return (
         <div className="space-y-6" data-testid="registro-page">
             <div>
@@ -315,75 +263,12 @@ export default function RegistroPagoPage() {
                         ) : (
                             <div className="text-sm text-[color:var(--institution-muted)]">Oficina: {officeName}</div>
                         )}
-                        <div className="space-y-1.5">
-                            <Label className="text-xs uppercase tracking-widest text-[color:var(--institution-muted)]">
-                                Cliente
-                            </Label>
-                            <div className="flex gap-2">
-                                <Popover open={estOpen} onOpenChange={setEstOpen}>
-                                    <PopoverTrigger asChild>
-                                        <Button
-                                            variant="outline"
-                                            role="combobox"
-                                            disabled={!officeId || Boolean(pago)}
-                                            className="rounded-sm justify-between flex-1 font-normal"
-                                            data-testid="cliente-select-btn"
-                                        >
-                                            <span className="truncate">
-                                                {selectedEst
-                                                    ? `${selectedEst.nombre} — CI: ${selectedEst.ci}`
-                                                    : "Buscar cliente…"}
-                                            </span>
-                                            <ChevronsUpDown size={14} className="ml-2 opacity-50" />
-                                        </Button>
-                                    </PopoverTrigger>
-                                    <PopoverContent className="p-0 rounded-sm" align="start" style={{ width: "var(--radix-popover-trigger-width)" }}>
-                                        <Command>
-                                            <CommandInput placeholder="Nombre, CI o CU…" data-testid="cliente-search-input" />
-                                            <CommandList>
-                                                <CommandEmpty>Sin resultados.</CommandEmpty>
-                                                <CommandGroup>
-                                                    {clientes.map((e) => (
-                                                        <CommandItem
-                                                            key={e.id}
-                                                            value={`${e.nombre} ${e.ci} ${e.cu || ""}`}
-                                                            onSelect={() => {
-                                                                setSelectedEst(e);
-                                                                setEstOpen(false);
-                                                            }}
-                                                            data-testid={`est-option-${e.id}`}
-                                                        >
-                                                            <Check
-                                                                className={cn(
-                                                                    "mr-2 h-4 w-4",
-                                                                    selectedEst?.id === e.id ? "opacity-100" : "opacity-0",
-                                                                )}
-                                                            />
-                                                            <div className="flex-1">
-                                                                <div className="font-medium text-sm">{e.nombre}</div>
-                                                                <div className="text-xs text-[color:var(--institution-muted)]">
-                                                                    CU: {e.cu} · CI: {e.ci || "—"}
-                                                                </div>
-                                                            </div>
-                                                        </CommandItem>
-                                                    ))}
-                                                </CommandGroup>
-                                            </CommandList>
-                                        </Command>
-                                    </PopoverContent>
-                                </Popover>
-                                <Button
-                                    type="button"
-                                    variant="outline"
-                                    className="rounded-sm"
-                                    onClick={() => setNewEstOpen(true)}
-                                    disabled={!officeId || Boolean(pago)}
-                                    data-testid="add-new-cliente-btn"
-                                >
-                                    <Plus size={14} className="mr-1" /> Nuevo
-                                </Button>
-                            </div>
-                        </div>
+                        <ClienteField
+                            officeId={officeId}
+                            selectedCliente={selectedEst}
+                            onSelectCliente={setSelectedEst}
+                            disabled={Boolean(pago)}
+                        />
 
                         <Button
                             type="button"
@@ -571,57 +456,6 @@ export default function RegistroPagoPage() {
                 </CardContent>
             </Card>
 
-            {/* New cliente dialog */}
-            <Dialog open={newEstOpen} onOpenChange={setNewEstOpen}>
-                <DialogContent className="rounded-sm">
-                    <DialogHeader>
-                        <DialogTitle className="font-serif-display text-2xl">Nuevo cliente</DialogTitle>
-                    </DialogHeader>
-                    <form onSubmit={onCreateNewEst} className="grid grid-cols-2 gap-4" data-testid="new-est-popup-form">
-                        <div className="col-span-2"><ImportSelection kind="clientes" onSelect={setNewEst} /></div>
-                        <div className="space-y-1.5">
-                            <Label className="text-xs uppercase tracking-widest text-[color:var(--institution-muted)]">C.I.</Label>
-                            <Input
-                                value={newEst.ci}
-                                onChange={(e) => setNewEst({ ...newEst, ci: e.target.value })}
-                                required={!newEst.cu.trim()}
-                                className="rounded-sm"
-                                data-testid="new-est-ci"
-                            />
-                        </div>
-                        <div className="space-y-1.5">
-                            <Label className="text-xs uppercase tracking-widest text-[color:var(--institution-muted)]">C.U.</Label>
-                            <Input
-                                value={newEst.cu}
-                                onChange={(e) => setNewEst({ ...newEst, cu: e.target.value })}
-                                className="rounded-sm"
-                                data-testid="new-est-cu"
-                            />
-                        </div>
-                        <div className="space-y-1.5 col-span-2">
-                            <Label className="text-xs uppercase tracking-widest text-[color:var(--institution-muted)]">Nombre completo</Label>
-                            <Input
-                                value={newEst.nombre}
-                                onChange={(e) => setNewEst({ ...newEst, nombre: e.target.value })}
-                                required
-                                className="rounded-sm"
-                                data-testid="new-est-nombre"
-                            />
-                        </div>
-                        <DialogFooter className="col-span-2">
-                            <Button
-                                type="submit"
-                                disabled={creatingCliente}
-                                className="rounded-sm text-white"
-                                style={{ backgroundColor: "var(--institution-burgundy)" }}
-                                data-testid="new-est-save"
-                            >
-                                {creatingCliente ? "Registrando…" : "Registrar y seleccionar"}
-                            </Button>
-                        </DialogFooter>
-                    </form>
-                </DialogContent>
-            </Dialog>
         </div>
     );
 }
