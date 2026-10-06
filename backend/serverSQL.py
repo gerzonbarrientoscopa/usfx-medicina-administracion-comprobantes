@@ -137,12 +137,20 @@ class OfficeCreate(AnyModel):
     activa: bool = True
 
 
+class ClasificadorPresupuestarioCreate(AnyModel):
+    codigo: str = Field(pattern=r"^[0-9]{5}$")
+    nombre: str = Field(min_length=1, max_length=200)
+    activa: bool = True
+
+
 class TipoPagoCreate(AnyModel):
+    codigo: str = Field(pattern=r"^[0-9]{5}$")
     nombre: str
     monto: Decimal
     descripcion: str = ""
     inicio: str
     fin: Optional[str] = None
+    id_clasificador: int
     office_id: Optional[str] = None
 
 
@@ -211,6 +219,7 @@ _SQL_COLUMNS = {
     "cliente_nombre": "nombre_cliente",
     "cliente_ci": "ci_cliente",
     "cliente_cu": "cu_cliente",
+    "id_clasificador": "id_clasificador",
     "paid_by": "registrado_por",
     "claimed_at": "reservado_en",
     "alquiler_tramos": "alquiler_intervalos",
@@ -222,7 +231,7 @@ _SQL_IDENTIFIER = re.compile(
 )
 _ID_COLUMNS = {
     "id", "office_id", "ambiente_id", "pago_id", "tarifa_id",
-    "cliente_id", "id_tipo_pago", "alquiler_id", "origen_id", "created_by", "edited_by", "anulado_by", "paid_by",
+    "cliente_id", "id_tipo_pago", "id_clasificador", "alquiler_id", "origen_id", "created_by", "edited_by", "anulado_by", "paid_by",
 }
 
 
@@ -1114,6 +1123,99 @@ async def listing(table, fields, office_id, u, pag, tam, q=None, activos=False):
     return page(rows, total, pag, tam)
 
 
+@api.get("/clasificadores-presupuestarios")
+async def budget_classifiers(
+    pag: int = Query(1, ge=1),
+    tam: int = Query(1, ge=1, le=100),
+    activos: bool = False,
+    u=Depends(current),
+):
+    where = " WHERE activa=1" if activos else ""
+    total = (
+        await sql(
+            "SELECT COUNT(*) n FROM clasificadores_presupuestarios" + where,
+            (), one=True,
+        )
+    )["n"]
+    rows = await sql(
+        "SELECT id,codigo,nombre,activa FROM clasificadores_presupuestarios"
+        + where
+        + " ORDER BY codigo OFFSET ? ROWS FETCH NEXT ? ROWS ONLY",
+        ((pag - 1) * tam, tam),
+    )
+    return page(rows, total, pag, tam)
+
+
+@api.post("/clasificadores-presupuestarios", status_code=201)
+async def create_budget_classifier(
+    b: ClasificadorPresupuestarioCreate,
+    u=Depends(roles(SUPER_ADMIN_ROLE)),
+):
+    name = b.nombre.strip()
+    if not name:
+        raise HTTPException(400, "Ingrese el nombre del clasificador.")
+    if await sql(
+        "SELECT id FROM clasificadores_presupuestarios WHERE codigo=?",
+        (b.codigo,), one=True,
+    ):
+        raise HTTPException(400, "El código del clasificador ya existe.")
+    return await sql(
+        "INSERT INTO clasificadores_presupuestarios(codigo,nombre,activa) "
+        "OUTPUT INSERTED.id,INSERTED.codigo,INSERTED.nombre,INSERTED.activa "
+        "VALUES(?,?,?)",
+        (b.codigo, name, b.activa), one=True, write=True,
+    )
+
+
+@api.put("/clasificadores-presupuestarios/{cid}")
+async def update_budget_classifier(
+    cid: str,
+    b: ClasificadorPresupuestarioCreate,
+    u=Depends(roles(SUPER_ADMIN_ROLE)),
+):
+    name = b.nombre.strip()
+    if not name:
+        raise HTTPException(400, "Ingrese el nombre del clasificador.")
+    duplicate = await sql(
+        "SELECT id FROM clasificadores_presupuestarios WHERE codigo=? AND id<>?",
+        (b.codigo, cid), one=True,
+    )
+    if duplicate:
+        raise HTTPException(400, "El código del clasificador ya existe.")
+    result = await sql(
+        "UPDATE clasificadores_presupuestarios SET codigo=?,nombre=?,activa=? "
+        "OUTPUT INSERTED.id,INSERTED.codigo,INSERTED.nombre,INSERTED.activa WHERE id=?",
+        (b.codigo, name, b.activa, cid), one=True, write=True,
+    )
+    if not result:
+        raise HTTPException(404, "Clasificador no encontrado.")
+    return result
+
+
+async def active_classifier_sql(classifier_id):
+    classifier = await sql(
+        "SELECT id FROM clasificadores_presupuestarios WHERE id=? AND activa=1",
+        (classifier_id,), one=True,
+    )
+    if not classifier:
+        raise HTTPException(400, "Seleccione un clasificador presupuestario activo.")
+
+
+async def concept_with_classifier(tid):
+    row = await sql(
+        """SELECT t.id,t.codigo,t.nombre,t.monto,t.descripcion,t.inicio,t.fin,
+                  t.id_clasificador,t.office_id,c.codigo clasificador_codigo,
+                  c.nombre clasificador_nombre,c.activa clasificador_activa
+           FROM tipos_pagos t LEFT JOIN clasificadores_presupuestarios c
+             ON c.id=t.id_clasificador WHERE t.id=?""",
+        (tid,), one=True,
+    )
+    if not row:
+        return None
+    return (await attach_office_names([row]))[0]
+
+
+@api.get("/conceptos-recaudacion")
 @api.get("/tipos-pagos")
 async def concepts(
     pag: int = Query(1, ge=1),
@@ -1122,66 +1224,97 @@ async def concepts(
     office_id: Optional[str] = None,
     u=Depends(current),
 ):
-    return await listing(
-        "tipos_pagos",
-        "id,nombre,monto,descripcion,inicio,fin,office_id",
-        office_id,
-        u,
-        pag,
-        tam,
-        activos=activos,
+    scope, args = await office_scope_sql(u, office_id, "t.office_id")
+    where = scope or "1=1"
+    if activos:
+        today = date.today().isoformat()
+        where += (
+            " AND t.inicio<=? AND (t.fin IS NULL OR t.fin>=?)"
+            " AND t.codigo IS NOT NULL AND t.id_clasificador IS NOT NULL"
+            " AND c.activa=1"
+        )
+        args.extend([today, today])
+    joins = (
+        " FROM tipos_pagos t LEFT JOIN clasificadores_presupuestarios c"
+        " ON c.id=t.id_clasificador"
     )
+    total = (await sql(
+        "SELECT COUNT(*) n" + joins + " WHERE " + where,
+        args, one=True,
+    ))["n"]
+    rows = await sql(
+        """SELECT t.id,t.codigo,t.nombre,t.monto,t.descripcion,t.inicio,t.fin,
+                  t.id_clasificador,t.office_id,c.codigo clasificador_codigo,
+                  c.nombre clasificador_nombre,c.activa clasificador_activa"""
+        + joins + " WHERE " + where
+        + " ORDER BY t.nombre,t.inicio DESC OFFSET ? ROWS FETCH NEXT ? ROWS ONLY",
+        args + [(pag - 1) * tam, tam],
+    )
+    await attach_office_names(rows)
+    return page(rows, total, pag, tam)
 
 
+@api.post("/conceptos-recaudacion", status_code=201)
 @api.post("/tipos-pagos", status_code=201)
 async def create_concept(b: TipoPagoCreate, u=Depends(roles("Administrador"))):
     oid = await office(u, b.office_id, True)
     name = b.nombre.strip()
     if not name:
-        raise HTTPException(400, "Ingrese el nombre del tipo de pago.")
+        raise HTTPException(400, "Ingrese el nombre del concepto.")
+    await active_classifier_sql(b.id_clasificador)
+    duplicate = await sql(
+        "SELECT id FROM tipos_pagos WHERE office_id=? AND codigo=?",
+        (oid, b.codigo), one=True,
+    )
+    if duplicate:
+        raise HTTPException(400, "El código del concepto ya existe en esta oficina.")
     ident = (await sql(
-        "INSERT INTO tipos_pagos(office_id,nombre,monto,descripcion,inicio,fin) OUTPUT INSERTED.id VALUES(?,?,?,?,?,?)",
-        (oid, name, b.monto, b.descripcion, b.inicio, b.fin),
+        """INSERT INTO tipos_pagos
+             (office_id,codigo,id_clasificador,nombre,monto,descripcion,inicio,fin)
+           OUTPUT INSERTED.id VALUES(?,?,?,?,?,?,?,?)""",
+        (oid, b.codigo, b.id_clasificador, name, b.monto, b.descripcion, b.inicio, b.fin),
         one=True, write=True,
     ))["id"]
-    return (
-        await attach_office_names(
-            [await sql("SELECT * FROM tipos_pagos WHERE id=?", (ident,), one=True)]
-        )
-    )[0]
+    return await concept_with_classifier(ident)
 
 
+@api.put("/conceptos-recaudacion/{tid}")
 @api.put("/tipos-pagos/{tid}")
 async def update_concept(
     tid: str, b: TipoPagoCreate, u=Depends(roles("Administrador"))
 ):
     target = await sql("SELECT office_id FROM tipos_pagos WHERE id=?", (tid,), one=True)
     if not target:
-        raise HTTPException(404, "Tipo de pago no encontrado.")
+        raise HTTPException(404, "Concepto no encontrado.")
     oid = target["office_id"]
     await office_scope_sql(u, oid)
     if b.office_id and b.office_id != oid:
-        raise HTTPException(400, "No se puede cambiar la oficina del tipo de pago.")
+        raise HTTPException(400, "No se puede cambiar la oficina del concepto.")
     name = b.nombre.strip()
     if not name:
-        raise HTTPException(400, "Ingrese el nombre del tipo de pago.")
+        raise HTTPException(400, "Ingrese el nombre del concepto.")
+    await active_classifier_sql(b.id_clasificador)
+    duplicate = await sql(
+        "SELECT id FROM tipos_pagos WHERE office_id=? AND codigo=? AND id<>?",
+        (oid, b.codigo, tid), one=True,
+    )
+    if duplicate:
+        raise HTTPException(400, "El código del concepto ya existe en esta oficina.")
     await sql(
-        "UPDATE tipos_pagos SET nombre=?,monto=?,descripcion=?,inicio=?,fin=? WHERE id=? AND office_id=?",
-        (name, b.monto, b.descripcion, b.inicio, b.fin, tid, oid),
+        """UPDATE tipos_pagos SET codigo=?,id_clasificador=?,nombre=?,monto=?,
+             descripcion=?,inicio=?,fin=? WHERE id=? AND office_id=?""",
+        (b.codigo, b.id_clasificador, name, b.monto, b.descripcion, b.inicio, b.fin, tid, oid),
         write=True,
     )
-    return (
-        await attach_office_names(
-            [await sql("SELECT * FROM tipos_pagos WHERE id=?", (tid,), one=True)]
-        )
-    )[0]
+    return await concept_with_classifier(tid)
 
 
+@api.delete("/conceptos-recaudacion/{tid}")
 @api.delete("/tipos-pagos/{tid}")
 async def delete_concept(tid: str, u=Depends(roles("Administrador"))):
     target = await sql("SELECT office_id FROM tipos_pagos WHERE id=?", (tid,), one=True)
     if not target:
-        raise HTTPException(404, "Tipo de pago no encontrado.")
+        raise HTTPException(404, "Concepto no encontrado.")
     await office_scope_sql(u, target["office_id"])
     if await sql(
         """SELECT TOP 1 p.id FROM pagos p
@@ -1918,13 +2051,28 @@ async def create_payment(b: PagoCreate, u=Depends(roles("Administrador", "Caja")
             item = None
             if b.id_tipo_pago:
                 c.execute(
-                    "SELECT nombre,monto FROM tipos_pagos WHERE id=? AND office_id=?",
+                    """SELECT nombre,monto,codigo,id_clasificador
+                       FROM tipos_pagos WHERE id=? AND office_id=?""",
                     (b.id_tipo_pago, oid),
                 )
                 t = c.fetchone()
                 if not t:
                     raise HTTPException(
-                        400, "Tipo de pago no encontrado en esta oficina."
+                        400, "Concepto no encontrado en esta oficina."
+                    )
+                if not t[2] or not t[3]:
+                    raise HTTPException(
+                        400,
+                        "El concepto debe tener código y clasificador presupuestario antes de cobrarlo.",
+                    )
+                c.execute(
+                    "SELECT activa FROM clasificadores_presupuestarios WHERE id=?",
+                    (t[3],),
+                )
+                classifier = c.fetchone()
+                if not classifier or not classifier[0]:
+                    raise HTTPException(
+                        400, "El clasificador presupuestario del concepto está inactivo."
                     )
                 qty = Decimal(str(b.cantidad))
                 amount = Decimal(str(t[1]))
@@ -2006,12 +2154,27 @@ async def add_item(
                     "Solo se pueden adicionar conceptos a un comprobante en borrador.",
                 )
             c.execute(
-                "SELECT nombre,monto FROM tipos_pagos WHERE id=? AND office_id=?",
+                """SELECT nombre,monto,codigo,id_clasificador
+                   FROM tipos_pagos WHERE id=? AND office_id=?""",
                 (b.id_tipo_pago, p[0]),
             )
             t = c.fetchone()
             if not t:
-                raise HTTPException(400, "Tipo de pago no encontrado en esta oficina.")
+                raise HTTPException(400, "Concepto no encontrado en esta oficina.")
+            if not t[2] or not t[3]:
+                raise HTTPException(
+                    400,
+                    "El concepto debe tener código y clasificador presupuestario antes de cobrarlo.",
+                )
+            c.execute(
+                "SELECT activa FROM clasificadores_presupuestarios WHERE id=?",
+                (t[3],),
+            )
+            classifier = c.fetchone()
+            if not classifier or not classifier[0]:
+                raise HTTPException(
+                    400, "El clasificador presupuestario del concepto está inactivo."
+                )
             amount = Decimal(str(t[1]))
             line_total = (amount * qty).quantize(
                 Decimal("0.01"), rounding=ROUND_HALF_UP
@@ -2274,13 +2437,28 @@ async def update_payment(
             amount = Decimal(str(item[3] if item else (p[5] or 0)))
             if b.id_tipo_pago and b.id_tipo_pago != type_id:
                 c.execute(
-                    "SELECT nombre,monto FROM tipos_pagos WHERE id=? AND office_id=?",
+                    """SELECT nombre,monto,codigo,id_clasificador
+                       FROM tipos_pagos WHERE id=? AND office_id=?""",
                     (b.id_tipo_pago, p[0]),
                 )
                 tp = c.fetchone()
                 if not tp:
                     raise HTTPException(
-                        400, "Tipo de pago no encontrado en esta oficina."
+                        400, "Concepto no encontrado en esta oficina."
+                    )
+                if not tp[2] or not tp[3]:
+                    raise HTTPException(
+                        400,
+                        "El concepto debe tener código y clasificador presupuestario antes de cobrarlo.",
+                    )
+                c.execute(
+                    "SELECT activa FROM clasificadores_presupuestarios WHERE id=?",
+                    (tp[3],),
+                )
+                classifier = c.fetchone()
+                if not classifier or not classifier[0]:
+                    raise HTTPException(
+                        400, "El clasificador presupuestario del concepto está inactivo."
                     )
                 type_id = b.id_tipo_pago
                 amount = Decimal(str(tp[1]))
@@ -2643,6 +2821,7 @@ async def reconcile_startup():
         "oficinas",
         "usuarios",
         "clientes",
+        "clasificadores_presupuestarios",
         "tipos_pagos",
         "ambientes",
         "ambiente_horarios",

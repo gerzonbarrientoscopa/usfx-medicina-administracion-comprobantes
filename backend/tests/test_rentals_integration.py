@@ -1333,6 +1333,12 @@ def test_concurrent_rental_and_deleted_pago_draft_reuses_only_current_tail(mongo
     async def run():
         db = mongo_rental_api["db"]
         year = datetime.now(timezone.utc).year
+        await db.clasificadores_presupuestarios.insert_one({
+            "id": "counter-budget-classifier",
+            "codigo": "12100",
+            "nombre": "Venta de bienes",
+            "activa": True,
+        })
         await db.clientes.insert_one({
             "id": "counter-student-a", "office_id": mongo_rental_api["office_a"],
             "ci": "COUNTER-CI", "cu": "COUNTER-CU", "nombre": "Counter Test",
@@ -1340,6 +1346,7 @@ def test_concurrent_rental_and_deleted_pago_draft_reuses_only_current_tail(mongo
         })
         await db.tipos_pagos.insert_one({
             "id": "counter-type-a", "office_id": mongo_rental_api["office_a"],
+            "codigo": "10001", "id_clasificador": "counter-budget-classifier",
             "nombre": "Counter concept", "nombre_key": "counter concept",
             "monto": 5.0, "descripcion": "", "inicio": f"{year}-01-01",
         })
@@ -1430,6 +1437,7 @@ def test_discarding_nonlatest_draft_does_not_rewind_past_newer_receipt(mongo_ren
         })
         await db.tipos_pagos.insert_one({
             "id": "counter-type-b", "office_id": mongo_rental_api["office_a"],
+            "codigo": "10002", "id_clasificador": "counter-budget-classifier",
             "nombre": "Counter concept B", "nombre_key": "counter concept b",
             "monto": 5.0, "descripcion": "", "inicio": f"{year}-01-01",
         })

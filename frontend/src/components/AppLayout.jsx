@@ -14,6 +14,7 @@ import {
     UserCog,
     Building2,
     CalendarClock,
+    ListTree,
 } from "lucide-react";
 
 const NAV_BY_ROLE = {
@@ -21,7 +22,7 @@ const NAV_BY_ROLE = {
         { to: "/", icon: LayoutDashboard, label: "Panel General" },
         { section: "Gestión" },
         { to: "/clientes", icon: Users, label: "Clientes" },
-        { to: "/tipos-pagos", icon: Tags, label: "Tipos de Pago" },
+        { to: "/conceptos-recaudacion", icon: Tags, label: "Conceptos de recaudación" },
         { to: "/ambientes", icon: Building2, label: "Ambientes" },
         { to: "/tarifario-ambientes", icon: Tags, label: "Tarifario de Ambientes" },
         { section: "Operaciones" },
@@ -51,7 +52,8 @@ const NAV_BY_ROLE = {
         { to: "/oficinas", icon: Building2, label: "Oficinas" },
         { to: "/usuarios", icon: UserCog, label: "Usuarios" },
         { to: "/clientes", icon: Users, label: "Clientes" },
-        { to: "/tipos-pagos", icon: Tags, label: "Tipos de Pago" },
+        { to: "/conceptos-recaudacion", icon: Tags, label: "Conceptos de recaudación" },
+        { to: "/clasificadores-presupuestarios", icon: ListTree, label: "Clasificadores presupuestarios" },
         { to: "/ambientes", icon: Building2, label: "Ambientes" },
         { to: "/tarifario-ambientes", icon: Tags, label: "Tarifario de Ambientes" },
         { section: "Operaciones" },

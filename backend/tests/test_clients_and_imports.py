@@ -77,8 +77,18 @@ def test_clients_work_in_payments_edit_search_receipts_and_rentals(mongo_rental_
     state = mongo_rental_api
     async def scenario():
         async with await _client(_actor()) as admin:
+            await state["db"].clasificadores_presupuestarios.insert_one({
+                "id": "test-budget-classifier",
+                "codigo": "12100",
+                "nombre": "Venta de bienes",
+                "activa": True,
+            })
             concept = await admin.post(f"{API}/tipos-pagos", json={
-                "nombre": "Concepto Clientes", "monto": 10, "inicio": state["monday"],
+                "codigo": "10001",
+                "nombre": "Concepto Clientes",
+                "monto": 10,
+                "inicio": state["monday"],
+                "id_clasificador": "test-budget-classifier",
             })
             assert concept.status_code == 201, concept.text
         async with await _client(_actor("Caja")) as client:

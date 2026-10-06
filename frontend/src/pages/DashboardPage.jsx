@@ -106,7 +106,7 @@ export default function DashboardPage() {
                     accent="var(--institution-navy)"
                 />
                 <StatCard
-                    label="Tipos de pago"
+                    label="Conceptos de recaudación"
                     value={stats?.tipospagos ?? "—"}
                     icon={Tags}
                     accent="var(--institution-accent, #B9975B)"

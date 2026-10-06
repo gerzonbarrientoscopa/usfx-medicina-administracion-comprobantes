@@ -126,7 +126,7 @@ export default function BusquedaPagosPage() {
             try {
                 const params = officeId ? { office_id: officeId } : {};
                 const [tiposResponse, usuariosResponse] = await Promise.all([
-                    cargarTodasLasPaginas("/tipos-pagos", params),
+                    cargarTodasLasPaginas("/conceptos-recaudacion", params),
                     apiClient.get("/reportes/registradores", { params }),
                 ]);
                 if (requestId !== catalogRequest.current || officeIdRef.current !== officeId) return;
@@ -222,7 +222,7 @@ export default function BusquedaPagosPage() {
             };
             const [students, types] = await Promise.all([
                 cargarTodasLasPaginas("/clientes"),
-                cargarTodasLasPaginas("/tipos-pagos"),
+                cargarTodasLasPaginas("/conceptos-recaudacion", { activos: true }),
             ]);
             if (requestId !== editOptionsRequest.current) return;
             setEditClientes(students.some((student) => student.id === p.cliente_id)
@@ -330,7 +330,7 @@ export default function BusquedaPagosPage() {
                         />
                     </div>
                     <div className="min-w-0 space-y-1.5">
-                        <Label className="flex min-h-8 items-end text-xs uppercase tracking-widest leading-4 text-[color:var(--institution-muted)]">Tipo de pago</Label>
+                        <Label className="flex min-h-8 items-end text-xs uppercase tracking-widest leading-4 text-[color:var(--institution-muted)]">Concepto de recaudación</Label>
                         <Select value={tipo} onValueChange={setTipo}>
                             <SelectTrigger className="rounded-sm" data-testid="busq-tipo-select">
                                 <SelectValue placeholder="Todos" />
@@ -583,7 +583,7 @@ export default function BusquedaPagosPage() {
                             </div>
 
                             <div className="space-y-1.5 col-span-2">
-                                <Label className="text-xs uppercase tracking-widest text-[color:var(--institution-muted)]">Tipo de pago</Label>
+                                <Label className="text-xs uppercase tracking-widest text-[color:var(--institution-muted)]">Concepto de recaudación</Label>
                                 <Popover open={editTpOpen} onOpenChange={setEditTpOpen}>
                                     <PopoverTrigger asChild>
                                         <Button

@@ -213,18 +213,57 @@ class PaginacionClientes(BaseModel):
     pages: int
 
 
+class ClasificadorPresupuestarioBase(BaseModel):
+    codigo: str = Field(pattern=r"^[0-9]{5}$")
+    nombre: str = Field(min_length=1, max_length=200)
+    activa: bool = True
+
+    @field_validator("nombre", mode="before")
+    @classmethod
+    def normalize_classifier_name(cls, value):
+        return value.strip() if isinstance(value, str) else value
+
+
+class ClasificadorPresupuestarioCreate(ClasificadorPresupuestarioBase):
+    pass
+
+
+class ClasificadorPresupuestario(ClasificadorPresupuestarioBase):
+    id: str
+
+
+class PaginacionClasificadoresPresupuestarios(BaseModel):
+    items: List[ClasificadorPresupuestario]
+    total: int
+    page: int
+    size: int
+    pages: int
+
+
 class TipoPagoBase(BaseModel):
+    codigo: Optional[str] = Field(default=None, pattern=r"^[0-9]{5}$")
     nombre: str
     monto: float
     descripcion: Optional[str] = ""
     inicio: str  # ISO date YYYY-MM-DD
     fin: Optional[str] = None
+    id_clasificador: Optional[str] = None
+    clasificador_codigo: Optional[str] = None
+    clasificador_nombre: Optional[str] = None
+    clasificador_activa: Optional[bool] = None
     office_id: Optional[str] = None
     office_nombre: Optional[str] = None
 
 
-class TipoPagoCreate(TipoPagoBase):
-    pass
+class TipoPagoCreate(BaseModel):
+    codigo: str = Field(pattern=r"^[0-9]{5}$")
+    nombre: str
+    monto: float
+    descripcion: Optional[str] = ""
+    inicio: str
+    fin: Optional[str] = None
+    id_clasificador: str = Field(min_length=1)
+    office_id: Optional[str] = None
 
 
 class TipoPago(TipoPagoBase):
@@ -573,6 +612,31 @@ async def attach_office_names(items: List[dict]) -> List[dict]:
     return items
 
 
+async def attach_classifier_names(items: List[dict]) -> List[dict]:
+    ids = list({
+        item.get("id_clasificador")
+        for item in items
+        if item.get("id_clasificador")
+    })
+    if not ids:
+        for item in items:
+            item.setdefault("clasificador_codigo", None)
+            item.setdefault("clasificador_nombre", None)
+            item.setdefault("clasificador_activa", None)
+        return items
+    classifiers = await db.clasificadores_presupuestarios.find(
+        {"id": {"$in": ids}},
+        {"_id": 0, "id": 1, "codigo": 1, "nombre": 1, "activa": 1},
+    ).to_list(len(ids))
+    by_id = {str(classifier["id"]): classifier for classifier in classifiers}
+    for item in items:
+        classifier = by_id.get(str(item.get("id_clasificador")))
+        item["clasificador_codigo"] = classifier.get("codigo") if classifier else None
+        item["clasificador_nombre"] = classifier.get("nombre") if classifier else None
+        item["clasificador_activa"] = classifier.get("activa") if classifier else None
+    return items
+
+
 # ----------------------------- AUTH ENDPOINTS -----------------------------
 @api.post("/auth/login", response_model=LoginResponse, status_code=status.HTTP_200_OK)
 async def login(body: LoginRequest, response: Response):
@@ -878,7 +942,97 @@ async def delete_user(
     return {"ok": True}
 
 
-# ----------------------------- CRUD TiposPagos -----------------------------
+# ----------------------------- Clasificadores Presupuestarios -----------------------------
+@api.get(
+    "/clasificadores-presupuestarios",
+    response_model=PaginacionClasificadoresPresupuestarios,
+)
+async def get_clasificadores_presupuestarios(
+    pag: int = Query(1, ge=1),
+    tam: int = Query(1, ge=1, le=100),
+    activos: bool = False,
+    _: dict = Depends(get_current_user),
+):
+    filt = {"activa": True} if activos else {}
+    total = await db.clasificadores_presupuestarios.count_documents(filt)
+    items = await db.clasificadores_presupuestarios.find(
+        filt, {"_id": 0}
+    ).sort([("codigo", 1)]).skip((pag - 1) * tam).limit(tam).to_list(tam)
+    return {
+        "items": items,
+        "total": total,
+        "page": pag,
+        "size": tam,
+        "pages": max(1, (total + tam - 1) // tam),
+    }
+
+
+@api.post(
+    "/clasificadores-presupuestarios",
+    response_model=ClasificadorPresupuestario,
+    status_code=201,
+)
+async def create_clasificador_presupuestario(
+    body: ClasificadorPresupuestarioCreate,
+    _: dict = Depends(require_roles(SUPER_ADMIN_ROLE)),
+):
+    nombre = body.nombre.strip()
+    if not nombre:
+        raise HTTPException(status_code=400, detail="Ingrese el nombre del clasificador.")
+    doc = {
+        **body.model_dump(),
+        "id": str(uuid.uuid4()),
+        "codigo": body.codigo,
+        "nombre": nombre,
+    }
+    try:
+        await db.clasificadores_presupuestarios.insert_one(doc)
+    except DuplicateKeyError:
+        raise HTTPException(status_code=400, detail="El código del clasificador ya existe.")
+    return ClasificadorPresupuestario(**doc)
+
+
+@api.put(
+    "/clasificadores-presupuestarios/{clasificador_id}",
+    response_model=ClasificadorPresupuestario,
+)
+async def update_clasificador_presupuestario(
+    clasificador_id: str,
+    body: ClasificadorPresupuestarioCreate,
+    _: dict = Depends(require_roles(SUPER_ADMIN_ROLE)),
+):
+    nombre = body.nombre.strip()
+    if not nombre:
+        raise HTTPException(status_code=400, detail="Ingrese el nombre del clasificador.")
+    try:
+        result = await db.clasificadores_presupuestarios.update_one(
+            {"id": clasificador_id},
+            {"$set": {**body.model_dump(), "nombre": nombre}},
+        )
+    except DuplicateKeyError:
+        raise HTTPException(status_code=400, detail="El código del clasificador ya existe.")
+    if not result.matched_count:
+        raise HTTPException(status_code=404, detail="Clasificador no encontrado.")
+    item = await db.clasificadores_presupuestarios.find_one(
+        {"id": clasificador_id}, {"_id": 0}
+    )
+    return ClasificadorPresupuestario(**item)
+
+
+async def require_active_classifier(classifier_id: str) -> dict:
+    classifier = await db.clasificadores_presupuestarios.find_one(
+        {"id": classifier_id, "activa": True}, {"_id": 0}
+    )
+    if not classifier:
+        raise HTTPException(
+            status_code=400,
+            detail="Seleccione un clasificador presupuestario activo.",
+        )
+    return classifier
+
+
+# ----------------------------- CRUD Conceptos de Recaudación -----------------------------
+@api.get("/conceptos-recaudacion", response_model=PaginacionTiposPagos)
 @api.get("/tipos-pagos", response_model=PaginacionTiposPagos)
 async def get_tipos_pagos(
     pag: int = Query(1, ge=1, description="Número de página"),
@@ -892,6 +1046,13 @@ async def get_tipos_pagos(
         today = date.today().isoformat()
         filt["inicio"] = {"$lte": today}
         filt["$or"] = [{"fin": None}, {"fin": {"$gte": today}}, {"fin": ""}]
+        active_classifiers = await db.clasificadores_presupuestarios.find(
+            {"activa": True}, {"_id": 0, "id": 1}
+        ).to_list(1000)
+        filt["id_clasificador"] = {
+            "$in": [item["id"] for item in active_classifiers]
+        }
+        filt["codigo"] = {"$regex": r"^\d{5}$"}
     salto = (pag - 1) * tam
     total_tipos = await db.tipos_pagos.count_documents(filt)
     cursor = db.tipos_pagos.find(filt, {"_id": 0}) \
@@ -899,6 +1060,7 @@ async def get_tipos_pagos(
                         .skip(salto) \
                         .limit(tam)
     tipos_dict = await attach_office_names(await cursor.to_list(length=tam))
+    tipos_dict = await attach_classifier_names(tipos_dict)
     tipos_validados = [TipoPago(**t) for t in tipos_dict]
     total_paginas = (total_tipos + tam - 1) // tam if total_tipos > 0 else 1
     return {
@@ -910,6 +1072,11 @@ async def get_tipos_pagos(
     }
 
 
+@api.post(
+    "/conceptos-recaudacion",
+    response_model=TipoPago,
+    status_code=201,
+)
 @api.post("/tipos-pagos", response_model=TipoPago, status_code=201)
 async def create_tipo_pago(
     tipo: TipoPagoCreate, user: dict = Depends(require_roles("Administrador"))
@@ -917,7 +1084,8 @@ async def create_tipo_pago(
     office_id = await office_for_write(user, tipo.office_id)
     nombre = tipo.nombre.strip()
     if not nombre:
-        raise HTTPException(status_code=400, detail="Ingrese el nombre del tipo de pago.")
+        raise HTTPException(status_code=400, detail="Ingrese el nombre del concepto.")
+    await require_active_classifier(tipo.id_clasificador)
     tipo_dict = tipo.model_dump(exclude={"office_id", "office_nombre"})
     tipo_dict.update({
         "id": str(uuid.uuid4()), "office_id": office_id,
@@ -926,11 +1094,16 @@ async def create_tipo_pago(
     try:
         await db.tipos_pagos.insert_one(tipo_dict)
     except DuplicateKeyError:
-        raise HTTPException(status_code=400, detail="El tipo de pago ya existe en esta oficina.")
+        raise HTTPException(
+            status_code=400,
+            detail="El nombre o código del concepto ya existe en esta oficina.",
+        )
     await attach_office_names([tipo_dict])
+    await attach_classifier_names([tipo_dict])
     return TipoPago(**tipo_dict)
 
 
+@api.put("/conceptos-recaudacion/{tipo_id}", response_model=TipoPago)
 @api.put("/tipos-pagos/{tipo_id}", response_model=TipoPago)
 async def update_tipopago(
     tipo_id: str, tipo: TipoPagoCreate, user: dict = Depends(require_roles("Administrador"))
@@ -938,23 +1111,29 @@ async def update_tipopago(
     scope = await office_scope(user)
     target = await db.tipos_pagos.find_one({"id": tipo_id, **scope}, {"_id": 0})
     if not target:
-        raise HTTPException(status_code=404, detail="Tipo de pago no encontrado.")
+        raise HTTPException(status_code=404, detail="Concepto no encontrado.")
     if tipo.office_id and tipo.office_id != target["office_id"]:
-        raise HTTPException(status_code=400, detail="No se puede cambiar la oficina del tipo de pago.")
+        raise HTTPException(status_code=400, detail="No se puede cambiar la oficina del concepto.")
     nombre = tipo.nombre.strip()
     if not nombre:
-        raise HTTPException(status_code=400, detail="Ingrese el nombre del tipo de pago.")
+        raise HTTPException(status_code=400, detail="Ingrese el nombre del concepto.")
+    await require_active_classifier(tipo.id_clasificador)
     update = tipo.model_dump(exclude={"office_id", "office_nombre"})
     update.update({"nombre": nombre, "nombre_key": nombre.casefold()})
     try:
         await db.tipos_pagos.update_one({"id": tipo_id, **scope}, {"$set": update})
     except DuplicateKeyError:
-        raise HTTPException(status_code=400, detail="El tipo de pago ya existe en esta oficina.")
+        raise HTTPException(
+            status_code=400,
+            detail="El nombre o código del concepto ya existe en esta oficina.",
+        )
     updated = await db.tipos_pagos.find_one({"id": tipo_id}, {"_id": 0})
     await attach_office_names([updated])
+    await attach_classifier_names([updated])
     return TipoPago(**updated)
 
 
+@api.delete("/conceptos-recaudacion/{tipo_id}")
 @api.delete("/tipos-pagos/{tipo_id}")
 async def delete_tipo_pago(
     tipo_id: str, user: dict = Depends(require_roles("Administrador"))
@@ -962,7 +1141,7 @@ async def delete_tipo_pago(
     scope = await office_scope(user)
     target = await db.tipos_pagos.find_one({"id": tipo_id, **scope}, {"_id": 0})
     if not target:
-        raise HTTPException(status_code=404, detail="Tipo de pago no encontrado.")
+        raise HTTPException(status_code=404, detail="Concepto no encontrado.")
     if await db.pagos.find_one(
         {
             "office_id": target["office_id"],
@@ -2095,8 +2274,14 @@ async def _pago_item_snapshot(
     )
     if not tipo:
         raise HTTPException(
-            status_code=400, detail="Tipo de pago no encontrado en esta oficina."
+            status_code=400, detail="Concepto no encontrado en esta oficina."
         )
+    if not tipo.get("codigo") or not tipo.get("id_clasificador"):
+        raise HTTPException(
+            status_code=400,
+            detail="El concepto debe tener código y clasificador presupuestario antes de cobrarlo.",
+        )
+    await require_active_classifier(tipo["id_clasificador"])
     monto = float(tipo["monto"])
     cantidad = float(cantidad)
     return {
@@ -2701,7 +2886,13 @@ async def update_pago(
             {"id": body.id_tipo_pago, "office_id": pago["office_id"]}, {"_id": 0}
         )
         if not tp:
-            raise HTTPException(status_code=400, detail="Tipo de pago no encontrado en esta oficina")
+            raise HTTPException(status_code=400, detail="Concepto no encontrado en esta oficina.")
+        if not tp.get("codigo") or not tp.get("id_clasificador"):
+            raise HTTPException(
+                status_code=400,
+                detail="El concepto debe tener código y clasificador presupuestario antes de cobrarlo.",
+            )
+        await require_active_classifier(tp["id_clasificador"])
         update["id_tipo_pago"] = body.id_tipo_pago
         new_monto = float(tp["monto"])
         update["monto"] = new_monto
@@ -3084,12 +3275,23 @@ async def startup():
     await db.clientes.create_index("id", unique=True)
     for key in ("ci_key", "cu_key"):
         await db.clientes.create_index(key, unique=True, partialFilterExpression={key: {"$gt": ""}})
+    await db.clasificadores_presupuestarios.create_index("id", unique=True)
+    await db.clasificadores_presupuestarios.create_index("codigo", unique=True)
     await db.tipos_pagos.create_index("id", unique=True)
     await db.tipos_pagos.create_index(
         [("office_id", 1), ("nombre_key", 1)],
         unique=True,
         partialFilterExpression={"office_id": {"$type": "string"}, "nombre_key": {"$type": "string"}},
         name="type_name_per_office",
+    )
+    await db.tipos_pagos.create_index(
+        [("office_id", 1), ("codigo", 1)],
+        unique=True,
+        partialFilterExpression={
+            "office_id": {"$type": "string"},
+            "codigo": {"$type": "string"},
+        },
+        name="concept_code_per_office",
     )
     await db.ambientes.create_index("id", unique=True)
     await db.ambientes.create_index(

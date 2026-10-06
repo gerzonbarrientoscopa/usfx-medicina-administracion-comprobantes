@@ -78,8 +78,8 @@ export default function RegistroPagoPage() {
             setTiposPago([]);
             return;
         }
-        const loadPages = async (endpoint) => {
-            const params = { office_id: officeId, pag: 1, tam: 100 };
+        const loadPages = async (endpoint, extraParams = {}) => {
+            const params = { office_id: officeId, pag: 1, tam: 100, ...extraParams };
             const first = await apiClient.get(endpoint, { params });
             const rest = await Promise.all(
                 Array.from({ length: (first.data.pages || 1) - 1 }, (_, index) =>
@@ -91,7 +91,7 @@ export default function RegistroPagoPage() {
                 ...rest.flatMap((response) => response.data.items),
             ];
         };
-        const types = await loadPages("/tipos-pagos");
+        const types = await loadPages("/conceptos-recaudacion", { activos: true });
         if (requestId === catalogRequest.current) {
             setTiposPago(types);
         }
@@ -158,7 +158,7 @@ export default function RegistroPagoPage() {
 
     const adicionarItem = async () => {
         if (!pago) return toast.error("Primero genere el comprobante.");
-        if (!selectedTipo) return toast.error("Seleccione un concepto de pago.");
+        if (!selectedTipo) return toast.error("Seleccione un concepto de recaudación.");
         const cant = Number(cantidad);
         if (!Number.isFinite(cant) || cant <= 0) {
             return toast.error("La cantidad debe ser mayor a cero.");
@@ -307,7 +307,7 @@ export default function RegistroPagoPage() {
 
                                 <div className="space-y-3 border-t pt-4" style={{ borderColor: "var(--institution-border)" }}>
                                     <Label className="text-xs uppercase tracking-widest text-[color:var(--institution-muted)]">
-                                        Añadir concepto de pago
+                                        Añadir concepto de recaudación
                                     </Label>
                                     <Popover open={tpOpen} onOpenChange={setTpOpen}>
                                         <PopoverTrigger asChild>
@@ -326,14 +326,14 @@ export default function RegistroPagoPage() {
                                         </PopoverTrigger>
                                         <PopoverContent className="p-0 rounded-sm" align="start" style={{ width: "var(--radix-popover-trigger-width)" }}>
                                             <Command>
-                                                <CommandInput placeholder="Buscar tipo de pago…" />
+                                                <CommandInput placeholder="Buscar concepto de recaudación…" />
                                                 <CommandList>
                                                     <CommandEmpty>Sin resultados.</CommandEmpty>
                                                     <CommandGroup>
                                                         {tiposPago.map((t) => (
                                                             <CommandItem
                                                                 key={t.id}
-                                                                value={t.nombre}
+                                                                value={`${t.codigo || ""} ${t.nombre}`}
                                                                 onSelect={() => {
                                                                     setSelectedTipo(t);
                                                                     setTpOpen(false);
@@ -347,7 +347,7 @@ export default function RegistroPagoPage() {
                                                                     )}
                                                                 />
                                                                 <div className="flex-1">
-                                                                    <div className="font-medium text-sm">{t.nombre}</div>
+                                                                <div className="font-medium text-sm">{t.codigo ? `${t.codigo} — ` : ""}{t.nombre}</div>
                                                                     <div className="text-xs text-[color:var(--institution-muted)]">
                                                                         Bs. {formatMoney(t.monto)}
                                                                     </div>

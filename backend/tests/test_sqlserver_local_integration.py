@@ -263,15 +263,29 @@ def local_sql():
         assert foreign_student_response.status_code == 201, foreign_student_response.text
         student_b = foreign_student_response.json()["id"]
 
+        classifier_code = f"{(abs(hash(suffix)) % 90000) + 10000:05d}"
+        classifier_response = client.post(
+            f"{API}/clasificadores-presupuestarios",
+            headers=super_headers,
+            json={
+                "codigo": classifier_code,
+                "nombre": f"Clasificador local {suffix}",
+                "activa": True,
+            },
+        )
+        assert classifier_response.status_code == 201, classifier_response.text
+
         concept_response = client.post(
             f"{API}/tipos-pagos",
             headers=headers["admin_a"],
             json={
+                "codigo": f"{(int(classifier_code) + 1) % 100000:05d}",
                 "nombre": f"Concepto local {suffix}",
                 "monto": "25.00",
                 "descripcion": "Solo para pruebas de integración SQL",
                 "inicio": "2020-01-01",
                 "fin": None,
+                "id_clasificador": classifier_response.json()["id"],
             },
         )
         assert concept_response.status_code == 201, concept_response.text

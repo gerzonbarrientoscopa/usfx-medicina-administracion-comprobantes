@@ -64,14 +64,36 @@ IF NOT EXISTS(SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID(N'dbo.clientes
 CREATE UNIQUE INDEX IX_clientes_ci ON dbo.clientes(ci_key) WHERE ci<>N'';
 IF NOT EXISTS(SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID(N'dbo.clientes') AND name=N'IX_clientes_cu')
 CREATE UNIQUE INDEX IX_clientes_cu ON dbo.clientes(cu_key) WHERE cu<>N'';
+IF OBJECT_ID(N'dbo.clasificadores_presupuestarios','U') IS NULL
+CREATE TABLE dbo.clasificadores_presupuestarios (
+  id int IDENTITY(1,1) NOT NULL CONSTRAINT PK_clasificadores_presupuestarios PRIMARY KEY,
+  codigo char(5) NOT NULL, nombre nvarchar(200) NOT NULL, activa bit NOT NULL
+    CONSTRAINT DF_clasificadores_activa DEFAULT 1,
+  CONSTRAINT UQ_clasificadores_codigo UNIQUE(codigo),
+  CONSTRAINT CK_clasificadores_codigo CHECK(codigo LIKE '[0-9][0-9][0-9][0-9][0-9]')
+);
 IF OBJECT_ID(N'dbo.tipos_pagos','U') IS NULL
 CREATE TABLE dbo.tipos_pagos (
   id int IDENTITY(1,1) NOT NULL CONSTRAINT PK_tipos_pagos PRIMARY KEY, id_oficina int NOT NULL,
+ codigo char(5) NULL, id_clasificador int NULL,
  nombre nvarchar(200) NOT NULL, nombre_key AS LOWER(LTRIM(RTRIM(nombre))) PERSISTED, descripcion nvarchar(500) NOT NULL CONSTRAINT DF_tipos_desc DEFAULT N'',
  monto decimal(19,2) NOT NULL, inicio date NOT NULL, fin date NULL,
-  CONSTRAINT FK_tipos_oficina FOREIGN KEY(id_oficina) REFERENCES dbo.oficinas(id), CONSTRAINT UQ_tipos_nombre UNIQUE(id_oficina,nombre_key),
+  CONSTRAINT FK_tipos_oficina FOREIGN KEY(id_oficina) REFERENCES dbo.oficinas(id),
+  CONSTRAINT FK_tipos_clasificador FOREIGN KEY(id_clasificador) REFERENCES dbo.clasificadores_presupuestarios(id),
+  CONSTRAINT CK_tipos_codigo CHECK(codigo IS NULL OR codigo LIKE '[0-9][0-9][0-9][0-9][0-9]'),
+  CONSTRAINT UQ_tipos_nombre UNIQUE(id_oficina,nombre_key),
  CONSTRAINT CK_tipos_monto CHECK(monto>=0), CONSTRAINT CK_tipos_fechas CHECK(fin IS NULL OR fin>=inicio)
 );
+IF COL_LENGTH(N'dbo.tipos_pagos',N'codigo') IS NULL
+  ALTER TABLE dbo.tipos_pagos ADD codigo char(5) NULL;
+IF COL_LENGTH(N'dbo.tipos_pagos',N'id_clasificador') IS NULL
+  ALTER TABLE dbo.tipos_pagos ADD id_clasificador int NULL;
+IF NOT EXISTS(SELECT 1 FROM sys.foreign_keys WHERE parent_object_id=OBJECT_ID(N'dbo.tipos_pagos') AND name=N'FK_tipos_clasificador')
+  ALTER TABLE dbo.tipos_pagos ADD CONSTRAINT FK_tipos_clasificador FOREIGN KEY(id_clasificador) REFERENCES dbo.clasificadores_presupuestarios(id);
+IF NOT EXISTS(SELECT 1 FROM sys.check_constraints WHERE parent_object_id=OBJECT_ID(N'dbo.tipos_pagos') AND name=N'CK_tipos_codigo')
+  ALTER TABLE dbo.tipos_pagos ADD CONSTRAINT CK_tipos_codigo CHECK(codigo IS NULL OR codigo LIKE '[0-9][0-9][0-9][0-9][0-9]');
+IF NOT EXISTS(SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID(N'dbo.tipos_pagos') AND name=N'IX_tipos_codigo_oficina')
+  CREATE UNIQUE INDEX IX_tipos_codigo_oficina ON dbo.tipos_pagos(id_oficina,codigo) WHERE codigo IS NOT NULL;
 IF OBJECT_ID(N'dbo.ambientes','U') IS NULL
 CREATE TABLE dbo.ambientes (
   id int IDENTITY(1,1) NOT NULL CONSTRAINT PK_ambientes PRIMARY KEY, id_oficina int NOT NULL,

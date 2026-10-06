@@ -9,7 +9,8 @@ import { Toaster } from "@/components/ui/sonner";
 import LoginPage from "@/pages/LoginPage";
 import DashboardPage from "@/pages/DashboardPage";
 import ClientesPage from "@/pages/ClientesPage";
-import TiposPagosPage from "@/pages/TiposPagosPage";
+import ConceptosRecaudacionPage from "@/pages/ConceptosRecaudacionPage";
+import ClasificadoresPresupuestariosPage from "@/pages/ClasificadoresPresupuestariosPage";
 import AmbientesPage from "@/pages/AmbientesPage";
 import UsuariosPage from "@/pages/UsuariosPage";
 import AnularPagoPage from "@/pages/AnularPagoPage";
@@ -58,14 +59,28 @@ function App() {
                         }
                     />
                     <Route
-                        path="/tipos-pagos"
+                        path="/conceptos-recaudacion"
                         element={
                             <ProtectedRoute roles={["Administrador"]}>
                                 <AppLayout>
-                                    <TiposPagosPage />
+                                    <ConceptosRecaudacionPage />
                                 </AppLayout>
                             </ProtectedRoute>
                         }
+                    />
+                    <Route
+                        path="/clasificadores-presupuestarios"
+                        element={
+                            <ProtectedRoute roles={["SuperAdmin"]}>
+                                <AppLayout>
+                                    <ClasificadoresPresupuestariosPage />
+                                </AppLayout>
+                            </ProtectedRoute>
+                        }
+                    />
+                    <Route
+                        path="/tipos-pagos"
+                        element={<Navigate to="/conceptos-recaudacion" replace />}
                     />
                     <Route
                         path="/ambientes"
