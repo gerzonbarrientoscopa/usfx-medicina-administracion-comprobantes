@@ -34,6 +34,7 @@ import { formatComprobante } from "@/lib/receipt";
 import {
     Select, SelectTrigger, SelectValue, SelectContent, SelectItem,
 } from "@/components/ui/select";
+import { ImportSelection } from "@/components/ImportSelection";
 
 const NEW_EST_EMPTY = { ci: "", cu: "", nombre: "", gestion: new Date().getFullYear() };
 
