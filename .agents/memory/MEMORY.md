@@ -8,3 +8,4 @@
 - [Fresh database identities](sql-identity-scope.md) — fresh databases; generated user/client Id is separate from user Código and external directory Id.
 - [User code format](user-code-format.md) — user codes are three alphanumeric characters; `000` remains reserved.
 - [Browser verification](browser-verification.md) — distinguish shell test-harness failures from application failures before editing the app.
+- [Client deletion integrity](client-deletion-integrity.md) — uncertain reference writes must retain deletion protection; timeouts cannot prove a Mongo write will not commit.

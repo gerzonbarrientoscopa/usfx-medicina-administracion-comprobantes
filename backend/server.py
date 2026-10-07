@@ -23,6 +23,7 @@ from datetime import datetime, date, timezone, timedelta
 from typing import List, Optional, Literal
 from client_models import Cliente, ClienteCreate
 from client_routes import MongoClientes, register_client_routes
+from client_integrity import client_reference
 
 BOLIVIA_TIMEZONE = timezone(timedelta(hours=-4))
 
@@ -1964,6 +1965,11 @@ async def get_alquiler(rental_id: str, user: dict = Depends(require_roles(*_RENT
 
 @api.post("/alquileres", status_code=201)
 async def create_alquiler(body: AlquilerCreate, user: dict = Depends(require_roles(*_RENTAL_ROLES))):
+    async with client_reference(db, body.cliente_id) as client_write:
+        return await _create_alquiler_with_client(body, user, client_write)
+
+
+async def _create_alquiler_with_client(body, user, client_write):
     async with _ambiente_lease(body.ambiente_id) as lease_owner:
         # Room schedule and active reservations are read only after acquiring
         # the same lease used by schedule updates/deletes.
@@ -1973,6 +1979,7 @@ async def create_alquiler(body: AlquilerCreate, user: dict = Depends(require_rol
         rental["confirmation_started_at"] = confirmation_started_at
         try:
             await _claim_rental_intervals(rental)
+            client_write.begin_write()
             await _insert_rental_provisional(rental)
             # Confirming records keep schedules and occupancy protected if the
             # lease expires while the insert/confirmation flow is paused.
@@ -2414,6 +2421,11 @@ async def create_pago(
     pago: PagoCreate, usuario: dict = Depends(require_roles("Administrador", "Caja"))
 ):
     office_id = await office_for_write(usuario, pago.office_id)
+    async with client_reference(db, pago.cliente_id) as client_write:
+        return await _create_pago_with_client(pago, usuario, office_id, client_write)
+
+
+async def _create_pago_with_client(pago, usuario, office_id, client_write):
     cliente = await db.clientes.find_one(
         {"id": pago.cliente_id}, {"_id": 0}
     )
@@ -2469,6 +2481,7 @@ async def create_pago(
                 "monto": items[0]["monto"],
             }
         )
+    client_write.begin_write()
     await db.pagos.insert_one(doc)
     doc.pop("_id", None)
     doc = await _hydrate_pago(doc)
@@ -2866,6 +2879,11 @@ async def buscar_comprobantes(
 async def update_pago(
     pago_id: str, body: PagoCreate, user: dict = Depends(require_roles("Administrador", "Caja"))
 ):
+    async with client_reference(db, body.cliente_id) as client_write:
+        return await _update_pago_with_client(pago_id, body, user, client_write)
+
+
+async def _update_pago_with_client(pago_id, body, user, client_write):
     scope = await office_scope(user)
     pago = await db.pagos.find_one({"id": pago_id, **scope}, {"_id": 0})
     if not pago:
@@ -2941,6 +2959,7 @@ async def update_pago(
     update["edited_at"] = iso(datetime.now(timezone.utc))
     update["edited_by"] = user["id"]
 
+    client_write.begin_write()
     await db.pagos.update_one({"id": pago_id, **scope}, {"$set": update})
     p = await db.pagos.find_one({"id": pago_id}, {"_id": 0})
     p = await _hydrate_pago(p)

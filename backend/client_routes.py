@@ -3,6 +3,7 @@ import uuid
 from fastapi import Depends, HTTPException, Query
 from client_models import Cliente, ClienteCreate
 from import_services import directory_results
+from client_integrity import delete_unreferenced_client
 
 
 class MongoClientes:
@@ -42,12 +43,7 @@ class MongoClientes:
         return {"id": ident, **body.model_dump()}
 
     async def delete(self, ident):
-        if not await self.db.clientes.find_one({"id": ident}):
-            raise HTTPException(404, "Cliente no encontrado.")
-        if (await self.db.pagos.find_one({"cliente_id": ident})
-                or await self.db.alquileres.find_one({"cliente_id": ident})):
-            raise HTTPException(400, "No se puede eliminar un cliente con pagos o alquileres registrados.")
-        await self.db.clientes.delete_one({"id": ident})
+        await delete_unreferenced_client(self.db, ident)
 
 
 class SQLClientes:

@@ -1,5 +1,6 @@
 """Unified clients and selectable directory imports on disposable Mongo databases."""
 import asyncio
+from copy import deepcopy
 from uuid import UUID
 
 import httpx
@@ -12,6 +13,9 @@ from test_rentals_integration import (
 )
 from client_models import ClienteCreate
 import import_services
+import server
+from client_integrity import client_reference
+from client_routes import MongoClientes
 
 
 @pytest.mark.parametrize("role", ["SuperAdmin", "Administrador", "Caja"])
@@ -215,3 +219,219 @@ def test_directory_bad_responses_fail_explicitly(monkeypatch, response):
     with pytest.raises(HTTPException) as error:
         asyncio.run(import_services.directory_results("clientes"))
     assert error.value.status_code == 502
+
+@pytest.mark.parametrize("operation", ["draft", "payment", "rental", "rental_paid", "edit"])
+@pytest.mark.parametrize("first", ["write", "delete"])
+def test_client_delete_interleaved_with_reference_write(mongo_rental_api, monkeypatch, operation, first):
+    """Pause actual Mongo calls at the validation/write boundary, without sleeps."""
+    state = mongo_rental_api
+
+    async def scenario():
+        db = state["db"]
+        async with await _client(_actor()) as client:
+            concept = (await client.post(f"{API}/tipos-pagos", json={
+                "nombre": "Concurrent concept", "monto": 10, "inicio": state["monday"],
+            })).json()
+            tariff = (await client.post(f"{API}/tarifas-ambientes", json=_tariff_payload("room-a"))).json()
+            payload = {"cliente_id": "person-a", "fecha_pago": state["monday"]}
+            if operation in ("payment", "edit"):
+                payload.update(id_tipo_pago=concept["id"], cantidad=1)
+            url, method = f"{API}/pagos", client.post
+            if operation.startswith("rental"):
+                url = f"{API}/alquileres"
+                payload = _rental_payload("room-a", tariff["id"], state["monday"],
+                                          cobrar_ahora=operation == "rental_paid")
+            if operation == "edit":
+                existing = await client.post(f"{API}/pagos", json={**payload, "cliente_id": "student-b"})
+                assert existing.status_code == 201, existing.text
+                url, method = f'{API}/pagos/{existing.json()["id"]}', client.put
+
+            entered, resume = asyncio.Event(), asyncio.Event()
+            collection = db.clientes if first == "delete" else (
+                db.alquileres if operation.startswith("rental") else db.pagos
+            )
+            name = "delete_one" if first == "delete" else ("update_one" if operation == "edit" else "insert_one")
+            collection_type = type(collection)
+            original = getattr(collection_type, name)
+
+            async def paused(self, *args, **kwargs):
+                if self.full_name == collection.full_name:
+                    entered.set()
+                    await resume.wait()
+                return await original(self, *args, **kwargs)
+
+            monkeypatch.setattr(collection_type, name, paused)
+            write = lambda: method(url, json=payload)
+            delete = lambda: client.delete(f"{API}/clientes/person-a")
+            task = asyncio.create_task((write if first == "write" else delete)())
+            try:
+                await asyncio.wait_for(entered.wait(), 5)
+                competing = await asyncio.wait_for((delete if first == "write" else write)(), 5)
+            finally:
+                resume.set()
+                result = await asyncio.wait_for(task, 5)
+            if first == "write":
+                assert result.status_code in (200, 201), result.text
+                assert competing.status_code in (400, 409), competing.text
+                assert await db.clientes.find_one({"id": "person-a"})
+                assert (await client.delete(f"{API}/clientes/person-a")).status_code == 400
+            else:
+                assert result.status_code == 200, result.text
+                assert competing.status_code in (400, 409), competing.text
+                assert not await db.clientes.find_one({"id": "person-a"})
+                assert not await db.pagos.find_one({"cliente_id": "person-a"})
+                assert not await db.alquileres.find_one({"cliente_id": "person-a"})
+                occupancy = await db.alquiler_ocupacion.find_one({})
+                assert not occupancy or not occupancy.get("intervals")
+            for name in ("pagos", "alquileres"):
+                async for row in db[name].find({}):
+                    assert await db.clientes.find_one({"id": row["cliente_id"]}), row
+            async for row in db.pagos.find({}):
+                assert row["office_id"] == "office-a"
+            async for row in db.alquileres.find({}):
+                assert row["office_id"] == "office-a"
+            numbers = [row["cod_comprobante"] async for row in db.pagos.find({})]
+            numbers += [row["cod_comprobante"] async for row in db.alquileres.find({"estado": "pagado"})]
+            assert len(numbers) == len(set(numbers))
+
+    state["loop"].run_until_complete(scenario())
+
+def test_reference_pins_are_shared_and_released_individually(mongo_rental_api):
+    """An independent Mongo connection observes pins; one writer cannot clear another."""
+    state = mongo_rental_api
+
+    async def scenario():
+        other_client = server.AsyncIOMotorClient(server.MONGO_URL)
+        other_db = other_client[state["db_name"]]
+        repository = MongoClientes(lambda: other_db)
+        try:
+            async with client_reference(state["db"], "person-a"):
+                async with client_reference(other_db, "person-a"):
+                    assert len((await other_db.clientes.find_one({"id": "person-a"}))["_client_writes"]) == 2
+                with pytest.raises(HTTPException) as blocked:
+                    await repository.delete("person-a")
+                assert blocked.value.status_code == 409
+                assert len((await other_db.clientes.find_one({"id": "person-a"}))["_client_writes"]) == 1
+                # No global/office lock: a different client can be deleted.
+                await repository.delete("student-b")
+            await repository.delete("person-a")
+            assert not await other_db.clientes.find_one({"id": "person-a"})
+        finally:
+            other_client.close()
+
+    state["loop"].run_until_complete(scenario())
+
+@pytest.mark.parametrize("committed", [False, True])
+def test_uncertain_client_delete_does_not_reopen_gate(mongo_rental_api, monkeypatch, committed):
+    state = mongo_rental_api
+
+    async def scenario():
+        db = state["db"]
+        collection_type = type(db.clientes)
+        original = collection_type.delete_one
+        resume = asyncio.Event()
+        delayed = None
+
+        async def uncertain_delete(self, query, *args, **kwargs):
+            nonlocal delayed
+            if self.full_name != db.clientes.full_name:
+                return await original(self, query, *args, **kwargs)
+            if committed:
+                await original(self, query, *args, **kwargs)
+            else:
+                async def late_delete():
+                    await resume.wait()
+                    return await original(self, query, *args, **kwargs)
+                delayed = asyncio.create_task(late_delete())
+            raise RuntimeError("Unknown delete outcome")
+
+        monkeypatch.setattr(collection_type, "delete_one", uncertain_delete)
+        async with await _client(_actor()) as client:
+            try:
+                failed = await client.delete(f"{API}/clientes/person-a")
+                assert failed.status_code == 500, failed.text
+                rejected = await client.post(f"{API}/pagos", json={
+                    "cliente_id": "person-a", "fecha_pago": state["monday"],
+                })
+                assert rejected.status_code == 400, rejected.text
+                assert not await db.pagos.find_one({"cliente_id": "person-a"})
+                assert await db.contadores.count_documents({}) == 0
+            finally:
+                resume.set()
+                if delayed:
+                    await asyncio.wait_for(delayed, 5)
+            assert not await db.clientes.find_one({"id": "person-a"})
+
+    state["loop"].run_until_complete(scenario())
+
+def test_invalid_reference_request_releases_pin(mongo_rental_api):
+    state = mongo_rental_api
+
+    async def scenario():
+        async with await _client(_actor("Caja")) as client:
+            invalid = await client.post(f"{API}/pagos", json={
+                "cliente_id": "person-a", "fecha_pago": state["monday"],
+                "id_tipo_pago": "missing", "cantidad": 1,
+            })
+            assert invalid.status_code == 400, invalid.text
+            assert not (await state["db"].clientes.find_one({"id": "person-a"})).get("_client_writes")
+            assert await state["db"].contadores.count_documents({}) == 0
+            assert (await client.delete(f"{API}/clientes/person-a")).status_code == 200
+
+    state["loop"].run_until_complete(scenario())
+
+@pytest.mark.parametrize("operation", ["payment", "rental"])
+@pytest.mark.parametrize("committed", [False, True])
+def test_uncertain_reference_write_keeps_client_protected(mongo_rental_api, monkeypatch, operation, committed):
+    state = mongo_rental_api
+
+    async def scenario():
+        db = state["db"]
+        async with await _client(_actor()) as client:
+            url = f"{API}/pagos"
+            payload = {"cliente_id": "person-a", "fecha_pago": state["monday"]}
+            if operation == "rental":
+                tariff = await client.post(f"{API}/tarifas-ambientes", json=_tariff_payload("room-a"))
+                assert tariff.status_code == 201, tariff.text
+                url = f"{API}/alquileres"
+                payload = _rental_payload("room-a", tariff.json()["id"], state["monday"])
+            collection = db.pagos if operation == "payment" else db.alquileres
+            collection_type = type(collection)
+            original = collection_type.insert_one
+            resume = asyncio.Event()
+            delayed = None
+
+            async def uncertain_insert(self, doc, *args, **kwargs):
+                nonlocal delayed
+                if self.full_name != collection.full_name:
+                    return await original(self, doc, *args, **kwargs)
+                if committed:
+                    await original(self, doc, *args, **kwargs)
+                else:
+                    # Simulate a dispatched write that commits only after the
+                    # HTTP request has failed and deletion has been attempted.
+                    snapshot = deepcopy(doc)
+
+                    async def late_commit():
+                        await resume.wait()
+                        return await original(self, snapshot, *args, **kwargs)
+
+                    delayed = asyncio.create_task(late_commit())
+                raise RuntimeError("Unknown write outcome")
+
+            monkeypatch.setattr(collection_type, "insert_one", uncertain_insert)
+            try:
+                failed = await client.post(url, json=payload)
+                assert failed.status_code == 500, failed.text
+                deletion = await client.delete(f"{API}/clientes/person-a")
+                assert deletion.status_code == 409, deletion.text
+                assert (await db.clientes.find_one({"id": "person-a"}))["_client_writes"]
+            finally:
+                resume.set()
+                if delayed:
+                    await asyncio.wait_for(delayed, 5)
+            reference = await collection.find_one({"cliente_id": "person-a"})
+            assert reference
+            assert await db.clientes.find_one({"id": reference["cliente_id"]})
+
+    state["loop"].run_until_complete(scenario())
