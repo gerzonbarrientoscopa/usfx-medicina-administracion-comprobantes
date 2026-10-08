@@ -9,3 +9,4 @@
 - [User code format](user-code-format.md) — user codes are three alphanumeric characters; `000` remains reserved.
 - [Browser verification](browser-verification.md) — distinguish shell test-harness failures from application failures before editing the app.
 - [Client deletion integrity](client-deletion-integrity.md) — uncertain reference writes must retain deletion protection; timeouts cannot prove a Mongo write will not commit.
+- [Payment concept compatibility](payment-concept-compatibility.md) — stop duplicating concepts on itemized payments; retain legacy reads and avoid destructive schema migration.

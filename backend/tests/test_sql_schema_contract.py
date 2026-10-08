@@ -9,6 +9,34 @@ TREE = ast.parse(TEXT)
 SCHEMA = SOURCE.with_name("Tablas.Sql").read_text()
 
 
+def test_payment_concept_is_stored_in_items_not_copied_to_parent():
+    """Inspect source only; never import or execute the SQL Server backend."""
+    create = next(n for n in TREE.body if getattr(n, "name", None) == "create_payment")
+    insert = next(n for n in ast.walk(create) if isinstance(n, ast.Call)
+                  and n.args and isinstance(n.args[0], ast.Constant)
+                  and isinstance(n.args[0].value, str)
+                  and n.args[0].value.startswith("INSERT INTO pagos("))
+    statement = insert.args[0].value
+    assert "id_tipo_pago" not in statement
+    assert statement.count("?") == len(insert.args[1].elts)
+    assert "INSERT INTO pago_items(pago_id,id_tipo_pago" in ast.get_source_segment(TEXT, create)
+    add = next(n for n in TREE.body if getattr(n, "name", None) == "add_item")
+    statements = [n.args[0].value for n in ast.walk(add) if isinstance(n, ast.Call)
+                  and n.args and isinstance(n.args[0], ast.Constant)
+                  and isinstance(n.args[0].value, str)]
+    assert any(s.startswith("INSERT INTO pago_items(pago_id,id_tipo_pago") for s in statements)
+    assert all("id_tipo_pago=?" not in s for s in statements if s.startswith("UPDATE pagos SET"))
+    update = next(n for n in TREE.body if getattr(n, "name", None) == "update_payment")
+    item_branch = next(n for n in ast.walk(update) if isinstance(n, ast.If)
+                       and isinstance(n.test, ast.Name) and n.test.id == "item"
+                       and "UPDATE pago_items SET id_tipo_pago" in ast.get_source_segment(TEXT, n))
+    assert 'sets.append("id_tipo_pago=?")' not in "\n".join(
+        ast.get_source_segment(TEXT, n) for n in item_branch.body
+    )
+    assert 'sets.append("id_tipo_pago=?")' in "\n".join(
+        ast.get_source_segment(TEXT, n) for n in item_branch.orelse
+    )
+
 def test_schema_identity_keys_and_separate_user_code():
     for table in ("oficinas", "usuarios", "clientes", "tipos_pagos", "ambientes",
                   "tarifas_ambientes", "pagos", "pago_items", "alquileres",

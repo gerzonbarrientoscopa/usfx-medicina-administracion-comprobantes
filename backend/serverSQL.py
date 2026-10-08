@@ -2089,12 +2089,11 @@ async def create_payment(b: PagoCreate, u=Depends(roles("Administrador", "Caja")
             state = "emitido" if item else "borrador"
             unit = item[3] if item else Decimal(0)
             total = item[4] if item else Decimal(0)
-            type_id = item[0] if item else None
             quantity = item[2] if item else None
             c.execute(
                 """INSERT INTO pagos(office_id,cliente_id,fecha_pago,gestion,
-                         estado,monto,total,id_tipo_pago,cantidad,created_by)
-                         OUTPUT INSERTED.id VALUES(?,?,?,?,?,?,?,?,?,?)""",
+                         estado,monto,total,cantidad,created_by)
+                         OUTPUT INSERTED.id VALUES(?,?,?,?,?,?,?,?,?)""",
                 (
                     oid,
                     b.cliente_id,
@@ -2103,7 +2102,6 @@ async def create_payment(b: PagoCreate, u=Depends(roles("Administrador", "Caja")
                     state,
                     unit,
                     total,
-                    type_id,
                     quantity,
                     u["id"],
                 ),
@@ -2188,8 +2186,8 @@ async def add_item(
             new_total = Decimal(str(p[3] or 0)) + line_total
             if old_count == 0:
                 c.execute(
-                    "UPDATE pagos SET total=?,monto=?,id_tipo_pago=?,cantidad=?,edited_at=SYSUTCDATETIME(),edited_by=? WHERE id=?",
-                    (new_total, amount, b.id_tipo_pago, qty, u["id"], pid),
+                    "UPDATE pagos SET total=?,monto=?,cantidad=?,edited_at=SYSUTCDATETIME(),edited_by=? WHERE id=?",
+                    (new_total, amount, qty, u["id"], pid),
                 )
             else:
                 c.execute(
@@ -2435,7 +2433,8 @@ async def update_payment(
             type_id = item[1] if item else p[3]
             quantity = Decimal(str(item[2] if item else (p[4] or 0)))
             amount = Decimal(str(item[3] if item else (p[5] or 0)))
-            if b.id_tipo_pago and b.id_tipo_pago != type_id:
+            type_changed = bool(b.id_tipo_pago and b.id_tipo_pago != type_id)
+            if type_changed:
                 c.execute(
                     """SELECT nombre,monto,codigo,id_clasificador
                        FROM tipos_pagos WHERE id=? AND office_id=?""",
@@ -2462,13 +2461,17 @@ async def update_payment(
                     )
                 type_id = b.id_tipo_pago
                 amount = Decimal(str(tp[1]))
-                sets.extend(["id_tipo_pago=?", "monto=?"])
-                values.extend([type_id, amount])
+                sets.append("monto=?")
+                values.append(amount)
                 if item:
                     c.execute(
                         "UPDATE pago_items SET id_tipo_pago=?,tipo_pago_nombre=?,monto=? WHERE id=?",
                         (type_id, tp[0], amount, item[0]),
                     )
+                else:
+                    # Legacy receipts without items keep their original source.
+                    sets.append("id_tipo_pago=?")
+                    values.append(type_id)
             if b.cantidad is not None and Decimal(str(b.cantidad)) != quantity:
                 quantity = Decimal(str(b.cantidad))
                 sets.extend(["cantidad=?"])
@@ -2484,7 +2487,7 @@ async def update_payment(
                 else Decimal(str(p[6] or 0))
             )
             if (item or type_id) and (
-                b.cantidad is not None or (b.id_tipo_pago and b.id_tipo_pago != p[3])
+                b.cantidad is not None or type_changed
             ):
                 sets.append("total=?")
                 values.append(total)

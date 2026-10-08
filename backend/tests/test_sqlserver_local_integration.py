@@ -593,6 +593,15 @@ def test_shared_receipts_idempotent_rental_payment_and_annulments(local_sql):
     assert payment_one_row["comprobante_display"] == (
         f"TSA-00001 / {payment_one_row['gestion']}"
     )
+    assert payment_one_row["id_tipo_pago"] == local_sql["concept_id"]
+    assert local_sql["read"](
+        "SELECT id_tipo_pago FROM dbo.pagos WHERE id=?",
+        (int(payment_one_row["id"]),),
+    ) == [(None,)]
+    assert str(local_sql["read"](
+        "SELECT id_tipo_pago FROM dbo.pago_items WHERE pago_id=?",
+        (int(payment_one_row["id"]),),
+    )[0][0]) == local_sql["concept_id"]
 
     reservation = client.post(
         f"{API}/alquileres",

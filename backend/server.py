@@ -2471,12 +2471,11 @@ async def _create_pago_with_client(pago, usuario, office_id, client_write):
         "created_at": iso(datetime.now(timezone.utc)),
         "created_by": usuario["id"],
     }
-    # Keep the original fields for clients and documents that still expect
-    # a single concept per receipt.
+    # Keep the single-concept amounts for compatibility; the concept itself
+    # is stored only in items and derived by _hydrate_pago for API responses.
     if items:
         doc.update(
             {
-                "id_tipo_pago": items[0]["id_tipo_pago"],
                 "cantidad": items[0]["cantidad"],
                 "monto": items[0]["monto"],
             }
@@ -2516,7 +2515,6 @@ async def add_pago_item(
     if not pago.get("items"):
         update["$set"].update(
             {
-                "id_tipo_pago": item["id_tipo_pago"],
                 "cantidad": item["cantidad"],
                 "monto": item["monto"],
             }
@@ -2928,13 +2926,15 @@ async def _update_pago_with_client(pago_id, body, user, client_write):
                 detail="El concepto debe tener código y clasificador presupuestario antes de cobrarlo.",
             )
         await require_active_classifier(tp["id_clasificador"])
-        update["id_tipo_pago"] = body.id_tipo_pago
         new_monto = float(tp["monto"])
         update["monto"] = new_monto
         if itemized:
             update["items.0.id_tipo_pago"] = body.id_tipo_pago
             update["items.0.tipo_pago_nombre"] = tp["nombre"]
             update["items.0.monto"] = new_monto
+        else:
+            # Receipts without items still use the legacy field as their source.
+            update["id_tipo_pago"] = body.id_tipo_pago
 
     current_cantidad = float(current_item.get("cantidad", pago.get("cantidad", 0)) or 0)
     new_cantidad = current_cantidad
