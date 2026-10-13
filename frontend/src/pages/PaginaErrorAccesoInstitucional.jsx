@@ -1,7 +1,7 @@
 import React from "react";
 import { AlertTriangle, Clock3 } from "lucide-react";
 
-export default function InstitutionalAccessErrorPage({ error }) {
+export default function PaginaErrorAccesoInstitucional({ error }) {
   const expired = error?.kind === "expired";
   const unavailable = error?.kind === "unavailable";
   const Icon = expired ? Clock3 : AlertTriangle;
@@ -19,11 +19,12 @@ export default function InstitutionalAccessErrorPage({ error }) {
   return (
     <main
       className="min-h-screen flex items-center justify-center px-4 py-12 bg-paper"
-      data-testid="institutional-access-error"
+      data-testid="error-acceso-institucional"
     >
-      <section className="w-full max-w-md border bg-white px-8 py-10 text-center shadow-none"
+      <section
+        className="w-full max-w-md border bg-white px-8 py-10 text-center shadow-none"
         style={{ borderColor: "var(--institution-border)" }}
-        aria-labelledby="institutional-access-error-title"
+        aria-labelledby="titulo-error-acceso-institucional"
       >
         <div
           className="mx-auto mb-5 flex h-16 w-16 items-center justify-center text-white"
@@ -34,7 +35,7 @@ export default function InstitutionalAccessErrorPage({ error }) {
         </div>
         <div className="section-eyebrow mb-2">Acceso institucional</div>
         <h1
-          id="institutional-access-error-title"
+          id="titulo-error-acceso-institucional"
           className="font-serif-display text-3xl leading-tight"
           style={{ color: "var(--institution-text)" }}
         >

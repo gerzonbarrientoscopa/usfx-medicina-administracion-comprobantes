@@ -7,7 +7,7 @@ import { AppLayout } from "@/components/AppLayout";
 import { Toaster } from "@/components/ui/sonner";
 
 import LoginPage from "@/pages/LoginPage";
-import InstitutionalAccessErrorPage from "@/pages/InstitutionalAccessErrorPage";
+import PaginaErrorAccesoInstitucional from "@/pages/PaginaErrorAccesoInstitucional";
 import DashboardPage from "@/pages/DashboardPage";
 import ClientesPage from "@/pages/ClientesPage";
 import ConceptosRecaudacionPage from "@/pages/ConceptosRecaudacionPage";
@@ -36,7 +36,7 @@ function AppRoutes() {
         new URLSearchParams(window.location.search).has(key),
     );
     if (institutionalAuthError) {
-        return <InstitutionalAccessErrorPage error={institutionalAuthError} />;
+        return <PaginaErrorAccesoInstitucional error={institutionalAuthError} />;
     }
     if (loading && hasInstitutionalParameters) {
         return (
