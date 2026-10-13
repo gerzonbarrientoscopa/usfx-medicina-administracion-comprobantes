@@ -1,7 +1,7 @@
 """Unified clients and selectable directory imports on disposable Mongo databases."""
 import asyncio
 from copy import deepcopy
-from datetime import datetime
+from datetime import datetime, timezone
 from uuid import UUID
 
 import httpx
@@ -132,8 +132,8 @@ def test_institutional_cu_login_uses_database_role_and_keeps_admin_login(mongo_r
             assert updated.status_code == 200, updated.text
             assert updated.json()["cu"] == updated_cu
 
-        now_local = datetime.now(server.BOLIVIA_TIMEZONE)
-        seconds_today = now_local.hour * 3600 + now_local.minute * 60 + now_local.second
+        now_utc = datetime.now(timezone.utc)
+        seconds_today = now_utc.hour * 3600 + now_utc.minute * 60 + now_utc.second
         async with await _client(_actor()) as client:
             admin_login = await client.post(f"{API}/auth/login", json={
                 "email": superadmin["email"], "password": "admin-test-password",

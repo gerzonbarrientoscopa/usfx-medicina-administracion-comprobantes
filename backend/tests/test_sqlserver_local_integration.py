@@ -99,8 +99,8 @@ def _login(client, email, password=TEST_PASSWORD, cu=None):
     else:
         if not cu:
             pytest.fail("Los usuarios locales requieren CU para autenticación institucional.")
-        now_local = datetime.now(timezone(timedelta(hours=-4)))
-        hu = now_local.hour * 3600 + now_local.minute * 60 + now_local.second
+        now_utc = datetime.now(timezone.utc)
+        hu = now_utc.hour * 3600 + now_utc.minute * 60 + now_utc.second
         response = client.post(
             f"{API}/auth/sso",
             json={"cu": cu, "nu": "test", "hu": hu, "iu": "test"},

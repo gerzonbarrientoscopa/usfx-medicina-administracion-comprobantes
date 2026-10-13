@@ -531,8 +531,8 @@ def token(u, auth_method="password"):
 
 
 def validate_institutional_entry_time(hu: int) -> None:
-    now_local = datetime.now(timezone(timedelta(hours=-4)))
-    current_seconds = now_local.hour * 3600 + now_local.minute * 60 + now_local.second
+    now_utc = datetime.now(timezone.utc)
+    current_seconds = now_utc.hour * 3600 + now_utc.minute * 60 + now_utc.second
     elapsed_seconds = (current_seconds - hu) % 86400
     if elapsed_seconds > 60:
         raise HTTPException(401, "El enlace institucional expiró.")

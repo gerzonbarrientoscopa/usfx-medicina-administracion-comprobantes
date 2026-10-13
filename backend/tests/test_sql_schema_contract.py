@@ -45,6 +45,10 @@ def test_sql_institutional_login_uses_saved_cu_and_limits_password_login():
     sso_source = ast.get_source_segment(TEXT, sso)
     assert "SELECT * FROM usuarios WHERE cu=?" in sso_source
     assert 'token(u, auth_method="sso")' in sso_source
+    time_check = next(
+        n for n in TREE.body if getattr(n, "name", None) == "validate_institutional_entry_time"
+    )
+    assert "datetime.now(timezone.utc)" in ast.get_source_segment(TEXT, time_check)
     login = next(n for n in TREE.body if getattr(n, "name", None) == "login")
     assert 'if u["rol"] != SUPER_ADMIN_ROLE' in ast.get_source_segment(TEXT, login)
     current = next(n for n in TREE.body if getattr(n, "name", None) == "current")

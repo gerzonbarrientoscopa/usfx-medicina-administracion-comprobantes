@@ -523,7 +523,7 @@ def create_access_token(
 
 
 def validate_institutional_entry_time(hu: int) -> None:
-    now = datetime.now(BOLIVIA_TIMEZONE)
+    now = datetime.now(timezone.utc)
     current_seconds = now.hour * 3600 + now.minute * 60 + now.second
     elapsed_seconds = (current_seconds - hu) % 86400
     if elapsed_seconds > 60:
