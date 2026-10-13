@@ -37,6 +37,20 @@ def test_payment_concept_is_stored_in_items_not_copied_to_parent():
         ast.get_source_segment(TEXT, n) for n in item_branch.orelse
     )
 
+
+def test_sql_institutional_login_uses_saved_cu_and_limits_password_login():
+    assert "cu nvarchar(128) COLLATE Latin1_General_100_BIN2 NULL" in SCHEMA
+    assert "IX_usuarios_cu ON dbo.usuarios(cu) WHERE cu IS NOT NULL" in SCHEMA
+    sso = next(n for n in TREE.body if getattr(n, "name", None) == "institutional_login")
+    sso_source = ast.get_source_segment(TEXT, sso)
+    assert "SELECT * FROM usuarios WHERE cu=?" in sso_source
+    assert 'token(u, auth_method="sso")' in sso_source
+    login = next(n for n in TREE.body if getattr(n, "name", None) == "login")
+    assert 'if u["rol"] != SUPER_ADMIN_ROLE' in ast.get_source_segment(TEXT, login)
+    current = next(n for n in TREE.body if getattr(n, "name", None) == "current")
+    assert 'payload.get("auth_method") != "sso"' in ast.get_source_segment(TEXT, current)
+
+
 def test_schema_identity_keys_and_separate_user_code():
     for table in ("oficinas", "usuarios", "clientes", "tipos_pagos", "ambientes",
                   "tarifas_ambientes", "pagos", "pago_items", "alquileres",
@@ -76,7 +90,7 @@ def test_user_crud_restricted_and_generated_sql_id():
         assert 'roles("SuperAdmin")' in code, name
     create = next(n for n in TREE.body if getattr(n, "name", None) == "create_user")
     code = ast.get_source_segment(TEXT, create)
-    assert "INSERT INTO usuarios(codigo,email" in code
+    assert "INSERT INTO usuarios(codigo,cu,email" in code
     assert "OUTPUT INSERTED.id" in code and "INSERT INTO usuarios(id," not in TEXT
 
 

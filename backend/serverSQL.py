@@ -112,8 +112,14 @@ class LoginRequest(AnyModel):
     password: str
 
 
+class SSOLoginRequest(AnyModel):
+    cu: str = Field(min_length=1, max_length=128)
+    hu: int = Field(ge=0, le=86399)
+
+
 class UserCreate(AnyModel):
     codigo: str = Field(pattern=r"^[A-Za-z0-9]{3}$")
+    cu: Optional[str] = Field(default=None, max_length=128)
     email: EmailStr
     nombre: str
     password: str = Field(min_length=4)
@@ -123,6 +129,7 @@ class UserCreate(AnyModel):
 
 class UserUpdate(AnyModel):
     codigo: Optional[str] = Field(default=None, pattern=r"^[A-Za-z0-9]{3}$")
+    cu: Optional[str] = Field(default=None, max_length=128)
     email: Optional[EmailStr] = None
     nombre: Optional[str] = None
     rol: Optional[str] = None
@@ -509,17 +516,26 @@ def verifypw(password, hashed):
         return False
 
 
-def token(u):
+def token(u, auth_method="password"):
     return jwt.encode(
         {
             "sub": u["id"],
             "email": u["email"],
             "rol": u["rol"],
+            "auth_method": auth_method,
             "exp": datetime.now(timezone.utc).timestamp() + 28800,
         },
         JWT_SECRET_KEY,
         algorithm=JWT_ALGORITHM,
     )
+
+
+def validate_institutional_entry_time(hu: int) -> None:
+    now_local = datetime.now(timezone(timedelta(hours=-4)))
+    current_seconds = now_local.hour * 3600 + now_local.minute * 60 + now_local.second
+    elapsed_seconds = (current_seconds - hu) % 86400
+    if elapsed_seconds > 60:
+        raise HTTPException(401, "El enlace institucional expiró.")
 
 
 def acquire_app_lock(c, resource):
@@ -549,6 +565,8 @@ async def current(credentials: HTTPAuthorizationCredentials = Depends(security))
     )
     if not u:
         raise HTTPException(401, "Usuario no encontrado.")
+    if u["rol"] != SUPER_ADMIN_ROLE and payload.get("auth_method") != "sso":
+        raise HTTPException(401, "Use el acceso institucional.")
     u.pop("password_hash", None)
     u.pop("email_key", None)
     return u
@@ -796,6 +814,10 @@ async def login(b: LoginRequest, response: Response):
     )
     if not u or not verifypw(b.password, u["password_hash"]):
         raise HTTPException(401, "Credenciales inválidas.")
+    if u["rol"] != SUPER_ADMIN_ROLE:
+        raise HTTPException(
+            403, "Use el acceso institucional para ingresar con su usuario."
+        )
     u.pop("password_hash", None)
     u.pop("email_key", None)
     u["office_nombre"] = (
@@ -803,6 +825,26 @@ async def login(b: LoginRequest, response: Response):
         or {}
     ).get("nombre")
     t = token(u)
+    response.set_cookie("access_token", t, httponly=True, samesite="lax")
+    return {"token": t, "usuario": u}
+
+
+@api.post("/auth/sso")
+async def institutional_login(b: SSOLoginRequest, response: Response):
+    validate_institutional_entry_time(b.hu)
+    cu = b.cu.strip()
+    if not cu:
+        raise HTTPException(401, "Acceso institucional inválido.")
+    u = await sql("SELECT * FROM usuarios WHERE cu=?", (cu,), one=True)
+    if not u:
+        raise HTTPException(401, "Acceso institucional inválido.")
+    u.pop("password_hash", None)
+    u.pop("email_key", None)
+    u["office_nombre"] = (
+        await sql("SELECT nombre FROM oficinas WHERE id=?", (u["office_id"],), one=True)
+        or {}
+    ).get("nombre")
+    t = token(u, auth_method="sso")
     response.set_cookie("access_token", t, httponly=True, samesite="lax")
     return {"token": t, "usuario": u}
 
@@ -912,7 +954,7 @@ async def users(
     where = ("WHERE " + scope) if scope else ""
     total = (await sql("SELECT COUNT(*) n FROM usuarios " + where, args, one=True))["n"]
     rows = await sql(
-        "SELECT id,codigo,email,nombre,rol,office_id,created_at FROM usuarios "
+        "SELECT id,codigo,cu,email,nombre,rol,office_id,created_at FROM usuarios "
         + where
         + " ORDER BY nombre OFFSET ? ROWS FETCH NEXT ? ROWS ONLY",
         args + [(pag - 1) * tam, tam],
@@ -959,16 +1001,19 @@ async def create_user(b: UserCreate, u=Depends(roles("SuperAdmin"))):
         raise HTTPException(400, "La oficina ya tiene un administrador.")
     if b.codigo == "000" or await sql("SELECT id FROM usuarios WHERE codigo=?", (b.codigo,), one=True):
         raise HTTPException(400, "El código de usuario ya está reservado o registrado.")
+    cu = b.cu.strip() if b.cu else None
+    if cu and await sql("SELECT id FROM usuarios WHERE cu=?", (cu,), one=True):
+        raise HTTPException(400, "El CU institucional ya está registrado.")
     ident = (await sql(
-        "INSERT INTO usuarios(codigo,email,nombre,rol,office_id,password_hash) OUTPUT INSERTED.id VALUES(?,?,?,?,?,?)",
-        (b.codigo, email, b.nombre, b.rol, oid, hashpw(b.password)),
+        "INSERT INTO usuarios(codigo,cu,email,nombre,rol,office_id,password_hash) OUTPUT INSERTED.id VALUES(?,?,?,?,?,?,?)",
+        (b.codigo, cu, email, b.nombre, b.rol, oid, hashpw(b.password)),
         one=True, write=True,
     ))["id"]
     return (
         await attach_office_names(
             [
                 await sql(
-                    "SELECT id,codigo,email,nombre,rol,office_id,created_at FROM usuarios WHERE id=?",
+                    "SELECT id,codigo,cu,email,nombre,rol,office_id,created_at FROM usuarios WHERE id=?",
                     (ident,),
                     one=True,
                 )
@@ -987,8 +1032,11 @@ async def update_user(uid: str, b: UserUpdate, u=Depends(roles("SuperAdmin"))):
         await office_scope_sql(u, oid)
     elif u["rol"] != SUPER_ADMIN_ROLE:
         raise HTTPException(403, "Sin permisos para modificar este usuario.")
-    if target["rol"] == SUPER_ADMIN_ROLE:
-        raise HTTPException(403, "La cuenta del Super Admin está protegida.")
+    if target["rol"] == SUPER_ADMIN_ROLE and b.model_fields_set != {"cu"}:
+        raise HTTPException(
+            403,
+            "De la cuenta del Super Admin solo se puede actualizar el CU institucional.",
+        )
     if b.codigo is not None and b.codigo != target["codigo"]:
         raise HTTPException(400, "El código de usuario no se puede cambiar.")
     if (
@@ -1010,6 +1058,14 @@ async def update_user(uid: str, b: UserUpdate, u=Depends(roles("SuperAdmin"))):
         raise HTTPException(403, "No puede cambiar su propio rol.")
     sets = []
     args = []
+    if "cu" in b.model_fields_set:
+        cu = b.cu.strip() if b.cu else None
+        if cu and await sql(
+            "SELECT id FROM usuarios WHERE cu=? AND id<>?", (cu, uid), one=True
+        ):
+            raise HTTPException(400, "El CU institucional ya está registrado.")
+        sets.append("cu=?")
+        args.append(cu)
     if b.email is not None:
         email = str(b.email).strip().lower()
         if await sql("SELECT id FROM usuarios WHERE email_key=LOWER(?) AND id<>?", (email, uid), one=True):
@@ -1052,7 +1108,7 @@ async def update_user(uid: str, b: UserUpdate, u=Depends(roles("SuperAdmin"))):
         await attach_office_names(
             [
                 await sql(
-                    "SELECT id,codigo,email,nombre,rol,office_id,created_at FROM usuarios WHERE id=?",
+                    "SELECT id,codigo,cu,email,nombre,rol,office_id,created_at FROM usuarios WHERE id=?",
                     (uid,),
                     one=True,
                 )

@@ -128,6 +128,7 @@ class UserPublic(BaseModel):
     model_config = ConfigDict(extra="ignore")
     id: str
     codigo: Optional[str] = None
+    cu: Optional[str] = None
     email: EmailStr
     nombre: str
     rol: Literal["SuperAdmin", "Administrador", "Caja", "Consultas"]
@@ -138,6 +139,7 @@ class UserPublic(BaseModel):
 
 class UserCreate(BaseModel):
     codigo: str = Field(pattern=r"^[A-Za-z0-9]{3}$")
+    cu: Optional[str] = Field(default=None, max_length=128)
     email: EmailStr
     nombre: str
     password: str = Field(min_length=4)
@@ -147,6 +149,7 @@ class UserCreate(BaseModel):
 
 class UserUpdate(BaseModel):
     codigo: Optional[str] = Field(default=None, pattern=r"^[A-Za-z0-9]{3}$")
+    cu: Optional[str] = Field(default=None, max_length=128)
     email: Optional[EmailStr] = None
     nombre: Optional[str] = None
     rol: Optional[Literal["Administrador", "Caja", "Consultas"]] = None
@@ -204,6 +207,11 @@ class LoginRequest(BaseModel):
 class LoginResponse(BaseModel):
     token: str
     usuario: UserPublic
+
+
+class SSOLoginRequest(BaseModel):
+    cu: str = Field(min_length=1, max_length=128)
+    hu: int = Field(ge=0, le=86399)
 
 
 class PaginacionClientes(BaseModel):
@@ -500,15 +508,28 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
         return False
 
 
-def create_access_token(user_id: str, email: str, rol: str) -> str:
+def create_access_token(
+    user_id: str, email: str, rol: str, auth_method: str = "password"
+) -> str:
     payload = {
         "sub": user_id,
         "email": email,
         "rol": rol,
+        "auth_method": auth_method,
         "exp": datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRES_MIN),
         "type": "access",
     }
     return jwt.encode(payload, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
+
+
+def validate_institutional_entry_time(hu: int) -> None:
+    now = datetime.now(BOLIVIA_TIMEZONE)
+    current_seconds = now.hour * 3600 + now.minute * 60 + now.second
+    elapsed_seconds = (current_seconds - hu) % 86400
+    if elapsed_seconds > 60:
+        raise HTTPException(
+            status_code=401, detail="El enlace institucional expiró."
+        )
 
 
 async def get_current_user(
@@ -526,6 +547,8 @@ async def get_current_user(
     user = await db.usuarios.find_one({"id": user_id}, {"_id": 0})
     if user is None:
         raise HTTPException(status_code=401, detail="Usuario no encontrado.")
+    if user.get("rol") != SUPER_ADMIN_ROLE and payload.get("auth_method") != "sso":
+        raise HTTPException(status_code=401, detail="Use el acceso institucional.")
     return user
 
 
@@ -655,6 +678,12 @@ async def login(body: LoginRequest, response: Response):
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Credenciales inválidas."
         )
 
+    if user.get("rol") != SUPER_ADMIN_ROLE:
+        raise HTTPException(
+            status_code=403,
+            detail="Use el acceso institucional para ingresar con su usuario.",
+        )
+
     # Crear JWT
     token = create_access_token(user["id"], user["email"], user["rol"])
     response.set_cookie(
@@ -670,6 +699,30 @@ async def login(body: LoginRequest, response: Response):
         "token": token,
         "usuario": await public_user(user),
     }
+
+
+@api.post("/auth/sso", response_model=LoginResponse)
+async def institutional_login(body: SSOLoginRequest, response: Response):
+    validate_institutional_entry_time(body.hu)
+    cu = body.cu.strip()
+    if not cu:
+        raise HTTPException(status_code=401, detail="Acceso institucional inválido.")
+    user = await db.usuarios.find_one({"cu": cu}, {"_id": 0})
+    if not user:
+        raise HTTPException(status_code=401, detail="Acceso institucional inválido.")
+    token = create_access_token(
+        user["id"], user["email"], user["rol"], auth_method="sso"
+    )
+    response.set_cookie(
+        key="access_token",
+        value=token,
+        httponly=True,
+        secure=False,
+        samesite="lax",
+        max_age=ACCESS_TOKEN_EXPIRES_MIN * 60,
+        path="/",
+    )
+    return {"token": token, "usuario": await public_user(user)}
 
 
 @api.post("/auth/logout")
@@ -834,6 +887,9 @@ async def create_user(
         raise HTTPException(status_code=400, detail="El email ya está registrado.")
     if usuario.codigo == "000" or await db.usuarios.find_one({"codigo": usuario.codigo}):
         raise HTTPException(status_code=400, detail="El código de usuario ya está reservado o registrado.")
+    cu = usuario.cu.strip() if usuario.cu else None
+    if cu and await db.usuarios.find_one({"cu": cu}):
+        raise HTTPException(status_code=400, detail="El CU institucional ya está registrado.")
     office_id = await office_for_write(current, usuario.office_id)
     if usuario.rol == "Administrador":
         if current["rol"] != SUPER_ADMIN_ROLE:
@@ -843,6 +899,7 @@ async def create_user(
     doc = {
         "id": str(uuid.uuid4()),
         "codigo": usuario.codigo,
+        "cu": cu,
         "email": email,
         "nombre": usuario.nombre,
         "rol": usuario.rol,
@@ -853,7 +910,7 @@ async def create_user(
     try:
         await db.usuarios.insert_one(doc)
     except DuplicateKeyError:
-        raise HTTPException(status_code=400, detail="El código o email ya existe, o la oficina ya tiene un administrador.")
+        raise HTTPException(status_code=400, detail="El código, email o CU ya existe, o la oficina ya tiene un administrador.")
     return await public_user(doc)
 
 
@@ -865,8 +922,13 @@ async def update_user(
     target = await db.usuarios.find_one({"id": user_id, **scope}, {"_id": 0})
     if not target:
         raise HTTPException(status_code=404, detail="Usuario no encontrado.")
-    if target["rol"] == SUPER_ADMIN_ROLE:
-        raise HTTPException(status_code=403, detail="La cuenta del Super Admin está protegida.")
+    if target["rol"] == SUPER_ADMIN_ROLE and (
+        usuario.model_fields_set != {"cu"}
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="De la cuenta del Super Admin solo se puede actualizar el CU institucional.",
+        )
     if current["rol"] != SUPER_ADMIN_ROLE:
         if target["rol"] == "Administrador" and target["id"] != current["id"]:
             raise HTTPException(status_code=403, detail="No puede modificar administradores.")
@@ -887,6 +949,11 @@ async def update_user(
         if usuario.codigo == "000":
             raise HTTPException(status_code=400, detail="El código 000 está reservado para el Super Admin.")
         update["codigo"] = usuario.codigo
+    if "cu" in usuario.model_fields_set:
+        cu = usuario.cu.strip() if usuario.cu else None
+        if cu and await db.usuarios.find_one({"cu": cu, "id": {"$ne": user_id}}):
+            raise HTTPException(status_code=400, detail="El CU institucional ya está registrado.")
+        update["cu"] = cu
     if usuario.nombre is not None:
         update["nombre"] = usuario.nombre
     if usuario.rol is not None:
@@ -914,7 +981,7 @@ async def update_user(
     try:
         await db.usuarios.update_one({"id": user_id, **scope}, {"$set": update})
     except DuplicateKeyError:
-        raise HTTPException(status_code=400, detail="El código ya existe o la oficina ya tiene un administrador.")
+        raise HTTPException(status_code=400, detail="El código o CU ya existe, o la oficina ya tiene un administrador.")
     updated = await db.usuarios.find_one(
         {"id": user_id}, {"_id": 0, "password_hash": 0}
     )
@@ -3322,6 +3389,11 @@ async def startup():
     await db.usuarios.create_index(
         "codigo", unique=True,
         partialFilterExpression={"codigo": {"$type": "string"}},
+    )
+    await db.usuarios.create_index(
+        "cu", unique=True,
+        partialFilterExpression={"cu": {"$type": "string", "$gt": ""}},
+        name="unique_institutional_cu",
     )
     await db.usuarios.create_index(
         [("office_id", 1), ("rol", 1)],

@@ -31,7 +31,7 @@ import {
 } from "@/components/ui/table";
 import { Plus, Pencil, Trash2, ChevronLeft, ChevronRight } from "lucide-react";
 
-const EMPTY = { codigo: "", email: "", nombre: "", password: "", rol: "Caja" };
+const EMPTY = { codigo: "", cu: "", email: "", nombre: "", password: "", rol: "Caja" };
 
 export default function UsuariosPage() {
   const { user } = useAuth();
@@ -45,6 +45,7 @@ export default function UsuariosPage() {
   const [loading, setLoading] = useState(false);
   const [pagina, setPagina] = useState(1);
   const [totalPaginas, setTotalPaginas] = useState(1);
+  const editingSuperAdmin = editingUsuario?.rol === "SuperAdmin";
   const FILAS_POR_PAGINA = 20;
 
   const fetchUsuarios = useCallback(async () => {
@@ -94,30 +95,41 @@ export default function UsuariosPage() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!/^[A-Za-z0-9]{3}$/.test(formData.codigo) || formData.codigo === "000") {
+    if (
+      !editingSuperAdmin &&
+      (!/^[A-Za-z0-9]{3}$/.test(formData.codigo) || formData.codigo === "000")
+    ) {
       toast.error("Ingresa un código alfanumérico de 3 caracteres; 000 está reservado.");
       return;
     }
-    if (isSuperAdmin && !formData.office_id) {
+    if (!formData.cu.trim()) {
+      toast.error("Ingresa el CU que recibirá el usuario desde el acceso institucional.");
+      return;
+    }
+    if (isSuperAdmin && !editingSuperAdmin && !formData.office_id) {
       toast.error("Selecciona una oficina.");
       return;
     }
     setLoading(true);
     try {
       if (editingUsuario) {
-        const payload = {
-          email: formData.email,
-          nombre: formData.nombre,
-          rol: formData.rol,
-          ...(isSuperAdmin ? { office_id: formData.office_id } : {}),
-        };
-        if (formData.password) payload.password = formData.password;
-        if (!editingUsuario.codigo) payload.codigo = formData.codigo;
+        const payload = editingSuperAdmin
+          ? { cu: formData.cu.trim() }
+          : {
+              cu: formData.cu.trim(),
+              email: formData.email,
+              nombre: formData.nombre,
+              rol: formData.rol,
+              ...(isSuperAdmin ? { office_id: formData.office_id } : {}),
+            };
+        if (!editingSuperAdmin && formData.password) payload.password = formData.password;
+        if (!editingSuperAdmin && !editingUsuario.codigo) payload.codigo = formData.codigo;
         await apiClient.put(`/usuarios/${editingUsuario.id}`, payload);
         toast.success("Usuario actualizado.");
       } else {
         const payload = {
           codigo: formData.codigo,
+          cu: formData.cu.trim(),
           email: formData.email,
           nombre: formData.nombre,
           password: formData.password,
@@ -149,7 +161,7 @@ export default function UsuariosPage() {
   };
 
   const handleDelete = async (usuario) => {
-    if (!canManage(usuario)) return;
+    if (!canManage(usuario) || usuario.rol === "SuperAdmin") return;
     if (!window.confirm(`¿Eliminar "${usuario.nombre}"?`)) return;
     try {
       await apiClient.delete(`/usuarios/${usuario.id}`);
@@ -165,6 +177,7 @@ export default function UsuariosPage() {
     setEditingUsuario(usuario);
     setFormData({
       codigo: usuario.codigo || "",
+      cu: usuario.cu || "",
       email: usuario.email,
       nombre: usuario.nombre,
       password: "",
@@ -175,8 +188,8 @@ export default function UsuariosPage() {
   };
 
   const canManage = (usuario) =>
-    usuario.rol !== "SuperAdmin" &&
-    isSuperAdmin;
+    isSuperAdmin &&
+    (usuario.rol !== "SuperAdmin" || usuario.id === user?.id);
 
   const handleOpenChange = (isOpen) => {
     setOpen(isOpen);
@@ -274,11 +287,29 @@ export default function UsuariosPage() {
                 </p>
               </div>
               <div className="space-y-1.5">
+                <Label htmlFor="user-cu" className="text-xs uppercase tracking-widest text-[color:var(--institution-muted)]">
+                  CU de acceso institucional
+                </Label>
+                <Input
+                  id="user-cu"
+                  value={formData.cu}
+                  onChange={(e) => setFormData({ ...formData, cu: e.target.value })}
+                  maxLength={128}
+                  required
+                  data-testid="user-cu-input"
+                  className="rounded-sm"
+                />
+                <p className="text-xs text-[color:var(--institution-muted)]">
+                  Debe coincidir exactamente con el valor CU que llega en el enlace institucional.
+                </p>
+              </div>
+              <div className="space-y-1.5">
                 <Label className="text-xs uppercase tracking-widest text-[color:var(--institution-muted)]">
                   Nombre completo
                 </Label>
                 <Input
                   value={formData.nombre}
+                  disabled={editingSuperAdmin}
                   onChange={(e) =>
                     setFormData({ ...formData, nombre: e.target.value })
                   }
@@ -294,6 +325,7 @@ export default function UsuariosPage() {
                 <Input
                   type="email"
                   value={formData.email}
+                  disabled={editingSuperAdmin}
                   onChange={(e) =>
                     setFormData({ ...formData, email: e.target.value })
                   }
@@ -311,6 +343,7 @@ export default function UsuariosPage() {
                 <Input
                   type="password"
                   value={formData.password}
+                  disabled={editingSuperAdmin}
                   onChange={(e) =>
                     setFormData({ ...formData, password: e.target.value })
                   }
@@ -329,11 +362,15 @@ export default function UsuariosPage() {
                 >
                   <SelectTrigger
                     className="rounded-sm"
+                    disabled={editingSuperAdmin}
                     data-testid="user-role-select"
                   >
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
+                    {editingSuperAdmin && (
+                      <SelectItem value="SuperAdmin">SuperAdmin</SelectItem>
+                    )}
                     {isSuperAdmin && (
                       <SelectItem value="Administrador">
                         Administrador
@@ -357,6 +394,7 @@ export default function UsuariosPage() {
                   >
                     <SelectTrigger
                       className="rounded-sm"
+                      disabled={editingSuperAdmin}
                       data-testid="user-office-select"
                     >
                       <SelectValue placeholder="Selecciona una oficina" />
@@ -410,6 +448,9 @@ export default function UsuariosPage() {
                 Código
               </TableHead>
               <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">
+                CU institucional
+              </TableHead>
+              <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">
                 Nombre completo
               </TableHead>
               <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">
@@ -431,6 +472,7 @@ export default function UsuariosPage() {
               <TableRow key={usuario.id} data-testid={`user-row-${usuario.id}`}>
                 <TableCell className="font-mono text-xs">{usuario.id}</TableCell>
                 <TableCell>{usuario.codigo || "—"}</TableCell>
+                <TableCell className="font-mono text-xs">{usuario.cu || "—"}</TableCell>
                 <TableCell className="font-medium">{usuario.nombre}</TableCell>
                 <TableCell>{usuario.email}</TableCell>
                 <TableCell>
@@ -457,15 +499,17 @@ export default function UsuariosPage() {
                       >
                         <Pencil size={14} />
                       </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => handleDelete(usuario)}
-                        data-testid={`user-delete-${usuario.id}`}
-                        className="rounded-sm text-[color:var(--institution-danger)]"
-                      >
-                        <Trash2 size={14} />
-                      </Button>
+                      {usuario.rol !== "SuperAdmin" && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleDelete(usuario)}
+                          data-testid={`user-delete-${usuario.id}`}
+                          className="rounded-sm text-[color:var(--institution-danger)]"
+                        >
+                          <Trash2 size={14} />
+                        </Button>
+                      )}
                     </>
                   )}
                 </TableCell>

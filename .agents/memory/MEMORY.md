@@ -10,3 +10,4 @@
 - [Browser verification](browser-verification.md) — distinguish shell test-harness failures from application failures before editing the app.
 - [Client deletion integrity](client-deletion-integrity.md) — uncertain reference writes must retain deletion protection; timeouts cannot prove a Mongo write will not commit.
 - [Payment concept compatibility](payment-concept-compatibility.md) — stop duplicating concepts on itemized payments; retain legacy reads and avoid destructive schema migration.
+- [Institutional access constraints](institutional-access.md) — upstream SSO cannot be changed; local CU matching is requested, while permissions remain database-defined.

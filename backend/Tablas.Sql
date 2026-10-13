@@ -42,12 +42,17 @@ CREATE TABLE dbo.usuarios (
   id int IDENTITY(1,1) NOT NULL CONSTRAINT PK_usuarios PRIMARY KEY, codigo char(3) NOT NULL CONSTRAINT UQ_usuarios_codigo UNIQUE, email nvarchar(320) NOT NULL,
  email_key AS LOWER(LTRIM(RTRIM(email))) PERSISTED, nombre nvarchar(200) NOT NULL,
   rol nvarchar(20) NOT NULL, id_oficina int NULL, password_hash nvarchar(255) NOT NULL,
+  cu nvarchar(128) COLLATE Latin1_General_100_BIN2 NULL,
  created_at datetime2(3) NOT NULL CONSTRAINT DF_usuarios_created DEFAULT SYSUTCDATETIME(),
   CONSTRAINT UQ_usuarios_email UNIQUE(email_key), CONSTRAINT FK_usuarios_oficina FOREIGN KEY(id_oficina) REFERENCES dbo.oficinas(id),
   CONSTRAINT CK_usuarios_rol CHECK(rol IN(N'SuperAdmin',N'Administrador',N'Caja',N'Consultas')),
     CONSTRAINT CK_usuarios_codigo CHECK(codigo COLLATE Latin1_General_100_BIN2 LIKE '[A-Za-z0-9][A-Za-z0-9][A-Za-z0-9]'),
    CONSTRAINT CK_usuarios_superadmin CHECK((codigo='000' AND rol=N'SuperAdmin') OR (codigo<>'000' AND rol<>N'SuperAdmin'))
 );
+IF COL_LENGTH(N'dbo.usuarios',N'cu') IS NULL
+    ALTER TABLE dbo.usuarios ADD cu nvarchar(128) COLLATE Latin1_General_100_BIN2 NULL;
+IF NOT EXISTS(SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID(N'dbo.usuarios') AND name=N'IX_usuarios_cu')
+    CREATE UNIQUE INDEX IX_usuarios_cu ON dbo.usuarios(cu) WHERE cu IS NOT NULL;
 IF NOT EXISTS(SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID(N'dbo.usuarios') AND name=N'IX_usuarios_un_admin')
 CREATE UNIQUE INDEX IX_usuarios_un_admin ON dbo.usuarios(id_oficina) WHERE rol=N'Administrador' AND id_oficina IS NOT NULL;
 IF OBJECT_ID(N'dbo.clientes','U') IS NULL

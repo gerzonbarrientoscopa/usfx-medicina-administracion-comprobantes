@@ -12,7 +12,7 @@ import os
 import re
 import sys
 import uuid
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -91,10 +91,20 @@ def _read_rows(module, statement, params=()):
         connection.close()
 
 
-def _login(client, email, password=TEST_PASSWORD):
-    response = client.post(
-        f"{API}/auth/login", json={"email": email, "password": password}
-    )
+def _login(client, email, password=TEST_PASSWORD, cu=None):
+    if email == TEST_ADMIN_EMAIL:
+        response = client.post(
+            f"{API}/auth/login", json={"email": email, "password": password}
+        )
+    else:
+        if not cu:
+            pytest.fail("Los usuarios locales requieren CU para autenticación institucional.")
+        now_local = datetime.now(timezone(timedelta(hours=-4)))
+        hu = now_local.hour * 3600 + now_local.minute * 60 + now_local.second
+        response = client.post(
+            f"{API}/auth/sso",
+            json={"cu": cu, "nu": "test", "hu": hu, "iu": "test"},
+        )
     assert response.status_code == 200, response.text
     return {"Authorization": f"Bearer {response.json()['token']}"}
 
@@ -120,6 +130,7 @@ def _create_user(client, headers, code, email, role, office_id):
         headers=headers,
         json={
             "codigo": code,
+            "cu": f"sql-test-{code}",
             "email": email,
             "nombre": f"Usuario {code}",
             "password": TEST_PASSWORD,
@@ -226,12 +237,18 @@ def local_sql():
             "consultas_a": f"sql-consultas-{suffix}@example.com",
             "cashier_b": f"sql-cashier-b-{suffix}@example.com",
         }
-        _create_user(client, super_headers, "101", emails["admin_a"], "Administrador", office_a)
-        _create_user(client, super_headers, "102", emails["cashier_a"], "Caja", office_a)
-        _create_user(client, super_headers, "103", emails["consultas_a"], "Consultas", office_a)
-        _create_user(client, super_headers, "201", emails["cashier_b"], "Caja", office_b)
+        user_codes = {
+            "admin_a": "101",
+            "cashier_a": "102",
+            "consultas_a": "103",
+            "cashier_b": "201",
+        }
+        _create_user(client, super_headers, user_codes["admin_a"], emails["admin_a"], "Administrador", office_a)
+        _create_user(client, super_headers, user_codes["cashier_a"], emails["cashier_a"], "Caja", office_a)
+        _create_user(client, super_headers, user_codes["consultas_a"], emails["consultas_a"], "Consultas", office_a)
+        _create_user(client, super_headers, user_codes["cashier_b"], emails["cashier_b"], "Caja", office_b)
         headers = {
-            role: _login(client, email)
+            role: _login(client, email, cu=f"sql-test-{user_codes[role]}")
             for role, email in emails.items()
         }
 

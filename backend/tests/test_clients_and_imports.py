@@ -1,6 +1,7 @@
 """Unified clients and selectable directory imports on disposable Mongo databases."""
 import asyncio
 from copy import deepcopy
+from datetime import datetime
 from uuid import UUID
 
 import httpx
@@ -75,6 +76,117 @@ def test_only_superadmin_has_user_crud_and_import(mongo_rental_api, role):
             assert (await client.delete(f"{API}/usuarios/no-existe")).status_code == 403
             assert (await client.get(f"{API}/reportes/registradores")).status_code == 200
     mongo_rental_api["loop"].run_until_complete(scenario())
+
+
+def test_institutional_cu_login_uses_database_role_and_keeps_admin_login(mongo_rental_api):
+    state = mongo_rental_api
+
+    async def scenario():
+        superadmin = {
+            "id": "sso-test-admin",
+            "codigo": "000",
+            "email": "sso-admin@example.com",
+            "nombre": "Super Admin de prueba",
+            "rol": "SuperAdmin",
+            "office_id": None,
+            "password_hash": server.hash_password("admin-test-password"),
+        }
+        await state["db"].usuarios.insert_one(superadmin)
+        user_body = {
+            "codigo": "BGC",
+            "cu": "b9bdab8e4c136c105f82dfaad05fc0cc",
+            "email": "sso-user@example.com",
+            "nombre": "Usuario Institucional",
+            "password": "test-password",
+            "rol": "Caja",
+            "office_id": state["office_a"],
+        }
+        created_user_id = None
+        async with await _client(_actor("SuperAdmin")) as admin:
+            users = await admin.get(f"{API}/usuarios")
+            assert users.status_code == 200, users.text
+            admin_user = next(
+                row for row in users.json()["items"]
+                if row["id"] == superadmin["id"]
+            )
+            updated_admin = await admin.put(
+                f'{API}/usuarios/{admin_user["id"]}',
+                json={"cu": "sso-superadmin-cu"},
+            )
+            assert updated_admin.status_code == 200, updated_admin.text
+            assert updated_admin.json()["cu"] == "sso-superadmin-cu"
+            protected_edit = await admin.put(
+                f'{API}/usuarios/{admin_user["id"]}',
+                json={"email": "changed@example.com"},
+            )
+            assert protected_edit.status_code == 403
+
+            created = await admin.post(f"{API}/usuarios", json=user_body)
+            assert created.status_code == 201, created.text
+            assert created.json()["cu"] == user_body["cu"]
+            created_user_id = created.json()["id"]
+            updated_cu = "cu-institucional-actualizado"
+            updated = await admin.put(
+                f'{API}/usuarios/{created.json()["id"]}', json={"cu": updated_cu}
+            )
+            assert updated.status_code == 200, updated.text
+            assert updated.json()["cu"] == updated_cu
+
+        now_local = datetime.now(server.BOLIVIA_TIMEZONE)
+        seconds_today = now_local.hour * 3600 + now_local.minute * 60 + now_local.second
+        async with await _client(_actor()) as client:
+            admin_login = await client.post(f"{API}/auth/login", json={
+                "email": superadmin["email"], "password": "admin-test-password",
+            })
+            assert admin_login.status_code == 200, admin_login.text
+            admin_sso = await client.post(f"{API}/auth/sso", json={
+                "cu": "sso-superadmin-cu", "hu": seconds_today,
+            })
+            assert admin_sso.status_code == 200, admin_sso.text
+            assert admin_sso.json()["usuario"]["rol"] == "SuperAdmin"
+            blocked_password = await client.post(f"{API}/auth/login", json={
+                "email": user_body["email"], "password": user_body["password"],
+            })
+            assert blocked_password.status_code == 403
+
+            invalid_cu = await client.post(f"{API}/auth/sso", json={
+                "cu": "not-the-stored-cu", "hu": seconds_today,
+            })
+            assert invalid_cu.status_code == 401
+            expired = await client.post(f"{API}/auth/sso", json={
+                "cu": user_body["cu"], "hu": (seconds_today - 61) % 86400,
+            })
+            assert expired.status_code == 401
+
+            accepted = await client.post(f"{API}/auth/sso", json={
+                "cu": updated_cu, "nu": "99999", "hu": seconds_today, "iu": "x",
+            })
+            assert accepted.status_code == 200, accepted.text
+            assert accepted.json()["usuario"]["rol"] == "Caja"
+            assert accepted.json()["usuario"]["office_id"] == state["office_a"]
+            assert accepted.json()["token"]
+            override = server.app.dependency_overrides.pop(server.get_current_user, None)
+            try:
+                sso_me = await client.get(
+                    f"{API}/auth/me",
+                    headers={"Authorization": f"Bearer {accepted.json()['token']}"},
+                )
+                assert sso_me.status_code == 200, sso_me.text
+                old_password_token = server.create_access_token(
+                    created_user_id,
+                    user_body["email"],
+                    "Caja",
+                )
+                old_me = await client.get(
+                    f"{API}/auth/me",
+                    headers={"Authorization": f"Bearer {old_password_token}"},
+                )
+                assert old_me.status_code == 401
+            finally:
+                if override is not None:
+                    server.app.dependency_overrides[server.get_current_user] = override
+
+    state["loop"].run_until_complete(scenario())
 
 
 def test_clients_work_in_payments_edit_search_receipts_and_rentals(mongo_rental_api):
