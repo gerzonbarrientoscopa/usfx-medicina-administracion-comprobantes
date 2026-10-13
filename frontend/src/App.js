@@ -1,12 +1,13 @@
 import React from "react";
 import "@/App.css";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
-import { AuthProvider } from "@/contexts/AuthContext";
+import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { AppLayout } from "@/components/AppLayout";
 import { Toaster } from "@/components/ui/sonner";
 
 import LoginPage from "@/pages/LoginPage";
+import InstitutionalAccessErrorPage from "@/pages/InstitutionalAccessErrorPage";
 import DashboardPage from "@/pages/DashboardPage";
 import ClientesPage from "@/pages/ClientesPage";
 import ConceptosRecaudacionPage from "@/pages/ConceptosRecaudacionPage";
@@ -29,11 +30,28 @@ function withLayout(element) {
     );
 }
 
-function App() {
+function AppRoutes() {
+    const { institutionalAuthError, loading } = useAuth();
+    const hasInstitutionalParameters = ["cu", "nu", "hu", "iu"].some((key) =>
+        new URLSearchParams(window.location.search).has(key),
+    );
+    if (institutionalAuthError) {
+        return <InstitutionalAccessErrorPage error={institutionalAuthError} />;
+    }
+    if (loading && hasInstitutionalParameters) {
+        return (
+            <main
+                className="min-h-screen flex items-center justify-center bg-paper text-sm text-[color:var(--institution-muted)]"
+                role="status"
+                aria-live="polite"
+            >
+                Verificando enlace institucional…
+            </main>
+        );
+    }
+
     return (
-        <AuthProvider>
-            <BrowserRouter>
-                <Routes>
+        <Routes>
                     <Route path="/login" element={<LoginPage />} />
 
                     <Route path="/" element={withLayout(<DashboardPage />)} />
@@ -165,6 +183,14 @@ function App() {
 
                     <Route path="*" element={<Navigate to="/" replace />} />
                 </Routes>
+    );
+}
+
+function App() {
+    return (
+        <AuthProvider>
+            <BrowserRouter>
+                <AppRoutes />
                 <Toaster position="top-right" richColors />
             </BrowserRouter>
         </AuthProvider>

@@ -9,30 +9,57 @@ import React, {
 import { apiClient, formatApiError } from "@/lib/api";
 
 const AuthContext = createContext(null);
+const INSTITUTIONAL_QUERY_KEYS = ["cu", "nu", "hu", "iu"];
+
+function classifyInstitutionalFailure(error) {
+  const detail = error?.response?.data?.detail;
+  const message = typeof detail === "string" ? detail.toLowerCase() : "";
+  if (message.includes("expir") || message.includes("caduc")) {
+    return { kind: "expired" };
+  }
+  if ([401, 403, 422].includes(error?.response?.status)) {
+    return { kind: "unauthorized" };
+  }
+  return { kind: "unavailable" };
+}
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [institutionalAuthError, setInstitutionalAuthError] = useState(null);
   const initialized = useRef(false);
 
   const refresh = useCallback(async () => {
     try {
       const url = new URL(window.location.href);
-      const ssoKeys = ["cu", "nu", "hu", "iu"];
-      const hasInstitutionalLink = ssoKeys.every((key) =>
+      const hasInstitutionalParameters = INSTITUTIONAL_QUERY_KEYS.some((key) =>
         url.searchParams.has(key),
       );
-      if (hasInstitutionalLink) {
+      if (hasInstitutionalParameters) {
         const institutionalData = Object.fromEntries(
-          ssoKeys.map((key) => [key, url.searchParams.get(key)]),
+          INSTITUTIONAL_QUERY_KEYS.map((key) => [
+            key,
+            url.searchParams.get(key),
+          ]),
         );
-        ssoKeys.forEach((key) => url.searchParams.delete(key));
+        INSTITUTIONAL_QUERY_KEYS.forEach((key) =>
+          url.searchParams.delete(key),
+        );
         const remainingSearch = url.searchParams.toString();
         window.history.replaceState(
           window.history.state,
           "",
           `${url.pathname}${remainingSearch ? `?${remainingSearch}` : ""}${url.hash}`,
         );
+        const isCompleteLink = INSTITUTIONAL_QUERY_KEYS.every(
+          (key) => institutionalData[key] !== null,
+        );
+        if (!isCompleteLink) {
+          localStorage.removeItem("token");
+          setUser(false);
+          setInstitutionalAuthError({ kind: "unauthorized" });
+          return;
+        }
         try {
           const { data } = await apiClient.post("/auth/sso", {
             ...institutionalData,
@@ -41,9 +68,15 @@ export function AuthProvider({ children }) {
           const userData = data.user || data.usuario;
           localStorage.setItem("token", data.token);
           setUser(userData);
+          setInstitutionalAuthError(null);
           return;
-        } catch (_ssoError) {
-          // An invalid institutional link must not discard a valid existing session.
+        } catch (ssoError) {
+          localStorage.removeItem("token");
+          setUser(false);
+          setInstitutionalAuthError(
+            classifyInstitutionalFailure(ssoError),
+          );
+          return;
         }
       }
 
@@ -74,6 +107,7 @@ export function AuthProvider({ children }) {
       const userData = data.user || data.usuario;
       localStorage.setItem("token", data.token);
       setUser(userData);
+      setInstitutionalAuthError(null);
       return { ok: true, success: true, user: userData };
     } catch (e) {
       return { ok: false, success: false, error: formatApiError(e) };
@@ -88,10 +122,13 @@ export function AuthProvider({ children }) {
     }
     localStorage.removeItem("token");
     setUser(false);
+    setInstitutionalAuthError(null);
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout, refresh }}>
+    <AuthContext.Provider
+      value={{ user, loading, login, logout, refresh, institutionalAuthError }}
+    >
       {children}
     </AuthContext.Provider>
   );
