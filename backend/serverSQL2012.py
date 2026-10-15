@@ -208,12 +208,17 @@ def _connection_string():
     value = os.getenv("SQLSERVER_CONNECTION_STRING")
     if value:
         return value
+        
+    driver = os.getenv("SQLSERVER_DRIVER", "{ODBC Driver 17 for SQL Server}")
     host = os.getenv("SQLSERVER_HOST", "localhost")
     db = os.getenv("SQLSERVER_DATABASE", "ComprobantesDB")
+    
     if os.getenv("SQLSERVER_TRUSTED_AUTH", "").lower() in ("1", "true", "yes"):
-        return f"DRIVER={{ODBC Driver 17 for SQL Server}};SERVER={host};DATABASE={db};Trusted_Connection=yes;TrustServerCertificate=yes"
-    return f"DRIVER={{ODBC Driver 17 for SQL Server}};SERVER={host};DATABASE={db};UID={os.getenv('SQLSERVER_USER','')};PWD={os.getenv('SQLSERVER_PASSWORD','')};TrustServerCertificate=yes"
-
+        return f"DRIVER={driver};SERVER={host};DATABASE={db};Trusted_Connection=yes;TrustServerCertificate=yes"
+        
+    user = os.getenv('SQLSERVER_USER','')
+    password = os.getenv('SQLSERVER_PASSWORD','')
+    return f"DRIVER={driver};SERVER={host};DATABASE={db};UID={user};PWD={password};Encrypt=no;TrustServerCertificate=yes"
 
 # Physical SQL identifiers differ from the stable JSON/API names used by both
 # backends. Translate every statement, including transaction cursor statements,
@@ -535,7 +540,7 @@ def validate_institutional_entry_time(hu: int) -> None:
     now_utc = datetime.now(timezone.utc)
     current_seconds = now_utc.hour * 3600 + now_utc.minute * 60 + now_utc.second
     elapsed_seconds = (current_seconds - hu) % 86400
-    if elapsed_seconds > 60:
+    if elapsed_seconds > 600:
         raise HTTPException(401, "El enlace institucional expiró.")
 
 
