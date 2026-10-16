@@ -187,3 +187,61 @@ CREATE TABLE dbo.comprobante_contadores (id_oficina int NOT NULL, gestion int NO
 IF OBJECT_ID(N'comprobante_asignaciones','U') IS NULL
 CREATE TABLE dbo.comprobante_asignaciones (id_oficina int NOT NULL, gestion int NOT NULL, codigo nvarchar(30) NOT NULL, origen nvarchar(20) NOT NULL, origen_id int NOT NULL, asignado_at datetime2(3) NOT NULL CONSTRAINT DF_alloc_at DEFAULT SYSUTCDATETIME(), CONSTRAINT PK_asignaciones PRIMARY KEY(id_oficina,gestion,codigo), CONSTRAINT UQ_alloc_source UNIQUE(origen,origen_id), CONSTRAINT FK_alloc_office FOREIGN KEY(id_oficina) REFERENCES dbo.oficinas(id));
 GO
+
+/*
+  Login SQL de mínimo privilegio para el backend.
+  La contraseña aleatoria se muestra solo al crear el login; guárdela fuera
+  del repositorio. Si el login ya existe, este bloque no cambia su contraseña.
+*/
+USE [master];
+GO
+IF SUSER_ID(N'usrweb_comprobantes') IS NULL
+BEGIN
+    DECLARE @web_password nvarchar(28);
+    DECLARE @create_login_sql nvarchar(max);
+
+    -- 24 caracteres hexadecimales aleatorios (96 bits) más cuatro caracteres
+    -- que garantizan mayúscula, minúscula, número y símbolo.
+    SET @web_password = N'A7z!' +
+        CONVERT(nvarchar(24), CONVERT(varchar(24), CRYPT_GEN_RANDOM(12), 2));
+
+    SET @create_login_sql =
+        N'CREATE LOGIN [usrweb_comprobantes] WITH PASSWORD = ' +
+        QUOTENAME(@web_password, '''') +
+        N', CHECK_POLICY = ON, CHECK_EXPIRATION = OFF;';
+    EXEC sys.sp_executesql @create_login_sql;
+
+    SELECT N'usrweb_comprobantes' AS SQLSERVER_USER,
+           @web_password AS SQLSERVER_PASSWORD;
+END
+ELSE
+BEGIN
+    PRINT N'El login usrweb_comprobantes ya existe; no se cambió ni se mostró su contraseña.';
+END
+GRANT CONNECT SQL TO [usrweb_comprobantes];
+GO
+
+USE [ComprobantesDB];
+GO
+IF DATABASE_PRINCIPAL_ID(N'rol_backend_comprobantes') IS NULL
+    CREATE ROLE [rol_backend_comprobantes] AUTHORIZATION [dbo];
+GO
+IF DATABASE_PRINCIPAL_ID(N'usrweb_comprobantes') IS NULL
+    CREATE USER [usrweb_comprobantes] FOR LOGIN [usrweb_comprobantes];
+GO
+IF NOT EXISTS (
+    SELECT 1
+    FROM sys.database_role_members AS drm
+    INNER JOIN sys.database_principals AS role_principal
+        ON role_principal.principal_id = drm.role_principal_id
+    INNER JOIN sys.database_principals AS user_principal
+        ON user_principal.principal_id = drm.member_principal_id
+    WHERE role_principal.name = N'rol_backend_comprobantes'
+      AND user_principal.name = N'usrweb_comprobantes'
+)
+    ALTER ROLE [rol_backend_comprobantes] ADD MEMBER [usrweb_comprobantes];
+GO
+GRANT CONNECT TO [rol_backend_comprobantes];
+GRANT SELECT, INSERT, UPDATE, DELETE
+    ON SCHEMA::[dbo] TO [rol_backend_comprobantes];
+GO
