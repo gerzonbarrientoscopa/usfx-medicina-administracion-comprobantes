@@ -5,6 +5,10 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
+# Definimos los componentes de la URL de paquetes de Microsoft para evitar bloqueos
+ENV MS_HOST="packages.microsoft.com"
+ENV MS_KEY_PATH="keys/microsoft.asc"
+ENV MS_REPO_PATH="config/debian/12/prod.list"
 
 WORKDIR /app
 
@@ -17,11 +21,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     unixodbc-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Instalar el Driver Oficial de Microsoft ODBC 18 para SQL Server en Linux Debian/Slim
-RUN curl -fsSL https://microsoft.com | gpg --dearmor -o /usr/share/keyrings/microsoft-prod.gpg \
-    && curl -fsSL https://microsoft.com > /etc/apt/sources.get.d/mssql-release.list \
+# Instalar el Driver Oficial de Microsoft ODBC 17 para SQL Server en Linux Debian/Slim
+RUN apt-get update && apt-get install -y curl gnupg2 ca-certificates \
+    && curl -fsSL https://${MS_HOST}/${MS_KEY_PATH} | gpg --dearmor -o /usr/share/keyrings/microsoft-prod.gpg \
+    && curl -fsSL https://${MS_HOST}/${MS_REPO_PATH} > /etc/apt/sources.list.d/mssql-release.list \
     && apt-get update \
-    && ACCEPT_EULA=Y apt-get install -y --no-install-recommends msodbcsql18 \
+    && ACCEPT_EULA=Y apt-get install -y --no-install-recommends msodbcsql17 \
     && rm -rf /var/lib/apt/lists/*
 
 # Copiar el nuevo archivo de requerimientos para SQL Server
