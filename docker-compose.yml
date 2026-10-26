@@ -31,21 +31,9 @@ services:
       context: .
       dockerfile: Dockerfile.backend
     container_name: usfx_comprobantes_backend
-    restart: unless-stopped
-    depends_on:
-      sqlserver:
-        condition: service_healthy    
-    environment:
-      SQL_HOST: "sqlserver"
-      SQL_PORT: "1433"
-      SQL_USER: "sa"
-      SQL_PASSWORD: "${SQL_PASSWORD:-TuPasswordSeguro123!}"
-      SQL_DB_NAME: "comprobantes_sql_usfx"
-      CORS_ORIGINS: "http://localhost:3000,http://localhost"
-      JWT_SECRET: "${JWT_SECRET:-change-me-in-production-please}"
-      ADMIN_EMAIL: "${ADMIN_EMAIL:-}"
-      ADMIN_PASSWORD: "${ADMIN_PASSWORD:-}"
-      ADMIN_NAME: "${ADMIN_NAME:-}"
+    restart: unless-stopped   
+    env_file:
+      - ./backend/.env     
     ports:
       - "8001:8001"
 
@@ -55,7 +43,7 @@ services:
       dockerfile: Dockerfile.frontend
       args:
         REACT_APP_BACKEND_URL: "${REACT_APP_BACKEND_URL:-http://localhost:8001}"
-    container_name: usfx_frontend
+    container_name: usfx_comprobantes_frontend
     restart: unless-stopped
     depends_on:
       - backend
