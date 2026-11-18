@@ -1,67 +1,75 @@
-version: "3.9"
-
-services:  
+services:
   sqlserver:
-      build:
-        context: .
-        dockerfile: Dockerfile.sqlserver
-      container_name: usfx_comprobantes_sqlserver
-      restart: unless-stopped
-      ports:
-        - "1433:1433"
-      environment:
-        - ACCEPT_EULA=Y
-        - MSSQL_SA_PASSWORD=${SQL_PASSWORD:-TuPasswordSeguro123!} # Clave fuerte requerida por SQL Server
-        - MSSQL_PID=Developer
-      volumes:
-        - mssql_data:/var/opt/mssql
-      # Límite estricto de recursos por Docker para no colapsar tu PC
-      deploy:
-        resources:
-          limits:
-            cpus: '1.5'
-            memory: 1800M
-      healthcheck:
-        test: ["CMD", "/opt/mssql-tools18/bin/sqlcmd", "-C", "-Q", "SELECT 1"]
-        interval: 15s
-        timeout: 5s
-        retries: 3
+    build:
+      context: .
+      dockerfile: Dockerfile.sqlserver
+    restart: unless-stopped
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: "${SQLSERVER_SA_PASSWORD:?Define SQLSERVER_SA_PASSWORD in the shell}"
+      MSSQL_PID: "${MSSQL_PID:-Developer}"
+    ports:
+      - "${SQLSERVER_PORT:-1433}:1433"
+    volumes:
+      - sqlserver_data:/var/opt/mssql
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P \"$$MSSQL_SA_PASSWORD\" -C -b -Q \"SELECT 1\" >/dev/null"
+      interval: 15s
+      timeout: 10s
+      retries: 12
+      start_period: 45s
+
   backend:
     build:
       context: .
       dockerfile: Dockerfile.backend
-    container_name: usfx_comprobantes_backend
     restart: unless-stopped
     depends_on:
       sqlserver:
-        condition: service_healthy    
+        condition: service_healthy
     environment:
-      SQL_HOST: "sqlserver"
-      SQL_PORT: "1433"
-      SQL_USER: "sa"
-      SQL_PASSWORD: "${SQL_PASSWORD:-TuPasswordSeguro123!}"
-      SQL_DB_NAME: "comprobantes_sql_usfx"
-      CORS_ORIGINS: "http://localhost:3000,http://localhost"
-      JWT_SECRET: "${JWT_SECRET:-change-me-in-production-please}"
+      SQLSERVER_HOST: "sqlserver,1433"
+      SQLSERVER_DATABASE: "${SQLSERVER_DATABASE:-ComprobantesDB}"
+      SQLSERVER_USER: "${SQLSERVER_USER:-usrweb_comprobantes}"
+      SQLSERVER_PASSWORD: "${SQLSERVER_PASSWORD:-}"
+      SQLSERVER_CONNECTION_STRING: "${SQLSERVER_CONNECTION_STRING:-}"
+      SQLSERVER_TRUSTED_AUTH: "0"
+      JWT_SECRET: "${JWT_SECRET:-}"
+      SESSION_SECRET: "${SESSION_SECRET:-}"
       ADMIN_EMAIL: "${ADMIN_EMAIL:-}"
       ADMIN_PASSWORD: "${ADMIN_PASSWORD:-}"
       ADMIN_NAME: "${ADMIN_NAME:-}"
+      CORS_ORIGINS: "${CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}"
     ports:
-      - "8001:8001"
+      - "${BACKEND_PORT:-8001}:8000"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/', timeout=5)"
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
 
   frontend:
     build:
       context: .
       dockerfile: Dockerfile.frontend
-      args:
-        REACT_APP_BACKEND_URL: "${REACT_APP_BACKEND_URL:-http://localhost:8001}"
-    container_name: usfx_frontend
     restart: unless-stopped
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     ports:
-      - "3000:80"
+      - "${FRONTEND_PORT:-3000}:80"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
 volumes:
-  mssql_data:
-    driver: local
+  sqlserver_data:

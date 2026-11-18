@@ -1,40 +1,41 @@
-# Backend Dockerfile - FastAPI + MongoDB driver
-FROM python:3.11-slim
+# FastAPI sobre SQL Server con el controlador ODBC 18.
+FROM python:3.11-slim-bookworm
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
-# Definimos los componentes de la URL de paquetes de Microsoft para evitar bloqueos
-ENV MS_HOST="packages.microsoft.com"
-ENV MS_KEY_PATH="keys/microsoft.asc"
-ENV MS_REPO_PATH="config/debian/12/prod.list"
 
 WORKDIR /app
 
-# Deps del sistema para bcrypt/cryptography Y requerimientos obligatorios para pyodbc
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    curl \
-    gnupg \
-    unixodbc \
-    unixodbc-dev \
-    && rm -rf /var/lib/apt/lists/*
-
-# Instalar el Driver Oficial de Microsoft ODBC 17 para SQL Server en Linux Debian/Slim
-RUN apt-get update && apt-get install -y curl gnupg2 ca-certificates \
-    && curl -fsSL https://${MS_HOST}/${MS_KEY_PATH} | gpg --dearmor -o /usr/share/keyrings/microsoft-prod.gpg \
-    && curl -fsSL https://${MS_HOST}/${MS_REPO_PATH} > /etc/apt/sources.list.d/mssql-release.list \
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        build-essential \
+        ca-certificates \
+        curl \
+        gnupg \
+        unixodbc \
+        unixodbc-dev \
+    && curl -fsSL https://packages.microsoft.com/keys/microsoft.asc \
+        | gpg --dearmor -o /usr/share/keyrings/microsoft-prod.gpg \
+    && curl -fsSL https://packages.microsoft.com/config/debian/12/prod.list \
+        > /etc/apt/sources.list.d/mssql-release.list \
     && apt-get update \
-    && ACCEPT_EULA=Y apt-get install -y --no-install-recommends msodbcsql17 \
+    && ACCEPT_EULA=Y apt-get install -y --no-install-recommends msodbcsql18 \
     && rm -rf /var/lib/apt/lists/*
 
-# Copiar el nuevo archivo de requerimientos para SQL Server
-COPY backend/requirements-sql.txt ./requirements.txt
-RUN pip install --upgrade pip && pip install -r requirements.txt
+COPY backend/requirements-sql.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir -r /tmp/requirements.txt \
+    && rm /tmp/requirements.txt
 
-COPY backend/ ./
+COPY backend/ /app/
 
-EXPOSE 8001
+RUN chmod +x /app/docker-entrypoint.sh \
+    && useradd --create-home --uid 10001 appuser \
+    && chown -R appuser:appuser /app
 
-CMD ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8001"]
+USER appuser
+
+EXPOSE 8000
+
+ENTRYPOINT ["/app/docker-entrypoint.sh"]

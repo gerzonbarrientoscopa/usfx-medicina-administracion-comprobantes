@@ -1,0 +1,13 @@
+.git
+.data
+.env
+.env.*
+node_modules
+**/node_modules
+frontend/build
+**/__pycache__
+*.py[cod]
+.venv
+venv
+test_reports
+attached_assets
