@@ -41,7 +41,7 @@ services:
       ADMIN_EMAIL: "${ADMIN_EMAIL:-}"
       ADMIN_PASSWORD: "${ADMIN_PASSWORD:-}"
       ADMIN_NAME: "${ADMIN_NAME:-}"
-      CORS_ORIGINS: "${CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}"
+      CORS_ORIGINS: "${CORS_ORIGINS:-http://localhost:3001,http://127.0.0.1:3001}"
     ports:
       - "${BACKEND_PORT:-8002}:8000"
     healthcheck:
@@ -64,7 +64,7 @@ services:
       backend:
         condition: service_healthy
     ports:
-      - "${FRONTEND_PORT:-3000}:80"
+      - "${FRONTEND_PORT:-3001}:80"
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/"]
       interval: 30s
