@@ -3,7 +3,7 @@ FROM node:20-alpine AS build
 
 WORKDIR /app
 
-RUN npm install --global yarn@1.22.22
+# node:20-alpine ya incluye Yarn 1.22.22, fijado en frontend/package.json.
 
 COPY frontend/package.json frontend/yarn.lock ./
 RUN yarn install --frozen-lockfile --non-interactive \
