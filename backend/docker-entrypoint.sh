@@ -42,7 +42,7 @@ if not connection_string:
     connection_string = (
         f"DRIVER={driver};"
         f"SERVER={server};DATABASE={database};UID={user};PWD={password};"
-        "Encrypt=yes;TrustServerCertificate=yes;Connection Timeout=5;"
+        "Encrypt=no;TrustServerCertificate=yes;Connection Timeout=5;"
     )
 
 print(
