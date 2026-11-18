@@ -1,4 +1,4 @@
-# FastAPI sobre SQL Server con el controlador ODBC 18.
+# FastAPI sobre SQL Server con los controladores ODBC 17 y 18.
 FROM python:3.11-slim-bookworm
 
 ENV PYTHONUNBUFFERED=1 \
@@ -21,7 +21,7 @@ RUN apt-get update \
     && curl -fsSL https://packages.microsoft.com/config/debian/12/prod.list \
         > /etc/apt/sources.list.d/mssql-release.list \
     && apt-get update \
-    && ACCEPT_EULA=Y apt-get install -y --no-install-recommends msodbcsql18 \
+    && ACCEPT_EULA=Y apt-get install -y --no-install-recommends msodbcsql17 msodbcsql18 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY backend/requirements-sql.txt /tmp/requirements.txt
