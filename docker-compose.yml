@@ -1,42 +1,17 @@
 services:
-  sqlserver:
-    build:
-      context: .
-      dockerfile: Dockerfile.sqlserver
-    restart: unless-stopped
-    environment:
-      ACCEPT_EULA: "Y"
-      MSSQL_SA_PASSWORD: "${SQLSERVER_SA_PASSWORD:?Define SQLSERVER_SA_PASSWORD in the shell}"
-      MSSQL_PID: "${MSSQL_PID:-Developer}"
-    ports:
-      - "${SQLSERVER_PORT:-1433}:1433"
-    volumes:
-      - sqlserver_data:/var/opt/mssql
-    healthcheck:
-      test:
-        - CMD-SHELL
-        - "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P \"$$MSSQL_SA_PASSWORD\" -C -b -Q \"SELECT 1\" >/dev/null"
-      interval: 15s
-      timeout: 10s
-      retries: 12
-      start_period: 45s
-
   backend:
     build:
       context: .
       dockerfile: Dockerfile.backend
     restart: unless-stopped
-    depends_on:
-      sqlserver:
-        condition: service_healthy
     environment:
-      SQLSERVER_HOST: "sqlserver,1433"
+      SQLSERVER_HOST: "${SQLSERVER_HOST:-172.16.1.250,1433}"
       SQLSERVER_DATABASE: "${SQLSERVER_DATABASE:-ComprobantesDB}"
       SQLSERVER_USER: "${SQLSERVER_USER:-usrweb_comprobantes}"
       SQLSERVER_PASSWORD: "${SQLSERVER_PASSWORD:-}"
       SQLSERVER_DRIVER: "${SQLSERVER_DRIVER:-{ODBC Driver 18 for SQL Server}}"
       SQLSERVER_CONNECTION_STRING: "${SQLSERVER_CONNECTION_STRING:-}"
-      SQLSERVER_TRUSTED_AUTH: "0"
+      SQLSERVER_TRUSTED_AUTH: "${SQLSERVER_TRUSTED_AUTH:-false}"
       JWT_SECRET: "${JWT_SECRET:-}"
       SESSION_SECRET: "${SESSION_SECRET:-}"
       ADMIN_EMAIL: "${ADMIN_EMAIL:-}"
@@ -71,6 +46,3 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
-
-volumes:
-  sqlserver_data:
