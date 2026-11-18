@@ -30,7 +30,8 @@ RUN pip install --no-cache-dir -r /tmp/requirements.txt \
 
 COPY backend/ /app/
 
-RUN chmod +x /app/docker-entrypoint.sh \
+RUN sed -i 's/\r$//' /app/docker-entrypoint.sh \
+    && chmod +x /app/docker-entrypoint.sh \
     && useradd --create-home --uid 10001 appuser \
     && chown -R appuser:appuser /app
 

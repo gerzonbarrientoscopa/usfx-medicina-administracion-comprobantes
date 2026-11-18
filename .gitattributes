@@ -1,0 +1,2 @@
+# Los scripts de contenedor deben conservar finales de linea Unix.
+backend/docker-entrypoint.sh text eol=lf
