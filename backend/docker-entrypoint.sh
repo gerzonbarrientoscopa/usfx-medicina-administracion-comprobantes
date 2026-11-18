@@ -5,6 +5,9 @@ export SQLSERVER_HOST="${SQLSERVER_HOST:-sqlserver,1433}"
 export SQLSERVER_DATABASE="${SQLSERVER_DATABASE:-ComprobantesDB}"
 export SQLSERVER_USER="${SQLSERVER_USER:-usrweb_comprobantes}"
 export SQLSERVER_TRUSTED_AUTH="${SQLSERVER_TRUSTED_AUTH:-0}"
+if [ -z "${SQLSERVER_DRIVER:-}" ]; then
+  export SQLSERVER_DRIVER='{ODBC Driver 18 for SQL Server}'
+fi
 
 if [ -z "${JWT_SECRET:-}" ]; then
   export JWT_SECRET="${SESSION_SECRET:-}"
@@ -35,8 +38,9 @@ if not connection_string:
     database = quote_odbc(os.environ["SQLSERVER_DATABASE"])
     user = quote_odbc(os.environ["SQLSERVER_USER"])
     password = quote_odbc(os.environ["SQLSERVER_PASSWORD"])
+    driver = os.environ["SQLSERVER_DRIVER"]
     connection_string = (
-        "DRIVER={ODBC Driver 18 for SQL Server};"
+        f"DRIVER={driver};"
         f"SERVER={server};DATABASE={database};UID={user};PWD={password};"
         "Encrypt=yes;TrustServerCertificate=yes;Connection Timeout=5;"
     )
@@ -64,4 +68,4 @@ for attempt in range(60):
         time.sleep(2)
 PY
 
-exec uvicorn serverSQL:app --host 0.0.0.0 --port 8000
+exec uvicorn serverSQL2012:app --host 0.0.0.0 --port 8000
