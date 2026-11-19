@@ -1,31 +1,6 @@
-version: "3.9"
+name: sistemasusfx
 
 services:  
-  sqlserver:
-      build:
-        context: .
-        dockerfile: Dockerfile.sqlserver
-      container_name: usfx_comprobantes_sqlserver
-      restart: unless-stopped
-      ports:
-        - "1433:1433"
-      environment:
-        - ACCEPT_EULA=Y
-        - MSSQL_SA_PASSWORD=${SQL_PASSWORD:-TuPasswordSeguro123!} # Clave fuerte requerida por SQL Server
-        - MSSQL_PID=Developer
-      volumes:
-        - mssql_data:/var/opt/mssql
-      # Límite estricto de recursos por Docker para no colapsar tu PC
-      deploy:
-        resources:
-          limits:
-            cpus: '1.5'
-            memory: 1800M
-      healthcheck:
-        test: ["CMD", "/opt/mssql-tools18/bin/sqlcmd", "-C", "-Q", "SELECT 1"]
-        interval: 15s
-        timeout: 5s
-        retries: 3
   backend:
     build:
       context: .
@@ -36,20 +11,31 @@ services:
       - ./backend/.env     
     ports:
       - "8001:8001"
+    networks:
+      - redportales
 
   frontend:
     build:
       context: .
       dockerfile: Dockerfile.frontend
       args:
-        REACT_APP_BACKEND_URL: "${REACT_APP_BACKEND_URL:-http://localhost:8001}"
+        REACT_APP_BASE_PATH: ${REACT_APP_BASE_PATH:-/comprobantes}
+        REACT_APP_BACKEND_URL: ${REACT_APP_BACKEND_URL:-/comprobantes}
     container_name: usfx_comprobantes_frontend
     restart: unless-stopped
     depends_on:
       - backend
     ports:
-      - "3000:80"
+      - "3000:3000"
+    networks:
+      - redportales
 
-volumes:
-  mssql_data:
-    driver: local
+
+networks:
+  redportales:
+    name: si3-network
+    driver: bridge
+    ipam:
+      config:
+        - subnet: "192.168.20.0/24"
+          gateway: "192.168.20.1"
