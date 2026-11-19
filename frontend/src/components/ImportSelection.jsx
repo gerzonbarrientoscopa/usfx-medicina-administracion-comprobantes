@@ -17,7 +17,7 @@ export function ImportSelection({ kind, onSelect }) {
   useEffect(() => {
     if (!open) return undefined;
     const searchTerm = query.trim();
-    if (kind === "clientes" && !searchTerm) {
+    if (kind === "clientes" && searchTerm.length < 3) {
       setRows([]);
       setError("");
       setLoading(false);
@@ -52,7 +52,7 @@ export function ImportSelection({ kind, onSelect }) {
         </DialogHeader>
         <p className="text-sm text-[color:var(--institution-muted)]">
           {kind === "clientes"
-            ? "Escriba el nombre o C.U. para buscar. Seleccione un estudiante para completar sus datos y guárdelo como cliente."
+            ? "Escriba al menos 3 caracteres. Seleccione un estudiante para completar sus datos y guárdelo como cliente."
             : "Seleccione un registro para completar el formulario. Se guardará con un Id nuevo al confirmar."}
         </p>
         <Input aria-label={kind === "clientes" ? "Buscar estudiantes" : "Buscar en servicio de importación"}
@@ -62,8 +62,8 @@ export function ImportSelection({ kind, onSelect }) {
           <p>{error}</p><Button type="button" variant="outline" onClick={() => setRetry(retry + 1)}>Reintentar</Button>
         </div> : <div className="max-h-96 overflow-auto">
           {!rows.length && <p className="p-4 text-sm">
-            {kind === "clientes" && !query.trim()
-              ? "Escriba el nombre o C.U. para buscar estudiantes."
+            {kind === "clientes" && query.trim().length < 3
+              ? "Escriba al menos 3 caracteres para buscar estudiantes."
               : "No se encontraron registros."}
           </p>}
           {rows.slice((page - 1) * 25, page * 25).map((row, index) =>

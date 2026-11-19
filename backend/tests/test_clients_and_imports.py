@@ -297,7 +297,9 @@ def test_directory_errors_filtering_and_selectable_creation(mongo_rental_api, mo
     async def scenario():
         monkeypatch.delenv("CLIENTS_IMPORT_API_URL", raising=False)
         async with await _client(_actor("Caja")) as client:
-            unconfigured = await client.get(f"{API}/clientes/importacion")
+            short_unconfigured = await client.get(f"{API}/clientes/importacion")
+            assert short_unconfigured.status_code == 200 and short_unconfigured.json() == []
+            unconfigured = await client.get(f"{API}/clientes/importacion", params={"q": "bus"})
             assert unconfigured.status_code == 503
             monkeypatch.setenv("CLIENTS_IMPORT_API_URL", "https://directory.example/clients")
             monkeypatch.delenv("CLIENTS_IMPORT_API_TOKEN", raising=False)
@@ -305,6 +307,9 @@ def test_directory_errors_filtering_and_selectable_creation(mongo_rental_api, mo
             assert missing_token.status_code == 503
             monkeypatch.setenv("CLIENTS_IMPORT_API_TOKEN", "test-only-token")
             monkeypatch.setattr(import_services.httpx, "AsyncClient", fake_client)
+            short_query = await client.get(f"{API}/clientes/importacion", params={"q": "54"})
+            assert short_query.status_code == 200 and short_query.json() == []
+            assert requests == []
             result = await client.get(f"{API}/clientes/importacion", params={"q": "Importado"})
             assert result.status_code == 200 and len(result.json()) == 2
             assert requests[-1].url.params["busqueda"] == "Importado"
@@ -313,7 +318,8 @@ def test_directory_errors_filtering_and_selectable_creation(mongo_rental_api, mo
             created = await client.post(f"{API}/clientes", json=result.json()[0])
             assert created.status_code == 201 and created.json()["id"] != "external-1"
             rows[:] = [{"CI": "", "CU": "", "Nombre Completo": "Inválido"}]
-            assert (await client.get(f"{API}/clientes/importacion")).status_code == 502
+            invalid = await client.get(f"{API}/clientes/importacion", params={"q": "Inválido"})
+            assert invalid.status_code == 502
         monkeypatch.setenv("USERS_IMPORT_API_URL", "https://directory.example/users")
         rows[:] = [{"Código": "014", "Nombre Completo": "Importado Usuario", "Email": "importado@example.com"}]
         # _client constructs an ASGI client, not the patched integration client.
