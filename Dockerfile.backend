@@ -1,4 +1,4 @@
-# FastAPI sobre SQL Server con los controladores ODBC 17 y 18.
+# FastAPI sobre SQL Server 2012 con el controlador ODBC 17.
 FROM python:3.11-slim-bookworm
 
 ENV PYTHONUNBUFFERED=1 \
@@ -16,23 +16,25 @@ RUN apt-get update \
         gnupg \
         unixodbc \
         unixodbc-dev \
+        libgssapi-krb5-2 \
+    && mkdir -p /etc/apt/keyrings \
     && curl -fsSL https://packages.microsoft.com/keys/microsoft.asc \
-        | gpg --dearmor -o /usr/share/keyrings/microsoft-prod.gpg \
-    && curl -fsSL https://packages.microsoft.com/config/debian/12/prod.list \
-        > /etc/apt/sources.list.d/mssql-release.list \
+        | gpg --dearmor -o /etc/apt/keyrings/microsoft.gpg \
+    && chmod 644 /etc/apt/keyrings/microsoft.gpg \
+    && echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/microsoft.gpg] https://packages.microsoft.com/debian/12/prod bookworm main" \
+        > /etc/apt/sources.list.d/microsoft-prod.list \
     && apt-get update \
-    && ACCEPT_EULA=Y apt-get install -y --no-install-recommends msodbcsql17 msodbcsql18 \
+    && ACCEPT_EULA=Y apt-get install -y --no-install-recommends msodbcsql17 \
     && rm -rf /var/lib/apt/lists/*
 
-COPY backend/requirements-sql.txt /tmp/requirements.txt
-RUN pip install --no-cache-dir -r /tmp/requirements.txt \
-    && rm /tmp/requirements.txt
+COPY backend/requirements-sql.txt ./requirements.txt
+RUN python -m pip install --upgrade pip \
+    && python -m pip install --no-cache-dir -r requirements.txt
 
-COPY backend/ /app/
+COPY backend/ ./
 
-RUN sed -i 's/\r$//' /app/docker-entrypoint.sh \
-    && sh -n /app/docker-entrypoint.sh \
-    && chmod +x /app/docker-entrypoint.sh \
+RUN python -c "import pyodbc; drivers=pyodbc.drivers(); print(drivers); assert 'ODBC Driver 17 for SQL Server' in drivers" \
+    && python -c "import uvicorn; print('Uvicorn instalado')" \
     && useradd --create-home --uid 10001 appuser \
     && chown -R appuser:appuser /app
 
@@ -40,4 +42,4 @@ USER appuser
 
 EXPOSE 8000
 
-ENTRYPOINT ["/app/docker-entrypoint.sh"]
+CMD ["python", "-m", "uvicorn", "serverSQL2012:app", "--host", "0.0.0.0", "--port", "8000"]
