@@ -28,7 +28,9 @@ def normalize_record(record, kind):
                 if str(fields.get(key) or "").strip()
             )
         return ClienteCreate(
-            ci=fields.get("ci") or "", cu=fields.get("cu") or "", nombre=name,
+            ci=fields.get("ci") or fields.get("idpersona") or "",
+            cu=fields.get("cu") or "",
+            nombre=name,
         ).model_dump()
     name = fields.get("nombre", fields.get("nombrecompleto"))
     return UsuarioDirectorio(

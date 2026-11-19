@@ -113,6 +113,9 @@ def register_client_routes(api, repository, read_access, write_access, admin_acc
 
     @api.get("/clientes/importacion")
     async def import_clients(q: str = "", user=Depends(write_access)):
+        q = q.strip()
+        if len(q) < 3:
+            return []
         return await directory_results("clientes", q)
 
     @api.get("/usuarios/importacion")
