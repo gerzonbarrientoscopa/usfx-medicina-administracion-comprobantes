@@ -19,11 +19,18 @@ def normalize_record(record, kind):
     if not isinstance(record, dict):
         raise ValueError("Cada resultado debe ser un objeto.")
     fields = {_key(k): v for k, v in record.items()}
-    name = fields.get("nombre", fields.get("nombrecompleto"))
     if kind == "clientes":
+        name = fields.get("nombre") or fields.get("nombrecompleto")
+        if not name:
+            name = " ".join(
+                str(fields.get(key) or "").strip()
+                for key in ("nombres", "paterno", "materno")
+                if str(fields.get(key) or "").strip()
+            )
         return ClienteCreate(
             ci=fields.get("ci") or "", cu=fields.get("cu") or "", nombre=name,
         ).model_dump()
+    name = fields.get("nombre", fields.get("nombrecompleto"))
     return UsuarioDirectorio(
         codigo=fields.get("codigo"), nombre=name, email=fields.get("email"),
     ).model_dump(mode="json")
@@ -37,13 +44,16 @@ async def directory_results(kind, q=""):
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https") or not parsed.hostname or parsed.username or parsed.password:
         raise HTTPException(503, "La URL del servicio de importación no es válida.")
-    token = os.getenv(f"{prefix}_IMPORT_API_TOKEN")
+    token = os.getenv(f"{prefix}_IMPORT_API_TOKEN", "").strip()
+    if kind == "clientes" and not token:
+        raise HTTPException(503, "Configure CLIENTS_IMPORT_API_TOKEN para buscar estudiantes.")
     headers = {"Accept": "application/json"}
     if token:
         headers["Authorization"] = f"Bearer {token}"
+    params = {"busqueda": q.strip()} if kind == "clientes" and q.strip() else None
     try:
         async with httpx.AsyncClient(timeout=10, follow_redirects=False) as client:
-            async with client.stream("GET", url, headers=headers) as response:
+            async with client.stream("GET", url, headers=headers, params=params) as response:
                 response.raise_for_status()
                 data = bytearray()
                 async for chunk in response.aiter_bytes():
@@ -59,7 +69,7 @@ async def directory_results(kind, q=""):
     except (httpx.HTTPError, ValueError, ValidationError):
         raise HTTPException(502, "No se pudo consultar el servicio o su lista tiene un formato inválido.")
     term = q.strip().casefold()
-    if term:
+    if term and kind != "clientes":
         result = [row for row in result if any(term in str(v).casefold() for v in row.values())]
     # No IDs from the external service are retained. Creation uses each backend.
     return result
