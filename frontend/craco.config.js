@@ -37,7 +37,7 @@ let webpackConfig = {
       '@': path.resolve(__dirname, 'src'),
     },
     configure: (webpackConfig) => {
-      webpackConfig.output.publicPath = '/';
+      webpackConfig.output.publicPath = './';
       // Add ignored patterns to reduce watched directories
         webpackConfig.watchOptions = {
           ...webpackConfig.watchOptions,

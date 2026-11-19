@@ -10,21 +10,25 @@ RUN yarn install --frozen-lockfile || yarn install
 # Build the app.
 COPY frontend/ ./
 
-# Public path and API URL can be overridden by Compose build arguments.
+# Prefijo público de la aplicación
 ARG REACT_APP_BASE_PATH=/comprobantes
 ENV REACT_APP_BASE_PATH=${REACT_APP_BASE_PATH}
-ENV PUBLIC_URL=${REACT_APP_BASE_PATH}
 
+# Build-time env. Override at build with --build-arg REACT_APP_BACKEND_URL=...
 ARG REACT_APP_BACKEND_URL=/comprobantes/api
 ENV REACT_APP_BACKEND_URL=${REACT_APP_BACKEND_URL}
 
 RUN yarn build
 
-# Runtime server for the compiled static files.
+
+# =========================
+# Etapa 2: Runtime Node.js
+# =========================
 FROM node:20-alpine AS runtime
 
 WORKDIR /app
 
+# Servidor HTTP para archivos estáticos
 RUN npm install --global serve
 
 COPY --from=build /app/build ./build
