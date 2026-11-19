@@ -33,6 +33,11 @@ def quote_odbc(value):
 
 
 connection_string = os.getenv("SQLSERVER_CONNECTION_STRING")
+if connection_string:
+    driver_description = "la cadena SQLSERVER_CONNECTION_STRING"
+else:
+    driver_description = f"el controlador {os.environ['SQLSERVER_DRIVER']}"
+
 if not connection_string:
     server = os.environ["SQLSERVER_HOST"]
     database = quote_odbc(os.environ["SQLSERVER_DATABASE"])
@@ -45,11 +50,6 @@ if not connection_string:
         "Encrypt=no;TrustServerCertificate=yes;Connection Timeout=5;"
     )
 
-driver_description = (
-    "la cadena SQLSERVER_CONNECTION_STRING"
-    if connection_string
-    else f"el controlador {os.environ['SQLSERVER_DRIVER']}"
-)
 print(
     f"Esperando SQL Server en {os.environ['SQLSERVER_HOST']} "
     f"y la base {os.environ['SQLSERVER_DATABASE']} usando {driver_description}.",
