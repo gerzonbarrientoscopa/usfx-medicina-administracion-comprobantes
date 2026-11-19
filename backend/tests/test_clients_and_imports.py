@@ -269,6 +269,10 @@ def test_directory_normalizes_names_discards_ids_and_requires_valid_fields():
         {"Id": "untrusted", "CI": " 100 ", "CU": " A ", "Nombre Completo": " Nombre "}, "clientes"
     ) == {"ci": "100", "cu": "A", "nombre": "Nombre"}
     assert import_services.normalize_record(
+        {"idpersona": "no-se-reutiliza", "cu": " CU-22 ", "nombres": " Ana ",
+         "paterno": " Pérez ", "materno": " Díaz "}, "clientes"
+    ) == {"ci": "", "cu": "CU-22", "nombre": "Ana Pérez Díaz"}
+    assert import_services.normalize_record(
         {"Id": "untrusted", "Código": "A07", "Nombre Completo": "Usuario", "Email": "usuario@example.com"}, "usuarios"
     ) == {"codigo": "A07", "nombre": "Usuario", "email": "usuario@example.com"}
     with pytest.raises(ValidationError):
@@ -284,17 +288,27 @@ def test_directory_errors_filtering_and_selectable_creation(mongo_rental_api, mo
         {"Id": "external-1", "CI": "881", "CU": "", "Nombre Completo": "Importado"},
         {"CI": "882", "Nombre Completo": "Otro"},
     ]
+    requests = []
     def fake_client(**kwargs):
-        return real_client(transport=httpx.MockTransport(lambda request: httpx.Response(200, json=rows)), **kwargs)
+        def respond(request):
+            requests.append(request)
+            return httpx.Response(200, json=rows)
+        return real_client(transport=httpx.MockTransport(respond), **kwargs)
     async def scenario():
         monkeypatch.delenv("CLIENTS_IMPORT_API_URL", raising=False)
         async with await _client(_actor("Caja")) as client:
             unconfigured = await client.get(f"{API}/clientes/importacion")
             assert unconfigured.status_code == 503
             monkeypatch.setenv("CLIENTS_IMPORT_API_URL", "https://directory.example/clients")
+            monkeypatch.delenv("CLIENTS_IMPORT_API_TOKEN", raising=False)
+            missing_token = await client.get(f"{API}/clientes/importacion", params={"q": "Importado"})
+            assert missing_token.status_code == 503
+            monkeypatch.setenv("CLIENTS_IMPORT_API_TOKEN", "test-only-token")
             monkeypatch.setattr(import_services.httpx, "AsyncClient", fake_client)
             result = await client.get(f"{API}/clientes/importacion", params={"q": "Importado"})
-            assert result.status_code == 200 and len(result.json()) == 1
+            assert result.status_code == 200 and len(result.json()) == 2
+            assert requests[-1].url.params["busqueda"] == "Importado"
+            assert requests[-1].headers["Authorization"] == "Bearer test-only-token"
             assert await state["db"].clientes.count_documents({"ci": "881"}) == 0
             created = await client.post(f"{API}/clientes", json=result.json()[0])
             assert created.status_code == 201 and created.json()["id"] != "external-1"
@@ -325,6 +339,7 @@ def test_directory_errors_filtering_and_selectable_creation(mongo_rental_api, mo
 def test_directory_bad_responses_fail_explicitly(monkeypatch, response):
     real_client = httpx.AsyncClient
     monkeypatch.setenv("CLIENTS_IMPORT_API_URL", "https://directory.example")
+    monkeypatch.setenv("CLIENTS_IMPORT_API_TOKEN", "test-only-token")
     monkeypatch.setattr(import_services.httpx, "AsyncClient", lambda **kw: real_client(
         transport=httpx.MockTransport(lambda request: response), **kw,
     ))

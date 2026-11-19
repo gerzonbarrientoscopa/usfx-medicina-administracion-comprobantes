@@ -18,6 +18,8 @@ services:
       ADMIN_PASSWORD: "${ADMIN_PASSWORD:-}"
       ADMIN_NAME: "${ADMIN_NAME:-}"
       CORS_ORIGINS: "${CORS_ORIGINS:-http://localhost:3001,http://127.0.0.1:3001}"
+      CLIENTS_IMPORT_API_URL: "${CLIENTS_IMPORT_API_URL:-http://172.16.1.251/academica/api/personas/buscar}"
+      CLIENTS_IMPORT_API_TOKEN: "${CLIENTS_IMPORT_API_TOKEN:-}"
       OPENSSL_CONF: "/app/openssl.cnf"
     volumes:
       - ./openssl.cnf:/etc/openssl/openssl.cnf:ro

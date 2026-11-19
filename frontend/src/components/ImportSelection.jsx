@@ -16,13 +16,21 @@ export function ImportSelection({ kind, onSelect }) {
 
   useEffect(() => {
     if (!open) return undefined;
+    const searchTerm = query.trim();
+    if (kind === "clientes" && !searchTerm) {
+      setRows([]);
+      setError("");
+      setLoading(false);
+      setPage(1);
+      return undefined;
+    }
     let cancelled = false;
     setLoading(true);
     setError("");
     setRows([]);
     const timer = setTimeout(async () => {
       try {
-        const { data } = await apiClient.get(`/${kind}/importacion`, { params: { q: query } });
+        const { data } = await apiClient.get(`/${kind}/importacion`, { params: { q: searchTerm } });
         if (!cancelled) { setRows(data); setPage(1); }
       } catch (err) {
         if (!cancelled) setError(formatApiError(err));
@@ -35,20 +43,29 @@ export function ImportSelection({ kind, onSelect }) {
 
   return <>
     <Button type="button" variant="outline" className="rounded-sm" onClick={() => setOpen(true)}>
-      Importar desde API
+      {kind === "clientes" ? "Buscar Estudiantes" : "Importar desde API"}
     </Button>
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogContent className="max-w-3xl rounded-sm">
-        <DialogHeader><DialogTitle>Importar {kind}</DialogTitle></DialogHeader>
+        <DialogHeader>
+          <DialogTitle>{kind === "clientes" ? "Buscar estudiantes" : `Importar ${kind}`}</DialogTitle>
+        </DialogHeader>
         <p className="text-sm text-[color:var(--institution-muted)]">
-          Seleccione un registro para completar el formulario. Se guardará con un Id nuevo al confirmar.
+          {kind === "clientes"
+            ? "Escriba el nombre o C.U. para buscar. Seleccione un estudiante para completar sus datos y guárdelo como cliente."
+            : "Seleccione un registro para completar el formulario. Se guardará con un Id nuevo al confirmar."}
         </p>
-        <Input aria-label="Buscar en servicio de importación" placeholder="Buscar por nombre, documento o código..."
+        <Input aria-label={kind === "clientes" ? "Buscar estudiantes" : "Buscar en servicio de importación"}
+          placeholder={kind === "clientes" ? "Buscar estudiante por nombre o C.U..." : "Buscar por nombre, documento o código..."}
           value={query} onChange={(event) => setQuery(event.target.value)} />
         {loading ? <p role="status">Consultando servicio…</p> : error ? <div role="alert" className="space-y-3 text-sm">
           <p>{error}</p><Button type="button" variant="outline" onClick={() => setRetry(retry + 1)}>Reintentar</Button>
         </div> : <div className="max-h-96 overflow-auto">
-          {!rows.length && <p className="p-4 text-sm">No se encontraron registros.</p>}
+          {!rows.length && <p className="p-4 text-sm">
+            {kind === "clientes" && !query.trim()
+              ? "Escriba el nombre o C.U. para buscar estudiantes."
+              : "No se encontraron registros."}
+          </p>}
           {rows.slice((page - 1) * 25, page * 25).map((row, index) =>
             <button type="button" key={`${page}-${index}`} className="w-full border-b p-3 text-left hover:bg-muted"
               onClick={() => { setOpen(false); onSelect(row); }}>
