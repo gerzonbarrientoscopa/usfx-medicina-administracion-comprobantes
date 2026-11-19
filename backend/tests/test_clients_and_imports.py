@@ -269,9 +269,9 @@ def test_directory_normalizes_names_discards_ids_and_requires_valid_fields():
         {"Id": "untrusted", "CI": " 100 ", "CU": " A ", "Nombre Completo": " Nombre "}, "clientes"
     ) == {"ci": "100", "cu": "A", "nombre": "Nombre"}
     assert import_services.normalize_record(
-        {"idpersona": "no-se-reutiliza", "cu": " CU-22 ", "nombres": " Ana ",
+        {"idpersona": "778899", "cu": " CU-22 ", "nombres": " Ana ",
          "paterno": " Pérez ", "materno": " Díaz "}, "clientes"
-    ) == {"ci": "", "cu": "CU-22", "nombre": "Ana Pérez Díaz"}
+    ) == {"ci": "778899", "cu": "CU-22", "nombre": "Ana Pérez Díaz"}
     assert import_services.normalize_record(
         {"Id": "untrusted", "Código": "A07", "Nombre Completo": "Usuario", "Email": "usuario@example.com"}, "usuarios"
     ) == {"codigo": "A07", "nombre": "Usuario", "email": "usuario@example.com"}
