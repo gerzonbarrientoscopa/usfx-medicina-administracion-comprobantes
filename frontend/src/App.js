@@ -189,7 +189,7 @@ function AppRoutes() {
 function App() {
     return (
         <AuthProvider>
-            <BrowserRouter>
+            <BrowserRouter basename={process.env.REACT_APP_BASE_PATH || "/"}>
                 <AppRoutes />
                 <Toaster position="top-right" richColors />
             </BrowserRouter>

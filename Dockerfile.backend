@@ -35,6 +35,9 @@ COPY backend/ ./
 
 RUN python -c "import pyodbc; drivers=pyodbc.drivers(); print(drivers); assert 'ODBC Driver 17 for SQL Server' in drivers" \
     && python -c "import uvicorn; print('Uvicorn instalado')" \
+    && sed -i 's/\r$//' /app/docker-entrypoint.sh \
+    && sh -n /app/docker-entrypoint.sh \
+    && chmod +x /app/docker-entrypoint.sh \
     && useradd --create-home --uid 10001 appuser \
     && chown -R appuser:appuser /app
 
@@ -42,4 +45,4 @@ USER appuser
 
 EXPOSE 8000
 
-CMD ["python", "-m", "uvicorn", "serverSQL2012:app", "--host", "0.0.0.0", "--port", "8000"]
+ENTRYPOINT ["/app/docker-entrypoint.sh"]
