@@ -1,34 +1,21 @@
-# Multi-stage build for React (CRA + craco).
+# React (CRA + craco) compilado y servido por Nginx.
 FROM node:20-alpine AS build
 
 WORKDIR /app
 
-# Install dependencies with Yarn.
-COPY frontend/package.json frontend/yarn.lock* ./
-RUN yarn install --frozen-lockfile || yarn install
+# node:20-alpine ya incluye Yarn 1.22.22, fijado en frontend/package.json.
 
-# Build the app.
+COPY frontend/package.json frontend/yarn.lock ./
+RUN yarn install --frozen-lockfile --non-interactive \
+    --registry https://registry.yarnpkg.com
+
 COPY frontend/ ./
-
-# Public path and API URL can be overridden by Compose build arguments.
-ARG REACT_APP_BASE_PATH=/comprobantes
-ENV REACT_APP_BASE_PATH=${REACT_APP_BASE_PATH}
-ENV PUBLIC_URL=${REACT_APP_BASE_PATH}
-
-ARG REACT_APP_BACKEND_URL=/comprobantes/api
-ENV REACT_APP_BACKEND_URL=${REACT_APP_BACKEND_URL}
-
 RUN yarn build
 
-# Runtime server for the compiled static files.
-FROM node:20-alpine AS runtime
+FROM nginx:1.27-alpine
+COPY docker/nginx.conf /etc/nginx/conf.d/default.conf
+COPY --from=build /app/build /usr/share/nginx/html
 
-WORKDIR /app
+EXPOSE 80
 
-RUN npm install --global serve
-
-COPY --from=build /app/build ./build
-
-EXPOSE 3000
-
-CMD ["serve", "-s", "build", "-l", "3000"]
+CMD ["nginx", "-g", "daemon off;"]

@@ -6,7 +6,7 @@ export SQLSERVER_DATABASE="${SQLSERVER_DATABASE:-ComprobantesDB}"
 export SQLSERVER_USER="${SQLSERVER_USER:-usrweb_comprobantes}"
 export SQLSERVER_TRUSTED_AUTH="${SQLSERVER_TRUSTED_AUTH:-0}"
 if [ -z "${SQLSERVER_DRIVER:-}" ]; then
-  export SQLSERVER_DRIVER='{ODBC Driver 17 for SQL Server}'
+  export SQLSERVER_DRIVER='{ODBC Driver 18 for SQL Server}'
 fi
 
 if [ -z "${JWT_SECRET:-}" ]; then
@@ -45,14 +45,9 @@ if not connection_string:
         "Encrypt=no;TrustServerCertificate=yes;Connection Timeout=5;"
     )
 
-driver_description = (
-    "la cadena SQLSERVER_CONNECTION_STRING"
-    if connection_string
-    else f"el controlador {os.environ['SQLSERVER_DRIVER']}"
-)
 print(
     f"Esperando SQL Server en {os.environ['SQLSERVER_HOST']} "
-    f"y la base {os.environ['SQLSERVER_DATABASE']} usando {driver_description}.",
+    f"y la base {os.environ['SQLSERVER_DATABASE']}.",
     flush=True,
 )
 for attempt in range(60):
