@@ -217,7 +217,7 @@ def _connection_string():
         return f"DRIVER={driver};SERVER={host};DATABASE={db};Trusted_Connection=yes;TrustServerCertificate=yes"
         
     user = os.getenv('SQLSERVER_USER','')
-    password = os.getenv('SQLSERVER_PASSWORD',''    
+    password = os.getenv('SQLSERVER_PASSWORD','')    
     return f"DRIVER={driver};SERVER={host};DATABASE={db};UID={user};PWD={password};Encrypt=no;TrustServerCertificate=yes"
 
 # Physical SQL identifiers differ from the stable JSON/API names used by both
