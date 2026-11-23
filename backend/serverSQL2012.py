@@ -2790,7 +2790,9 @@ async def reports(
     d, h = start.isoformat(), end.isoformat()
     scope, scope_args = await office_scope_sql(u, office_id, "p.office_id")
     pc = ["p.estado<>N'borrador'", "p.fecha_pago>=?", "p.fecha_pago<=?"]
-    pv = [d, h]
+    # Bind native date values so SQL Server does not parse ISO date strings
+    # using the session's language/dateformat settings (e.g. dmy).
+    pv = [start, end]
     if scope:
         pc.append(scope)
         pv.extend(scope_args)
@@ -2811,7 +2813,7 @@ async def reports(
         "a.fecha_pago>=?",
         "a.fecha_pago<DATEADD(day,1,?)",
     ]
-    ra = [d, h]
+    ra = [start, end]
     if rs:
         rc.append(rs)
         ra.extend(rv)
