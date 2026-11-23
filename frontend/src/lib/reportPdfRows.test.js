@@ -40,6 +40,32 @@ test("leaves row-spanned receipt cells out of subsequent concept rows", () => {
     ]);
 });
 
+test("includes the customer name in the grouped PDF cells", () => {
+    const rows = buildReportPdfRows(
+        [{
+            cliente_nombre: "Ana Pérez",
+            items: [
+                { id: "one", tipo_pago_nombre: "Concepto 1", total: 10 },
+                { id: "two", tipo_pago_nombre: "Concepto 2", total: 20 },
+            ],
+        }],
+        (payment, rowSpan) => [
+            { content: "R-1", rowSpan },
+            { content: "Cobro", rowSpan },
+            { content: payment.cliente_nombre || "—", rowSpan },
+            { content: "03/09/2026", rowSpan },
+        ],
+        (_payment, { item, amount }) => [item.tipo_pago_nombre, amount],
+    );
+
+    expect(rows[0].slice(0, 4)).toEqual([
+        { content: "R-1", rowSpan: 2 },
+        { content: "Cobro", rowSpan: 2 },
+        { content: "Ana Pérez", rowSpan: 2 },
+        { content: "03/09/2026", rowSpan: 2 },
+    ]);
+});
+
 test.each(["validos", "anulados", "todos"])(
     "preserves every concept in its PDF columns for %s",
     (mode) => {

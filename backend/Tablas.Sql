@@ -158,12 +158,19 @@ CREATE TABLE dbo.pagos (
 );
 IF NOT EXISTS(SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID(N'dbo.pagos') AND name=N'IX_pagos_recibo')
 CREATE UNIQUE INDEX IX_pagos_recibo ON dbo.pagos(id_oficina,gestion,cod_comprobante) WHERE cod_comprobante IS NOT NULL;
+IF NOT EXISTS(SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID(N'dbo.pagos') AND name=N'IX_pagos_reporte_oficina_fecha')
+CREATE INDEX IX_pagos_reporte_oficina_fecha ON dbo.pagos(id_oficina,fecha_pago)
+  INCLUDE(estado,created_by,anulado,total,id_cliente,cod_comprobante,prefijo_comprobante,
+          gestion,id_tipo_pago,cantidad,monto);
 IF OBJECT_ID(N'pago_items','U') IS NULL
 CREATE TABLE dbo.pago_items (
    id int IDENTITY(1,1) NOT NULL CONSTRAINT PK_pago_items PRIMARY KEY, id_pago int NOT NULL, id_tipo_pago int NOT NULL,
   tipo_pago_nombre nvarchar(200) NULL, cantidad decimal(19,4) NOT NULL, monto decimal(19,2) NOT NULL, total decimal(19,2) NULL,
    CONSTRAINT FK_items_pago FOREIGN KEY(id_pago) REFERENCES dbo.pagos(id), CONSTRAINT CK_items_positive CHECK(cantidad>0 AND monto>=0)
 );
+IF NOT EXISTS(SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID(N'dbo.pago_items') AND name=N'IX_items_reporte_pago')
+CREATE INDEX IX_items_reporte_pago ON dbo.pago_items(id_pago,id)
+  INCLUDE(id_tipo_pago,tipo_pago_nombre,cantidad,monto,total);
 IF OBJECT_ID(N'alquileres','U') IS NULL
 CREATE TABLE dbo.alquileres (
   id int IDENTITY(1,1) NOT NULL CONSTRAINT PK_alquileres PRIMARY KEY, id_oficina int NOT NULL, id_ambiente int NOT NULL, id_tarifa int NOT NULL, fecha date NOT NULL,
@@ -174,8 +181,14 @@ CREATE TABLE dbo.alquileres (
 );
 IF NOT EXISTS(SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID(N'dbo.alquileres') AND name=N'IX_alq_recibo')
 CREATE UNIQUE INDEX IX_alq_recibo ON dbo.alquileres(id_oficina,gestion,cod_comprobante) WHERE cod_comprobante IS NOT NULL;
+IF NOT EXISTS(SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID(N'dbo.alquileres') AND name=N'IX_alquileres_reporte_oficina_fecha')
+CREATE INDEX IX_alquileres_reporte_oficina_fecha ON dbo.alquileres(id_oficina,fecha_pago)
+  INCLUDE(estado,registrado_por,cod_comprobante,prefijo_comprobante,gestion,total,id_cliente,
+          nombre_cliente,id_ambiente,id_tarifa,cantidad,monto);
 IF OBJECT_ID(N'alquiler_intervalos','U') IS NULL
 CREATE TABLE dbo.alquiler_intervalos (id int IDENTITY(1,1) CONSTRAINT PK_alq_intervalos PRIMARY KEY, alquiler_id int NOT NULL, desde time(0) NOT NULL, hasta time(0) NOT NULL, CONSTRAINT FK_intervalos_alq FOREIGN KEY(alquiler_id) REFERENCES dbo.alquileres(id), CONSTRAINT CK_intervalos_range CHECK(desde<hasta));
+IF NOT EXISTS(SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID(N'dbo.alquiler_intervalos') AND name=N'IX_alquiler_intervalos_reporte')
+CREATE INDEX IX_alquiler_intervalos_reporte ON dbo.alquiler_intervalos(alquiler_id,desde) INCLUDE(hasta);
 IF OBJECT_ID(N'ambiente_ocupacion','U') IS NULL
 CREATE TABLE dbo.ambiente_ocupacion (id_ambiente int NOT NULL, fecha date NOT NULL, version rowversion, CONSTRAINT PK_amb_ocup PRIMARY KEY(id_ambiente,fecha), CONSTRAINT FK_ocup_amb FOREIGN KEY(id_ambiente) REFERENCES dbo.ambientes(id));
 IF OBJECT_ID(N'ocupacion_intervalos','U') IS NULL

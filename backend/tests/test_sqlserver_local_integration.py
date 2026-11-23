@@ -691,10 +691,18 @@ def test_shared_receipts_idempotent_rental_payment_and_annulments(local_sql):
         str(payment["id"]) == str(payment_one_row["id"]) and payment["anulado"]
         for payment in report["pagos"]
     )
+    assert next(
+        payment for payment in report["pagos"]
+        if str(payment["id"]) == str(payment_one_row["id"])
+    )["cliente_nombre"] == payment_one_row["cliente_nombre"]
     assert any(
         str(rental["id"]) == str(rental_id) and rental["anulado"]
         for rental in report["alquileres"]
     )
+    assert next(
+        rental for rental in report["alquileres"]
+        if str(rental["id"]) == str(rental_id)
+    )["cliente_nombre"] == paid_row["cliente_nombre"]
     assert report["totales"]["count_anulados"] == 2
 
     stored_payment_columns = local_sql["read"](

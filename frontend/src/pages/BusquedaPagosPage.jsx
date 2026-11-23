@@ -416,7 +416,7 @@ export default function BusquedaPagosPage() {
                             <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Código</TableHead>
                             {isSuperAdmin && <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Oficina</TableHead>}
                             <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Origen</TableHead>
-                            <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Cliente / cliente</TableHead>
+                            <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Cliente</TableHead>
                             <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Conceptos y detalle</TableHead>
                             <TableHead className="text-right uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Total comprobante</TableHead>
                             <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Fecha</TableHead>

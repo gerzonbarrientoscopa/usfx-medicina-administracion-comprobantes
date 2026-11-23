@@ -1,10 +1,13 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { apiClient, formatApiError, formatMoney } from "@/lib/api";
 import { formatDate, toISODate } from "@/lib/dateFormat";
 import { formatComprobante } from "@/lib/receipt";
-import { reportConceptRows } from "@/lib/reportConceptRows";
 import { buildReportPdfRows } from "@/lib/reportPdfRows";
-import { buildReportRows } from "@/lib/reportRows";
+import {
+    buildReportRows,
+    buildReportSpreadsheetRows,
+    buildReportTableRows,
+} from "@/lib/reportRows";
 import { Button } from "@/components/ui/button";
 import { DateInput } from "@/components/DateInput";
 import { Label } from "@/components/ui/label";
@@ -52,6 +55,7 @@ const MESES = [
     "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
     "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre",
 ];
+const REPORT_PAGE_SIZE = 100;
 
 const groupedPdfCell = (content, rowSpan) => ({
     content,
@@ -88,12 +92,14 @@ export default function ReportesPage() {
     const [createdBy, setCreatedBy] = useState("");
     const [usuarios, setUsuarios] = useState([]);
     const [data, setData] = useState(null);
+    const [reportPage, setReportPage] = useState(1);
     const [loading, setLoading] = useState(false);
     const requestId = useRef(0);
 
     useEffect(() => {
         let cancelled = false;
         setData(null);
+        setReportPage(1);
         setCreatedBy("");
         setUsuarios([]);
         const params = officeId ? { office_id: officeId } : {};
@@ -128,7 +134,10 @@ export default function ReportesPage() {
             }
             if (createdBy && createdBy !== "all") params.created_by = createdBy;
             const { data: reporte } = await apiClient.get("/reportes", { params });
-            if (thisRequest === requestId.current) setData({ ...reporte, periodo });
+            if (thisRequest === requestId.current) {
+                setReportPage(1);
+                setData({ ...reporte, periodo });
+            }
         } catch (e) {
             if (thisRequest === requestId.current) toast.error(formatApiError(e));
         } finally {
@@ -142,7 +151,22 @@ export default function ReportesPage() {
     }, [officeId]);
 
     const reportOfficeName = data?.office_nombre || officeName;
-    const reportRows = buildReportRows(data?.pagos, data?.alquileres);
+    const reportRows = useMemo(
+        () => buildReportRows(data?.pagos, data?.alquileres),
+        [data],
+    );
+    const reportPageCount = Math.max(1, Math.ceil(reportRows.length / REPORT_PAGE_SIZE));
+    const visibleReportReceipts = useMemo(
+        () => reportRows.slice(
+            (reportPage - 1) * REPORT_PAGE_SIZE,
+            reportPage * REPORT_PAGE_SIZE,
+        ),
+        [reportRows, reportPage],
+    );
+    const visibleReportRows = useMemo(
+        () => buildReportTableRows(visibleReportReceipts),
+        [visibleReportReceipts],
+    );
 
     const buildPDF = (modo) => {
         if (!data) return;
@@ -175,6 +199,7 @@ export default function ReportesPage() {
                 (pago, rowSpan) => [
                     groupedPdfCell(formatComprobante(pago), rowSpan),
                     groupedPdfCell(pago.origen, rowSpan),
+                    groupedPdfCell(pago.cliente_nombre || "—", rowSpan),
                     groupedPdfCell(formatDate(pago.fecha_pago), rowSpan),
                 ],
                 (pago, { item, amount }) => [
@@ -185,24 +210,24 @@ export default function ReportesPage() {
             );
             autoTable(doc, {
                 startY: 134,
-                head: [["Comprobante", "Origen", "Fecha", "Concepto", "Válido (Bs.)", "Anulado (Bs.)"]],
+                head: [["Comprobante", "Origen", "Cliente", "Fecha", "Concepto", "Válido (Bs.)", "Anulado (Bs.)"]],
                 body: rows,
-                styles: { fontSize: 9, cellPadding: 5 },
+                styles: { fontSize: 8, cellPadding: 4 },
                 headStyles: { fillColor: [122, 32, 53], textColor: 255 },
-                columnStyles: { 4: { halign: "right" }, 5: { halign: "right" } },
+                columnStyles: { 5: { halign: "right" }, 6: { halign: "right" } },
             });
             const finalY = doc.lastAutoTable.finalY + 10;
             autoTable(doc, {
                 startY: finalY,
                 body: [
-                    ["", "", "", "PAGOS", formatMoney(data.totales.pagos), ""],
-                    ["", "", "", "ALQUILERES", formatMoney(data.totales.alquileres), ""],
-                    ["", "", "", "TOTAL VÁLIDOS", formatMoney(data.totales.validos), ""],
-                    ["", "", "", "TOTAL ANULADOS", "", formatMoney(data.totales.anulados)],
-                    ["", "", "", "DIFERENCIA (Válidos − Anulados)", formatMoney(data.totales.diferencia), ""],
+                    ["", "", "", "", "PAGOS", formatMoney(data.totales.pagos), ""],
+                    ["", "", "", "", "ALQUILERES", formatMoney(data.totales.alquileres), ""],
+                    ["", "", "", "", "TOTAL VÁLIDOS", formatMoney(data.totales.validos), ""],
+                    ["", "", "", "", "TOTAL ANULADOS", "", formatMoney(data.totales.anulados)],
+                    ["", "", "", "", "DIFERENCIA (Válidos − Anulados)", formatMoney(data.totales.diferencia), ""],
                 ],
                 styles: { fontSize: 10, fontStyle: "bold", cellPadding: 5 },
-                columnStyles: { 4: { halign: "right" }, 5: { halign: "right" } },
+                columnStyles: { 5: { halign: "right" }, 6: { halign: "right" } },
                 theme: "grid",
             });
         } else {
@@ -212,6 +237,7 @@ export default function ReportesPage() {
                 (pago, rowSpan) => [
                     groupedPdfCell(formatComprobante(pago), rowSpan),
                     groupedPdfCell(pago.origen, rowSpan),
+                    groupedPdfCell(pago.cliente_nombre || "—", rowSpan),
                     groupedPdfCell(formatDate(pago.fecha_pago), rowSpan),
                 ],
                 (_pago, { item, amount }) => [
@@ -222,23 +248,23 @@ export default function ReportesPage() {
             );
             autoTable(doc, {
                 startY: 134,
-                head: [["Comprobante", "Origen", "Fecha", "Concepto", "Cant.", "Total (Bs.)"]],
+                head: [["Comprobante", "Origen", "Cliente", "Fecha", "Concepto", "Cant.", "Total (Bs.)"]],
                 body: rows,
-                styles: { fontSize: 9, cellPadding: 5 },
+                styles: { fontSize: 8, cellPadding: 4 },
                 headStyles: { fillColor: [122, 32, 53], textColor: 255 },
-                columnStyles: { 4: { halign: "right" }, 5: { halign: "right" } },
+                columnStyles: { 5: { halign: "right" }, 6: { halign: "right" } },
             });
             const total = modo === "validos" ? data.totales.validos : data.totales.anulados;
             const finalY = doc.lastAutoTable.finalY + 10;
             autoTable(doc, {
                 startY: finalY,
                 body: modo === "validos" ? [
-                    ["", "", "", "", "PAGOS", formatMoney(data.totales.pagos)],
-                    ["", "", "", "", "ALQUILERES", formatMoney(data.totales.alquileres)],
-                    ["", "", "", "", "TOTAL", formatMoney(total)],
-                ] : [["", "", "", "", "TOTAL", formatMoney(total)]],
+                    ["", "", "", "", "", "PAGOS", formatMoney(data.totales.pagos)],
+                    ["", "", "", "", "", "ALQUILERES", formatMoney(data.totales.alquileres)],
+                    ["", "", "", "", "", "TOTAL", formatMoney(total)],
+                ] : [["", "", "", "", "", "TOTAL", formatMoney(total)]],
                 styles: { fontSize: 11, fontStyle: "bold", cellPadding: 6 },
-                columnStyles: { 5: { halign: "right" } },
+                columnStyles: { 6: { halign: "right" } },
                 theme: "grid",
             });
         }
@@ -254,57 +280,38 @@ export default function ReportesPage() {
 
     const exportExcel = (modo) => {
         if (!data) return;
-        let rows = [];
+        const { headers, rows } = buildReportSpreadsheetRows(reportRows, modo);
+        const blankRow = () => Array(headers.length).fill("");
+        const summaryRow = (label, values) => {
+            const row = blankRow();
+            row[0] = label;
+            Object.entries(values).forEach(([index, value]) => {
+                row[Number(index)] = value;
+            });
+            return row;
+        };
+        rows.push(blankRow());
         if (modo === "todos") {
-            rows = reportRows.flatMap((pago) => {
-                return reportConceptRows(pago).map(({ item, amount }) => ({
-                    Comprobante: formatComprobante(pago),
-                    Origen: pago.origen,
-                    Cliente: pago.cliente_nombre || "",
-                    Fecha: formatDate(pago.fecha_pago),
-                    Concepto: item?.tipo_pago_nombre || "Sin conceptos",
-                    Cantidad: item?.cantidad ?? "",
-                    Importe_concepto: item ? amount : "",
-                    Valido: !pago.anulado ? amount : "",
-                    Anulado: pago.anulado ? amount : "",
-                    Total_comprobante: pago.total ?? amount,
-                }));
-            });
-            rows.push({});
-            rows.push({ Comprobante: "PAGOS", Valido: data.totales.pagos });
-            rows.push({ Comprobante: "ALQUILERES", Valido: data.totales.alquileres });
-            rows.push({ Comprobante: "TOTAL VÁLIDOS", Valido: data.totales.validos });
-            rows.push({ Comprobante: "TOTAL ANULADOS", Anulado: data.totales.anulados });
-            rows.push({ Comprobante: "DIFERENCIA", Valido: data.totales.diferencia });
+            rows.push(summaryRow("PAGOS", { 7: data.totales.pagos }));
+            rows.push(summaryRow("ALQUILERES", { 7: data.totales.alquileres }));
+            rows.push(summaryRow("TOTAL VÁLIDOS", { 7: data.totales.validos }));
+            rows.push(summaryRow("TOTAL ANULADOS", { 8: data.totales.anulados }));
+            rows.push(summaryRow("DIFERENCIA", { 7: data.totales.diferencia }));
         } else {
-            const filtered = reportRows.filter((p) => (modo === "validos" ? !p.anulado : p.anulado));
-            rows = filtered.flatMap((pago) => {
-                return reportConceptRows(pago).map(({ item, amount }) => ({
-                    Comprobante: formatComprobante(pago),
-                    Origen: pago.origen,
-                    Cliente: pago.cliente_nombre || "",
-                    Fecha: formatDate(pago.fecha_pago),
-                    Concepto: item?.tipo_pago_nombre || "Sin conceptos",
-                    Cantidad: item?.cantidad ?? "",
-                    Importe_concepto: item ? amount : "",
-                    Total_comprobante: pago.total ?? amount,
-                }));
-            });
-            rows.push({});
             if (modo === "validos") {
-                rows.push({ Comprobante: "PAGOS", Total: data.totales.pagos });
-                rows.push({ Comprobante: "ALQUILERES", Total: data.totales.alquileres });
+                rows.push(summaryRow("PAGOS", { 7: data.totales.pagos }));
+                rows.push(summaryRow("ALQUILERES", { 7: data.totales.alquileres }));
             }
-            rows.push({
-                Comprobante: "TOTAL",
-                Total: modo === "validos" ? data.totales.validos : data.totales.anulados,
-            });
+            rows.push(summaryRow(
+                "TOTAL",
+                { 7: modo === "validos" ? data.totales.validos : data.totales.anulados },
+            ));
         }
         const titulo =
             modo === "validos" ? "Reporte de Pagos Válidos" :
             modo === "anulados" ? "Reporte de Pagos Anulados" :
             "Reporte de Todos los Pagos";
-        const ws = XLSX.utils.json_to_sheet(rows, { origin: "A4" });
+        const ws = XLSX.utils.aoa_to_sheet([headers, ...rows], { origin: "A4" });
         XLSX.utils.sheet_add_aoa(
             ws,
             [[titulo], [reportOfficeName], ["Periodo", formatPeriodo(data)], []],
@@ -495,6 +502,7 @@ export default function ReportesPage() {
                                         <TableRow style={{ backgroundColor: "var(--institution-cream)" }}>
                                             <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Comprobante</TableHead>
                                             <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Origen</TableHead>
+                                            <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Cliente</TableHead>
                                             <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Fecha</TableHead>
                                             <TableHead className="uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Concepto</TableHead>
                                             <TableHead className="text-right uppercase text-[10px] tracking-widest text-[color:var(--institution-muted)]">Válido (Bs.)</TableHead>
@@ -502,24 +510,27 @@ export default function ReportesPage() {
                                         </TableRow>
                                     </TableHeader>
                                     <TableBody>
-                                        {reportRows.flatMap((pago) => {
-                                            const concepts = reportConceptRows(pago);
-                                            return concepts.map(({ item, index, amount }) => {
+                                        {visibleReportRows.map(({ payment: pago, item, index, amount, rowSpan }) => {
                                                 const first = index === 0;
                                                 return (
                                                     <TableRow key={`${pago.id}-${item?.id || index}`}>
                                                         {first && (
-                                                            <TableCell rowSpan={concepts.length} className="font-mono-num align-middle">
+                                                            <TableCell rowSpan={rowSpan} className="font-mono-num align-middle">
                                                                 {formatComprobante(pago)}
                                                             </TableCell>
                                                         )}
                                                         {first && (
-                                                            <TableCell rowSpan={concepts.length} className="align-middle">
+                                                            <TableCell rowSpan={rowSpan} className="align-middle">
                                                                 {pago.origen}
                                                             </TableCell>
                                                         )}
                                                         {first && (
-                                                            <TableCell rowSpan={concepts.length} className="font-mono-num align-middle">
+                                                            <TableCell rowSpan={rowSpan} className="align-middle">
+                                                                {pago.cliente_nombre || "—"}
+                                                            </TableCell>
+                                                        )}
+                                                        {first && (
+                                                            <TableCell rowSpan={rowSpan} className="font-mono-num align-middle">
                                                                 {formatDate(pago.fecha_pago)}
                                                             </TableCell>
                                                         )}
@@ -541,12 +552,11 @@ export default function ReportesPage() {
                                                         </TableCell>
                                                     </TableRow>
                                                 );
-                                            });
-                                        })}
+                                            })}
                                         {reportRows.length > 0 && (
                                             <>
                                                 <TableRow style={{ backgroundColor: "var(--institution-cream)" }}>
-                                                    <TableCell colSpan={4} className="text-right uppercase text-xs tracking-widest text-[color:var(--institution-muted)] font-semibold">
+                                                    <TableCell colSpan={5} className="text-right uppercase text-xs tracking-widest text-[color:var(--institution-muted)] font-semibold">
                                                         Totales
                                                     </TableCell>
                                                     <TableCell className="text-right font-mono-num font-semibold">
@@ -556,7 +566,7 @@ export default function ReportesPage() {
                                                     <TableCell className="text-right font-mono-num font-semibold">{formatMoney(data.totales.anulados)}</TableCell>
                                                 </TableRow>
                                                 <TableRow>
-                                                    <TableCell colSpan={4} className="text-right uppercase text-xs tracking-widest text-[color:var(--institution-burgundy)] font-semibold">
+                                                    <TableCell colSpan={5} className="text-right uppercase text-xs tracking-widest text-[color:var(--institution-burgundy)] font-semibold">
                                                         Diferencia (Válidos − Anulados)
                                                     </TableCell>
                                                     <TableCell colSpan={2} className="text-right font-mono-num font-bold" style={{ color: "var(--institution-burgundy)" }}>
@@ -567,7 +577,7 @@ export default function ReportesPage() {
                                         )}
                                         {reportRows.length === 0 && (
                                             <TableRow>
-                                                <TableCell colSpan={6} className="text-center py-10 text-sm text-[color:var(--institution-muted)]">
+                                                <TableCell colSpan={7} className="text-center py-10 text-sm text-[color:var(--institution-muted)]">
                                                     Sin pagos en el periodo seleccionado.
                                                 </TableCell>
                                             </TableRow>
@@ -575,6 +585,34 @@ export default function ReportesPage() {
                                     </TableBody>
                                 </Table>
                             </div>
+                            {reportRows.length > REPORT_PAGE_SIZE && (
+                                <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-3" style={{ borderColor: "var(--institution-border)" }}>
+                                    <span className="text-xs text-[color:var(--institution-muted)]">
+                                        Mostrando {(reportPage - 1) * REPORT_PAGE_SIZE + 1}–{Math.min(reportPage * REPORT_PAGE_SIZE, reportRows.length)} de {reportRows.length} comprobantes
+                                    </span>
+                                    <div className="flex gap-2">
+                                        <Button
+                                            variant="outline"
+                                            size="sm"
+                                            disabled={reportPage <= 1}
+                                            onClick={() => setReportPage((page) => Math.max(1, page - 1))}
+                                        >
+                                            Anterior
+                                        </Button>
+                                        <span className="flex items-center text-xs text-[color:var(--institution-muted)]">
+                                            Página {reportPage} de {reportPageCount}
+                                        </span>
+                                        <Button
+                                            variant="outline"
+                                            size="sm"
+                                            disabled={reportPage >= reportPageCount}
+                                            onClick={() => setReportPage((page) => Math.min(reportPageCount, page + 1))}
+                                        >
+                                            Siguiente
+                                        </Button>
+                                    </div>
+                                </div>
+                            )}
                         </CardContent>
                     </Card>
                 </>

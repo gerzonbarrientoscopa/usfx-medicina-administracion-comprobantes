@@ -779,6 +779,156 @@ async def hydrate_payment(p):
     return p
 
 
+async def _report_rows_for_ids(statement, identifiers):
+    rows = []
+    for offset in range(0, len(identifiers), 800):
+        batch = identifiers[offset : offset + 800]
+        placeholders = ",".join("?" for _ in batch)
+        rows.extend(await sql(statement.format(placeholders=placeholders), batch))
+    return rows
+
+
+async def _hydrate_report_payments(payments):
+    if not payments:
+        return payments
+
+    payment_ids = [int(payment["id"]) for payment in payments]
+    items = await _report_rows_for_ids(
+        """SELECT i.pago_id,i.id,i.id_tipo_pago,
+                  COALESCE(NULLIF(i.tipo_pago_nombre,N''),t.nombre) tipo_pago_nombre,
+                  i.cantidad,i.monto,i.total
+           FROM pago_items i
+           LEFT JOIN tipos_pagos t ON t.id=i.id_tipo_pago
+           WHERE i.pago_id IN ({placeholders})
+           ORDER BY i.pago_id,i.id""",
+        payment_ids,
+    )
+    items_by_payment = {}
+    for item in items:
+        items_by_payment.setdefault(str(item["pago_id"]), []).append(item)
+
+    result = []
+    for payment in payments:
+        payment_id = str(payment["id"])
+        office_prefix = payment.pop("report_office_prefix", None)
+        payment["office_nombre"] = payment.pop("report_office_name", None)
+        payment["suboficina"] = payment.pop("report_suboficina", "") or ""
+        payment["cliente_nombre"] = payment.pop("report_cliente_nombre", None)
+        payment["cliente_ci"] = payment.pop("report_cliente_ci", None)
+        payment["cliente_cu"] = payment.pop("report_cliente_cu", None) or ""
+        payment["created_by_name"] = payment.pop("report_created_by_name", None)
+        payment["edited_by_name"] = payment.pop("report_edited_by_name", None)
+        legacy_type_name = payment.pop("report_legacy_type_name", None)
+        payment["prefijo_comprobante"] = (
+            payment.get("prefijo_comprobante") or office_prefix
+        )
+        payment["comprobante_display"] = (
+            f"{payment['prefijo_comprobante']}-{payment['cod_comprobante']} / {payment['gestion']}"
+            if payment.get("prefijo_comprobante") and payment.get("cod_comprobante")
+            else None
+        )
+
+        payment_items = items_by_payment.get(payment_id, [])
+        if not payment_items and payment.get("id_tipo_pago"):
+            quantity = float(payment.get("cantidad") or 0)
+            amount = float(payment.get("monto") or 0)
+            payment_items = [{
+                "id_tipo_pago": payment["id_tipo_pago"],
+                "tipo_pago_nombre": legacy_type_name,
+                "cantidad": quantity,
+                "monto": amount,
+                "total": float(payment.get("total") or quantity * amount),
+            }]
+
+        normalized_items = []
+        for item in payment_items:
+            quantity = float(item.get("cantidad") or 0)
+            amount = float(item.get("monto") or 0)
+            item_total = (
+                float(item["total"])
+                if item.get("total") is not None
+                else quantity * amount
+            )
+            normalized_items.append({
+                "id": item.get("id"),
+                "id_tipo_pago": item.get("id_tipo_pago"),
+                "tipo_pago_nombre": item.get("tipo_pago_nombre"),
+                "cantidad": quantity,
+                "monto": amount,
+                "total": item_total,
+            })
+
+        payment["items"] = normalized_items
+        payment["estado"] = payment.get("estado") or "emitido"
+        payment["anulado"] = bool(payment.get("anulado"))
+        payment["total"] = (
+            sum(item["total"] for item in normalized_items)
+            if normalized_items
+            else float(payment.get("total") or 0)
+        )
+        if len(normalized_items) == 1:
+            item = normalized_items[0]
+            payment["id_tipo_pago"] = item["id_tipo_pago"]
+            payment["tipo_pago_nombre"] = item["tipo_pago_nombre"]
+            payment["cantidad"] = item["cantidad"]
+            payment["monto"] = item["monto"]
+        elif len(normalized_items) > 1:
+            payment["id_tipo_pago"] = None
+            payment["tipo_pago_nombre"] = "Varios conceptos"
+            payment["cantidad"] = None
+            payment["monto"] = 0
+        else:
+            payment["id_tipo_pago"] = None
+            payment["tipo_pago_nombre"] = None
+            payment["cantidad"] = None
+            payment["monto"] = 0
+        result.append(payment)
+    return result
+
+
+async def _hydrate_report_rentals(rentals):
+    if not rentals:
+        return rentals
+
+    rental_ids = [int(rental["id"]) for rental in rentals]
+    intervals = await _report_rows_for_ids(
+        """SELECT alquiler_id,
+                  CONVERT(varchar(5),desde,108) desde,
+                  CONVERT(varchar(5),hasta,108) hasta
+           FROM alquiler_intervalos
+           WHERE alquiler_id IN ({placeholders})
+           ORDER BY alquiler_id,desde""",
+        rental_ids,
+    )
+    intervals_by_rental = {}
+    for interval in intervals:
+        intervals_by_rental.setdefault(str(interval["alquiler_id"]), []).append({
+            "desde": interval["desde"],
+            "hasta": interval["hasta"],
+        })
+
+    for rental in rentals:
+        rental_id = str(rental["id"])
+        joined_client_name = rental.pop("report_cliente_nombre", None)
+        rental["cliente_nombre"] = rental.get("cliente_nombre") or joined_client_name
+        rental["ambiente_nombre"] = rental.pop("report_ambiente_nombre", None)
+        rental["tarifa_nombre"] = rental.pop("report_tarifa_nombre", None)
+        rental["modalidad"] = rental.pop("report_modalidad", None)
+        office_prefix = rental.pop("report_office_prefix", None)
+        rental["office_nombre"] = rental.pop("report_office_name", None)
+        rental["suboficina"] = rental.pop("report_suboficina", "") or ""
+        rental["prefijo_comprobante"] = (
+            rental.get("prefijo_comprobante") or office_prefix
+        )
+        rental["tramos"] = intervals_by_rental.get(rental_id, [])
+        rental["comprobante_display"] = (
+            f"{rental['prefijo_comprobante']}-{rental['cod_comprobante']} / {rental['gestion']}"
+            if rental.get("prefijo_comprobante") and rental.get("cod_comprobante")
+            else None
+        )
+    return rentals
+
+
 def allocate_receipt(c, office_id, year, origin, origin_id):
     """Must be called inside the caller's transaction; one ledger spans both sources."""
     acquire_app_lock(c, f"receipt:{office_id}:{year}")
@@ -2799,11 +2949,26 @@ async def reports(
     if created_by:
         pc.append("p.created_by=?")
         pv.append(created_by)
-    pagos = await sql(
-        "SELECT p.* FROM pagos p WHERE "
+    payment_query = (
+        """SELECT p.*,
+                  c.nombre AS report_cliente_nombre,
+                  c.ci AS report_cliente_ci,
+                  c.cu AS report_cliente_cu,
+                  o.nombre AS report_office_name,
+                  o.suboficina AS report_suboficina,
+                  o.prefijo_comprobante AS report_office_prefix,
+                  tp.nombre AS report_legacy_type_name,
+                  uc.nombre AS report_created_by_name,
+                  ue.nombre AS report_edited_by_name
+           FROM pagos p
+           LEFT JOIN clientes c ON c.id=p.cliente_id
+           LEFT JOIN oficinas o ON o.id=p.office_id
+           LEFT JOIN tipos_pagos tp ON tp.id=p.id_tipo_pago AND tp.office_id=p.office_id
+           LEFT JOIN usuarios uc ON uc.id=p.created_by
+           LEFT JOIN usuarios ue ON ue.id=p.edited_by
+           WHERE """
         + " AND ".join(pc)
-        + " ORDER BY p.fecha_pago,p.id",
-        pv,
+        + " ORDER BY p.fecha_pago,p.id"
     )
     rs, rv = await office_scope_sql(u, office_id, "a.office_id")
     rc = [
@@ -2820,14 +2985,41 @@ async def reports(
     if created_by:
         rc.append("a.paid_by=?")
         ra.append(created_by)
-    rentals = await sql(
-        "SELECT a.* FROM alquileres a WHERE "
+    rental_query = (
+        """SELECT a.*,
+                  c.nombre AS report_cliente_nombre,
+                  e.nombre AS report_ambiente_nombre,
+                  t.nombre AS report_tarifa_nombre,
+                  t.modalidad AS report_modalidad,
+                  o.nombre AS report_office_name,
+                  o.suboficina AS report_suboficina,
+                  o.prefijo_comprobante AS report_office_prefix
+           FROM alquileres a
+           LEFT JOIN clientes c ON c.id=a.cliente_id
+           LEFT JOIN ambientes e ON e.id=a.ambiente_id
+           LEFT JOIN tarifas_ambientes t ON t.id=a.tarifa_id
+           LEFT JOIN oficinas o ON o.id=a.office_id
+           WHERE """
         + " AND ".join(rc)
-        + " ORDER BY a.fecha_pago,a.id",
-        ra,
+        + " ORDER BY a.fecha_pago,a.id"
     )
-    pagos = [await hydrate_payment(p) for p in pagos]
-    rentals = [await hydrate_rental(r) for r in rentals]
+    payment_task = sql(payment_query, pv)
+    rental_task = sql(rental_query, ra)
+    office_id_value = scope_args[0] if scope else None
+    office_task = (
+        sql("SELECT nombre FROM oficinas WHERE id=?", (office_id_value,), one=True)
+        if office_id_value
+        else None
+    )
+    pagos, rentals, office_row = await asyncio.gather(
+        payment_task,
+        rental_task,
+        office_task if office_task is not None else asyncio.sleep(0, result=None),
+    )
+    pagos, rentals = await asyncio.gather(
+        _hydrate_report_payments(pagos),
+        _hydrate_report_rentals(rentals),
+    )
     rentals = [
         {
             **rental,
@@ -2847,13 +3039,8 @@ async def reports(
     void_total = sum(float(p["total"]) for p in voided) + sum(
         float(rental["total"]) for rental in voided_rentals
     )
-    office_id_value = None
     office_name = "Todas las oficinas"
-    if scope:
-        office_id_value = scope_args[0]
-        office_row = await sql(
-            "SELECT nombre FROM oficinas WHERE id=?", (office_id_value,), one=True
-        )
+    if office_id_value:
         office_name = (office_row or {}).get("nombre")
     return {
         "desde": d,

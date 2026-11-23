@@ -1,3 +1,4 @@
+import asyncio
 import os
 import logging
 import re
@@ -3137,17 +3138,13 @@ async def reportes(
     }
     if created_by:
         filt["created_by"] = created_by
-    cursor = db.pagos.aggregate(
+    payment_cursor = db.pagos.aggregate(
         [
             {"$match": filt},
             {"$sort": {"fecha_pago": 1}},
             *_PAGO_HYDRATE_PIPELINE,
         ]
     )
-    pagos: List[dict] = [p async for p in cursor]
-
-    validos = [p for p in pagos if not p.get("anulado")]
-    anulados = [p for p in pagos if p.get("anulado")]
     rental_filter = {
         **scope,
         "estado": {"$in": ["pagado", "cancelado"]},
@@ -3159,9 +3156,19 @@ async def reportes(
     }
     if created_by:
         rental_filter["paid_by"] = created_by
-    alquileres = await db.alquileres.find(
+    rental_cursor = db.alquileres.find(
         rental_filter, {"_id": 0, "intervals": 0}
-    ).sort("fecha_pago", 1).to_list(None)
+    ).sort("fecha_pago", 1)
+
+    async def collect_payments():
+        return [payment async for payment in payment_cursor]
+
+    pagos, alquileres = await asyncio.gather(
+        collect_payments(),
+        rental_cursor.to_list(None),
+    )
+    validos = [p for p in pagos if not p.get("anulado")]
+    anulados = [p for p in pagos if p.get("anulado")]
     alquileres = [
         {
             **alquiler,
@@ -3442,6 +3449,8 @@ async def startup():
         name="rental_receipt_per_office_year",
     )
     await db.alquileres.create_index([("ambiente_id", 1), ("fecha", 1), ("estado", 1)])
+    await db.alquileres.create_index([("office_id", 1), ("fecha_pago", 1)])
+    await db.alquileres.create_index("fecha_pago")
     # MongoDB creates a unique _id index automatically for every collection.
     await reconcile_rental_occupancy()
     await db.pagos.create_index([("office_id", 1), ("gestion", 1), ("cod_comprobante", 1)],
