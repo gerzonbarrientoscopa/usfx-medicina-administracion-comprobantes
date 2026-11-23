@@ -6,6 +6,7 @@
 - [Revenue catalog scope](revenue-catalog-scope.md) — classifiers are global; concepts are office-owned, with names reusable but globally unique five-digit codes.
 - [SQL Server local-only workflow](sqlserver-local-only.md) — never import, test, execute, or connect to `serverSQL.py` in Replit; the user runs it locally.
 - [SQL Server date parameters](sqlserver-date-binding.md) — bind Python `date` values to date columns; ISO strings may be parsed using session language settings.
+- [Interface date format](app-date-format.md) — all dates users enter or see use `dd/mm/yyyy`; API and storage values remain ISO.
 - [Fresh database identities](sql-identity-scope.md) — fresh databases; generated user/client Id is separate from user Código and external directory Id.
 - [User code format](user-code-format.md) — user codes are three alphanumeric characters; `000` remains reserved.
 - [Browser verification](browser-verification.md) — distinguish shell test-harness failures from application failures before editing the app.

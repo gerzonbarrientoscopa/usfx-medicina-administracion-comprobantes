@@ -1,11 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { apiClient, formatApiError, formatMoney } from "@/lib/api";
-import { toISODate } from "@/lib/dateFormat";
+import { formatDate, toISODate } from "@/lib/dateFormat";
 import { useAuth } from "@/contexts/AuthContext";
 import { useOfficeScope } from "@/hooks/useOfficeScope";
 import { formatComprobante } from "@/lib/receipt";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { DateInput } from "@/components/DateInput";
 import { Label } from "@/components/ui/label";
 import {
     Select,
@@ -84,6 +85,7 @@ export default function BusquedaPagosPage() {
     const [tipo, setTipo] = useState("");
     const [desde, setDesde] = useState("");
     const [hasta, setHasta] = useState("");
+    const [dateValidity, setDateValidity] = useState({ desde: true, hasta: true });
     const [createdBy, setCreatedBy] = useState("");
 
     const [pagos, setPagos] = useState([]);
@@ -97,6 +99,7 @@ export default function BusquedaPagosPage() {
     const [editOpen, setEditOpen] = useState(false);
     const [editing, setEditing] = useState(null);
     const [editForm, setEditForm] = useState({ cliente_id: "", id_tipo_pago: "", cantidad: "", fecha_pago: "" });
+    const [editDateValid, setEditDateValid] = useState(true);
     const [editEstOpen, setEditEstOpen] = useState(false);
     const [editTpOpen, setEditTpOpen] = useState(false);
     const [savingEdit, setSavingEdit] = useState(false);
@@ -152,6 +155,10 @@ export default function BusquedaPagosPage() {
     }, [officeId]);
 
     const buscar = async (paginaSolicitada = 1, resetOfficeFilters = false) => {
+        if (!dateValidity.desde || !dateValidity.hasta) {
+            toast.error("Ingrese las fechas en formato dd/mm/aaaa.");
+            return;
+        }
         if (desde && hasta && desde > hasta) {
             toast.error("La fecha inicial no puede ser posterior a la fecha final.");
             return;
@@ -244,6 +251,7 @@ export default function BusquedaPagosPage() {
             cantidad: String(p.cantidad),
             fecha_pago: toISODate(p.fecha_pago),
         });
+        setEditDateValid(true);
         const requestId = ++editOptionsRequest.current;
         setEditOpen(true);
         cargarOpcionesEdicion(p, requestId);
@@ -266,6 +274,10 @@ export default function BusquedaPagosPage() {
 
     const submitEdit = async () => {
         if (!editing) return;
+        if (!editDateValid) {
+            toast.error("Ingrese una fecha válida en formato dd/mm/aaaa.");
+            return;
+        }
         setSavingEdit(true);
         try {
             const payload = {
@@ -362,22 +374,24 @@ export default function BusquedaPagosPage() {
                         </Select>
                     </div>
                     <div className="min-w-0 space-y-1.5">
-                        <Label className="flex min-h-8 items-end text-xs uppercase tracking-widest leading-4 text-[color:var(--institution-muted)]">Desde</Label>
-                        <Input
-                            type="date"
+                        <Label htmlFor="comprobantes-desde" className="flex min-h-8 items-end text-xs uppercase tracking-widest leading-4 text-[color:var(--institution-muted)]">Desde</Label>
+                        <DateInput
+                            id="comprobantes-desde"
                             value={desde}
-                            onChange={(e) => setDesde(e.target.value)}
-                            className="busqueda-date-input min-w-0 rounded-sm px-2"
+                            onValueChange={setDesde}
+                            onValidityChange={(valid) => setDateValidity((state) => ({ ...state, desde: valid }))}
+                            className="busqueda-date-input min-w-0 rounded-sm"
                             data-testid="busq-desde-input"
                         />
                     </div>
                     <div className="min-w-0 space-y-1.5">
-                        <Label className="flex min-h-8 items-end text-xs uppercase tracking-widest leading-4 text-[color:var(--institution-muted)]">Hasta</Label>
-                        <Input
-                            type="date"
+                        <Label htmlFor="comprobantes-hasta" className="flex min-h-8 items-end text-xs uppercase tracking-widest leading-4 text-[color:var(--institution-muted)]">Hasta</Label>
+                        <DateInput
+                            id="comprobantes-hasta"
                             value={hasta}
-                            onChange={(e) => setHasta(e.target.value)}
-                            className="busqueda-date-input min-w-0 rounded-sm px-2"
+                            onValueChange={setHasta}
+                            onValidityChange={(valid) => setDateValidity((state) => ({ ...state, hasta: valid }))}
+                            className="busqueda-date-input min-w-0 rounded-sm"
                             data-testid="busq-hasta-input"
                         />
                     </div>
@@ -442,7 +456,7 @@ export default function BusquedaPagosPage() {
                                     </div>
                                 </TableCell>
                                 <TableCell className="text-right font-mono-num font-semibold">{formatMoney(p.total)}</TableCell>
-                                <TableCell className="font-mono-num">{p.fecha_pago}</TableCell>
+                                <TableCell className="font-mono-num">{formatDate(p.fecha_pago)}</TableCell>
                                 <TableCell className="text-xs text-[color:var(--institution-muted)]">
                                     {p.origen === "alquiler" ? (users.find((u) => u.id === p.paid_by)?.nombre || "—") : p.created_by_name || "—"}
                                     {p.edited_by_name && (
@@ -639,11 +653,12 @@ export default function BusquedaPagosPage() {
                                 />
                             </div>
                             <div className="space-y-1.5">
-                                <Label className="text-xs uppercase tracking-widest text-[color:var(--institution-muted)]">Fecha de pago</Label>
-                                <Input
-                                    type="date"
+                                <Label htmlFor="edit-fecha-pago" className="text-xs uppercase tracking-widest text-[color:var(--institution-muted)]">Fecha de pago</Label>
+                                <DateInput
+                                    id="edit-fecha-pago"
                                     value={editForm.fecha_pago}
-                                    onChange={(e) => setEditForm({ ...editForm, fecha_pago: e.target.value })}
+                                    onValueChange={(fecha_pago) => setEditForm({ ...editForm, fecha_pago })}
+                                    onValidityChange={setEditDateValid}
                                     className="rounded-sm"
                                     data-testid="edit-fecha-input"
                                 />

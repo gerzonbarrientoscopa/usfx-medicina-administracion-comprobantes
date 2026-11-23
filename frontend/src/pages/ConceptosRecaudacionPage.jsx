@@ -1,10 +1,11 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { apiClient, formatApiError, formatMoney } from "@/lib/api";
-import { toISODate } from "@/lib/dateFormat";
+import { formatDate, toISODate } from "@/lib/dateFormat";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { DateInput } from "@/components/DateInput";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -47,6 +48,7 @@ export default function ConceptosRecaudacionPage() {
   const [open, setOpen] = useState(false);
   const [editingConcepto, setEditingConcepto] = useState(null);
   const [formData, setFormData] = useState({ ...EMPTY });
+  const [dateValidity, setDateValidity] = useState({ inicio: true, fin: true });
   const [loading, setLoading] = useState(false);
   const [pagina, setPagina] = useState(1);
   const [totalPaginas, setTotalPaginas] = useState(1);
@@ -122,6 +124,10 @@ export default function ConceptosRecaudacionPage() {
 
   const handleSubmit = async (event) => {
     event.preventDefault();
+    if (!dateValidity.inicio || !dateValidity.fin) {
+      toast.error("Ingrese las fechas en formato dd/mm/aaaa.");
+      return;
+    }
     const selectedClassifier = clasificadores.find(
       (item) => String(item.id) === String(formData.id_clasificador),
     );
@@ -165,6 +171,7 @@ export default function ConceptosRecaudacionPage() {
 
   const handleEdit = (concepto) => {
     setEditingConcepto(concepto);
+    setDateValidity({ inicio: true, fin: true });
     setFormData({
       codigo: concepto.codigo || "",
       nombre: concepto.nombre,
@@ -182,6 +189,7 @@ export default function ConceptosRecaudacionPage() {
 
   const handleOpenChange = (isOpen) => {
     setOpen(isOpen);
+    setDateValidity({ inicio: true, fin: true });
     if (!isOpen) {
       setEditingConcepto(null);
       return;
@@ -371,26 +379,22 @@ export default function ConceptosRecaudacionPage() {
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="concepto-inicio">Inicio</Label>
-                <Input
+                <DateInput
                   id="concepto-inicio"
-                  type="date"
                   value={formData.inicio}
-                  onChange={(event) =>
-                    setFormData({ ...formData, inicio: event.target.value })
-                  }
+                  onValueChange={(inicio) => setFormData({ ...formData, inicio })}
+                  onValidityChange={(valid) => setDateValidity((state) => ({ ...state, inicio: valid }))}
                   required
                   className="rounded-sm"
                 />
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="concepto-fin">Fin (opcional)</Label>
-                <Input
+                <DateInput
                   id="concepto-fin"
-                  type="date"
                   value={formData.fin}
-                  onChange={(event) =>
-                    setFormData({ ...formData, fin: event.target.value })
-                  }
+                  onValueChange={(fin) => setFormData({ ...formData, fin })}
+                  onValidityChange={(valid) => setDateValidity((state) => ({ ...state, fin: valid }))}
                   className="rounded-sm"
                 />
               </div>
@@ -460,7 +464,7 @@ export default function ConceptosRecaudacionPage() {
                     : "Pendiente de clasificar"}
                 </TableCell>
                 <TableCell className="text-right font-mono-num">{formatMoney(concepto.monto)}</TableCell>
-                <TableCell className="text-xs">{concepto.inicio} → {concepto.fin || "—"}</TableCell>
+                <TableCell className="text-xs">{formatDate(concepto.inicio)} → {concepto.fin ? formatDate(concepto.fin) : "—"}</TableCell>
                 <TableCell className="text-xs text-[color:var(--institution-muted)] max-w-xs truncate">{concepto.descripcion || "—"}</TableCell>
                 {isSuperAdmin && <TableCell>{concepto.office_nombre || "—"}</TableCell>}
                 <TableCell className="text-right whitespace-nowrap">

@@ -38,6 +38,16 @@ export function toISODate(value) {
     return "";
 }
 
+export function parseDateInput(value) {
+    const text = String(value ?? "").trim();
+    if (!text) return { valid: true, iso: "" };
+    if (!/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(text)) {
+        return { valid: false, iso: "" };
+    }
+    const iso = toISODate(text);
+    return { valid: Boolean(iso), iso };
+}
+
 export function formatDate(value) {
     const iso = toISODate(value);
     if (!iso) return value ? String(value) : "";

@@ -6,7 +6,7 @@ import { reportConceptRows } from "@/lib/reportConceptRows";
 import { buildReportPdfRows } from "@/lib/reportPdfRows";
 import { buildReportRows } from "@/lib/reportRows";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { DateInput } from "@/components/DateInput";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -84,6 +84,7 @@ export default function ReportesPage() {
     const [periodo, setPeriodo] = useState("diario");
     const [desde, setDesde] = useState("");
     const [hasta, setHasta] = useState("");
+    const [rangeDatesValid, setRangeDatesValid] = useState({ desde: true, hasta: true });
     const [createdBy, setCreatedBy] = useState("");
     const [usuarios, setUsuarios] = useState([]);
     const [data, setData] = useState(null);
@@ -112,6 +113,11 @@ export default function ReportesPage() {
         try {
             const params = { periodo, ...(officeId ? { office_id: officeId } : {}) };
             if (periodo === "rango") {
+                if (!rangeDatesValid.desde || !rangeDatesValid.hasta) {
+                    toast.error("Ingrese las fechas en formato dd/mm/aaaa.");
+                    setLoading(false);
+                    return;
+                }
                 if (!desde || !hasta) {
                     toast.error("Indique fechas Desde y Hasta.");
                     setLoading(false);
@@ -363,12 +369,12 @@ export default function ReportesPage() {
                     {periodo === "rango" && (
                         <div className="grid grid-cols-2 gap-4 max-w-md">
                             <div className="space-y-1.5">
-                                <Label className="text-xs uppercase tracking-widest text-[color:var(--institution-muted)]">Desde</Label>
-                                <Input type="date" value={desde} onChange={(e) => setDesde(e.target.value)} className="rounded-sm" data-testid="rep-desde" />
+                                <Label htmlFor="reporte-desde" className="text-xs uppercase tracking-widest text-[color:var(--institution-muted)]">Desde</Label>
+                                <DateInput id="reporte-desde" value={desde} onValueChange={setDesde} onValidityChange={(valid) => setRangeDatesValid((state) => ({ ...state, desde: valid }))} className="rounded-sm" data-testid="rep-desde" />
                             </div>
                             <div className="space-y-1.5">
-                                <Label className="text-xs uppercase tracking-widest text-[color:var(--institution-muted)]">Hasta</Label>
-                                <Input type="date" value={hasta} onChange={(e) => setHasta(e.target.value)} className="rounded-sm" data-testid="rep-hasta" />
+                                <Label htmlFor="reporte-hasta" className="text-xs uppercase tracking-widest text-[color:var(--institution-muted)]">Hasta</Label>
+                                <DateInput id="reporte-hasta" value={hasta} onValueChange={setHasta} onValidityChange={(valid) => setRangeDatesValid((state) => ({ ...state, hasta: valid }))} className="rounded-sm" data-testid="rep-hasta" />
                             </div>
                         </div>
                     )}

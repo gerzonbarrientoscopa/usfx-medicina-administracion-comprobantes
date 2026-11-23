@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { apiClient, formatApiError, formatMoney } from "@/lib/api";
+import { formatDate } from "@/lib/dateFormat";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -238,7 +239,7 @@ export default function AnularPagoPage() {
                                     </div>
                                 </TableCell>
                                 <TableCell className="text-right font-mono-num font-semibold">{formatMoney(pago.total)}</TableCell>
-                                <TableCell className="font-mono-num">{pago.fecha_pago}</TableCell>
+                                <TableCell className="font-mono-num">{formatDate(pago.fecha_pago)}</TableCell>
                                 <TableCell className="text-xs text-[color:var(--institution-muted)]">
                                     {pago.origen === "alquiler"
                                         ? usuarios.find((usuario) => usuario.id === pago.paid_by)?.nombre || "—"

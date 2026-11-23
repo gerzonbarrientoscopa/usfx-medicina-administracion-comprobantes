@@ -4,7 +4,7 @@ import { formatDate, toISODate } from "@/lib/dateFormat";
 import { useOfficeScope } from "@/hooks/useOfficeScope";
 import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { DateInput } from "@/components/DateInput";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import { ChevronLeft, ChevronRight, CalendarDays, Clock3, Printer, RefreshCw } from "lucide-react";
@@ -37,6 +37,7 @@ export default function RegistroAlquilerPage() {
   const [calendarError, setCalendarError] = useState("");
   const [customer, setCustomer] = useState(null);
   const [date, setDate] = useState("");
+  const [dateInputValid, setDateInputValid] = useState(true);
   const [start, setStart] = useState("");
   const [end, setEnd] = useState("");
   const [saving, setSaving] = useState(false);
@@ -163,8 +164,18 @@ export default function RegistroAlquilerPage() {
     if (!tarifa || tarifa.modalidad === "dia" || SHIFT_MODALITIES.includes(tarifa.modalidad)) return;
     setDate(day); setStart(value); setEnd("");
   };
+  const handleDateChange = (value) => {
+    setDate(value);
+    setStart("");
+    setEnd("");
+    if (!value) return;
+    const selectedDate = parseDate(value);
+    selectedDate.setDate(selectedDate.getDate() - ((selectedDate.getDay() + 6) % 7));
+    setAnchor(fmtDate(selectedDate));
+  };
   const createRental = async (chargeNow) => {
     if (!officeId && isSuperAdmin) return toast.error("Seleccione una oficina.");
+    if (!dateInputValid) return toast.error("Ingrese una fecha válida en formato dd/mm/aaaa.");
     if (!ambienteId || !tarifaId || !customer || !date) return toast.error("Complete ambiente, tarifa, cliente y fecha.");
     if (!isWholeDay && (!start || !end)) return toast.error("Seleccione un horario disponible.");
     if (!isWholeDay && isOccupied(date, mins(start), mins(end))) return toast.error("Ese horario acaba de ser ocupado. Actualice el calendario.");
@@ -289,7 +300,7 @@ export default function RegistroAlquilerPage() {
             save: "rental-new-client-save",
           }}
         />
-        <div className="space-y-1.5"><Label htmlFor="rental-date" className="text-xs font-semibold uppercase tracking-widest text-[color:var(--institution-muted)]">FECHA DE USO</Label><Input id="rental-date" type="date" value={date} onChange={(e) => { const value = e.target.value; setDate(value); setStart(""); setEnd(""); if (value) { const selectedDate = parseDate(value); selectedDate.setDate(selectedDate.getDate() - ((selectedDate.getDay() + 6) % 7)); setAnchor(fmtDate(selectedDate)); } }} className="rounded-sm"/></div>
+        <div className="space-y-1.5"><Label htmlFor="rental-date" className="text-xs font-semibold uppercase tracking-widest text-[color:var(--institution-muted)]">FECHA DE USO</Label><DateInput id="rental-date" value={date} onValueChange={handleDateChange} onValidityChange={setDateInputValid} className="rounded-sm"/></div>
         {tarifa && <div className="space-y-1.5">
           <div className="text-xs font-semibold uppercase tracking-widest text-[color:var(--institution-muted)]">HORARIO</div>
           <div className="space-y-3 rounded-sm border p-3" style={{ borderColor: "var(--institution-border)" }}><div className="flex items-center justify-between gap-2"><div><div className="text-sm font-medium">{tarifa.modalidad === "dia" ? "Jornada completa" : SHIFT_MODALITIES.includes(tarifa.modalidad) ? `${SHIFT_LABELS[tarifa.modalidad]} · ${tarifa.desde}–${tarifa.hasta}` : start ? `${start}${end ? `–${end}` : " · seleccione fin"}` : "Seleccione inicio en agenda"}</div></div><Clock3 size={17} className="text-[color:var(--institution-muted)]"/></div>
