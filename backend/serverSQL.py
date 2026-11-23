@@ -2697,9 +2697,33 @@ async def receipts(
                        OR EXISTS(SELECT 1 FROM tarifas_ambientes t WHERE t.id=a.tarifa_id AND t.nombre LIKE ?))"""
             )
             rv.extend([like] * 6)
-    student_rows = await sql("SELECT p.* FROM pagos p WHERE " + " AND ".join(pc), pv)
+    # Limita la búsqueda combinada de pagos y alquileres a las páginas
+    # solicitadas: cargar y completar cada comprobante genera varias consultas
+    # adicionales y puede exceder el tiempo de espera con lotes históricos.
+    page_end = pag * tam
+    student_total = await sql(
+        "SELECT COUNT(*) AS total FROM pagos p WHERE " + " AND ".join(pc),
+        pv,
+        one=True,
+    )
+    rental_total = await sql(
+        "SELECT COUNT(*) AS total FROM alquileres a WHERE " + " AND ".join(rc),
+        rv,
+        one=True,
+    )
+    student_rows = await sql(
+        "SELECT TOP (?) p.* FROM pagos p WHERE "
+        + " AND ".join(pc)
+        + " ORDER BY CONVERT(char(10),p.fecha_pago,23) DESC, "
+        "CONVERT(varchar(50),p.id) DESC",
+        [page_end, *pv],
+    )
     rental_rows = await sql(
-        "SELECT a.* FROM alquileres a WHERE " + " AND ".join(rc), rv
+        "SELECT TOP (?) a.* FROM alquileres a WHERE "
+        + " AND ".join(rc)
+        + " ORDER BY CONVERT(char(10),a.fecha_pago,23) DESC, "
+        "CONVERT(varchar(50),a.id) DESC",
+        [page_end, *rv],
     )
     merged = []
     for row in student_rows:
@@ -2716,7 +2740,9 @@ async def receipts(
         key=lambda x: (str(x.get("fecha_pago") or ""), str(x.get("id") or "")),
         reverse=True,
     )
-    total = len(merged)
+    total = (student_total or {}).get("total", 0) + (rental_total or {}).get(
+        "total", 0
+    )
     return page(merged[(pag - 1) * tam : pag * tam], total, pag, tam)
 
 
