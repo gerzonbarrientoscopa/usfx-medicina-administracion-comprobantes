@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
-import { Plus, Pencil, Trash2, Clock3, RefreshCw } from "lucide-react";
+import { Plus, Pencil, LockKeyhole, Trash2, Clock3, RefreshCw } from "lucide-react";
 
 const MODES = [
   ["hora", "Por hora"],
@@ -129,7 +129,7 @@ export default function TarifarioAmbientesPage() {
           : tarifas.length === 0 ? <div className="p-12 text-center"><div className="mx-auto mb-3 flex h-11 w-11 items-center justify-center rounded-full bg-[color:var(--institution-cream)] text-[color:var(--institution-navy)]"><Clock3 size={19}/></div><h3 className="font-medium">Aún no hay tarifas</h3><p className="mt-1 text-sm text-[color:var(--institution-muted)]">Registre una tarifa para habilitar reservas de este ambiente.</p></div>
           : <ul className="divide-y" style={{ borderColor: "var(--institution-border)" }}>{tarifas.map((t) => <li key={t.id} className="flex flex-wrap items-center justify-between gap-3 px-5 py-4 transition-colors hover:bg-[color:var(--institution-cream)]/50">
             <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><span className="font-medium">{t.nombre}</span><span className="rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-wider text-[color:var(--institution-muted)]">{MODES.find(([v]) => v === t.modalidad)?.[1] || t.modalidad}</span></div><p className="mt-1 text-xs text-[color:var(--institution-muted)]">{t.descripcion || (t.desde && t.hasta ? `${t.desde}–${t.hasta}` : "Sin detalle adicional")}{t.desde && t.hasta && t.descripcion ? ` · ${t.desde}–${t.hasta}` : ""}</p></div>
-            <div className="flex items-center gap-3"><span className="whitespace-nowrap font-mono-num text-sm font-semibold" style={{ color: "var(--institution-burgundy)" }}>Bs. {formatMoney(t.monto)}{t.modalidad === "hora" ? <small className="font-sans font-normal text-[color:var(--institution-muted)]"> / h</small> : null}</span><Button variant="ghost" size="icon" aria-label={`Editar ${t.nombre}`} onClick={() => edit(t)}><Pencil size={15}/></Button><Button variant="ghost" size="icon" aria-label={`Eliminar ${t.nombre}`} className="text-[color:var(--institution-danger)]" onClick={() => remove(t)}><Trash2 size={15}/></Button></div>
+             <div className="flex items-center gap-3"><span className="whitespace-nowrap font-mono-num text-sm font-semibold" style={{ color: "var(--institution-burgundy)" }}>Bs. {formatMoney(t.monto)}{t.modalidad === "hora" ? <small className="font-sans font-normal text-[color:var(--institution-muted)]"> / h</small> : null}</span><span title={t.bloqueado ? "No se puede editar: tiene alquileres registrados." : undefined}><Button variant="ghost" size="icon" aria-label={t.bloqueado ? `Bloqueada: ${t.nombre} tiene alquileres registrados` : `Editar ${t.nombre}`} disabled={t.bloqueado} onClick={() => edit(t)}>{t.bloqueado ? <LockKeyhole size={15}/> : <Pencil size={15}/>}</Button></span><Button variant="ghost" size="icon" aria-label={`Eliminar ${t.nombre}`} className="text-[color:var(--institution-danger)]" onClick={() => remove(t)}><Trash2 size={15}/></Button></div>
           </li>)}</ul>}
       </section>
       <aside className="h-fit rounded-sm border bg-white p-5" style={{ borderColor: "var(--institution-border)" }}>

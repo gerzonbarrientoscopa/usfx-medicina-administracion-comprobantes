@@ -24,7 +24,14 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Plus, Pencil, Trash2, ChevronLeft, ChevronRight } from "lucide-react";
+import {
+  Plus,
+  Pencil,
+  LockKeyhole,
+  Trash2,
+  ChevronLeft,
+  ChevronRight,
+} from "lucide-react";
 
 const EMPTY = {
   codigo: "",
@@ -468,9 +475,19 @@ export default function ConceptosRecaudacionPage() {
                 <TableCell className="text-xs text-[color:var(--institution-muted)] max-w-xs truncate">{concepto.descripcion || "—"}</TableCell>
                 {isSuperAdmin && <TableCell>{concepto.office_nombre || "—"}</TableCell>}
                 <TableCell className="text-right whitespace-nowrap">
-                  <Button variant="ghost" size="sm" onClick={() => handleEdit(concepto)} aria-label={`Editar ${concepto.nombre}`} data-testid={`concepto-edit-${concepto.id}`} className="rounded-sm">
-                    <Pencil size={14} />
-                  </Button>
+                  <span title={concepto.bloqueado ? "No se puede editar: tiene pagos registrados." : undefined}>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => handleEdit(concepto)}
+                      disabled={concepto.bloqueado}
+                      aria-label={concepto.bloqueado ? `Bloqueado: ${concepto.nombre} tiene pagos registrados` : `Editar ${concepto.nombre}`}
+                      data-testid={`concepto-edit-${concepto.id}`}
+                      className="rounded-sm"
+                    >
+                      {concepto.bloqueado ? <LockKeyhole size={14} /> : <Pencil size={14} />}
+                    </Button>
+                  </span>
                   <Button variant="ghost" size="sm" onClick={() => handleDelete(concepto)} aria-label={`Eliminar ${concepto.nombre}`} data-testid={`concepto-delete-${concepto.id}`} className="rounded-sm text-[color:var(--institution-danger)]">
                     <Trash2 size={14} />
                   </Button>

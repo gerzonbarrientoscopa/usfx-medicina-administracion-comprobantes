@@ -619,6 +619,32 @@ def test_shared_receipts_idempotent_rental_payment_and_annulments(local_sql):
         "SELECT id_tipo_pago FROM dbo.pago_items WHERE pago_id=?",
         (int(payment_one_row["id"]),),
     )[0][0]) == local_sql["concept_id"]
+    listed_concepts = client.get(
+        f"{API}/conceptos-recaudacion",
+        params={"pag": 1, "tam": 100},
+        headers=admin,
+    )
+    assert listed_concepts.status_code == 200, listed_concepts.text
+    used_concept = next(
+        item for item in listed_concepts.json()["items"]
+        if str(item["id"]) == str(local_sql["concept_id"])
+    )
+    assert used_concept["bloqueado"] is True
+    blocked_concept_edit = client.put(
+        f"{API}/conceptos-recaudacion/{local_sql['concept_id']}",
+        headers=admin,
+        json={
+            "codigo": used_concept["codigo"],
+            "nombre": f'{used_concept["nombre"]} modificado',
+            "monto": used_concept["monto"],
+            "descripcion": used_concept["descripcion"],
+            "inicio": used_concept["inicio"],
+            "fin": used_concept["fin"],
+            "id_clasificador": used_concept["id_clasificador"],
+        },
+    )
+    assert blocked_concept_edit.status_code == 400, blocked_concept_edit.text
+    assert "pagos registrados" in blocked_concept_edit.json()["detail"]
 
     reservation = client.post(
         f"{API}/alquileres",
@@ -644,6 +670,30 @@ def test_shared_receipts_idempotent_rental_payment_and_annulments(local_sql):
     assert paid_row["comprobante_display"] == (
         f"TSA-00002 / {paid_row['gestion']}"
     )
+    listed_tariffs = client.get(
+        f"{API}/tarifas-ambientes",
+        params={"ambiente_id": local_sql["room_id"]},
+        headers=admin,
+    )
+    assert listed_tariffs.status_code == 200, listed_tariffs.text
+    used_tariff = next(
+        item for item in listed_tariffs.json()
+        if str(item["id"]) == str(local_sql["tariff_id"])
+    )
+    assert used_tariff["bloqueado"] is True
+    blocked_tariff_edit = client.put(
+        f"{API}/tarifas-ambientes/{local_sql['tariff_id']}",
+        headers=admin,
+        json={
+            "ambiente_id": local_sql["room_id"],
+            "nombre": f'Tarifa {local_sql["suffix"]} modificada',
+            "modalidad": "hora",
+            "monto": "30.00",
+            "descripcion": "intento de cambio",
+        },
+    )
+    assert blocked_tariff_edit.status_code == 400, blocked_tariff_edit.text
+    assert "alquileres registrados" in blocked_tariff_edit.json()["detail"]
     allocation = local_sql["read"](
         """SELECT COUNT(*) FROM dbo.comprobante_asignaciones
            WHERE origen=N'alquiler' AND origen_id=?""",

@@ -264,6 +264,116 @@ def test_clients_work_in_payments_edit_search_receipts_and_rentals(mongo_rental_
     state["loop"].run_until_complete(scenario())
 
 
+def test_concepts_and_tariffs_with_financial_records_cannot_be_edited(mongo_rental_api):
+    state = mongo_rental_api
+
+    async def scenario():
+        async with await _client(_actor()) as admin:
+            await state["db"].clasificadores_presupuestarios.insert_one({
+                "id": "locked-catalog-classifier",
+                "codigo": "12100",
+                "nombre": "Venta de bienes",
+                "activa": True,
+            })
+            created_concept = await admin.post(
+                f"{API}/conceptos-recaudacion",
+                json={
+                    "codigo": "10001",
+                    "nombre": "Concepto protegido",
+                    "monto": 10,
+                    "inicio": state["monday"],
+                    "id_clasificador": "locked-catalog-classifier",
+                },
+            )
+            assert created_concept.status_code == 201, created_concept.text
+            concept = created_concept.json()
+
+            created_tariff = await admin.post(
+                f"{API}/tarifas-ambientes",
+                json=_tariff_payload(state["ambiente_a"]),
+            )
+            assert created_tariff.status_code == 201, created_tariff.text
+            tariff = created_tariff.json()
+
+            concepts = await admin.get(f"{API}/conceptos-recaudacion")
+            concept_row = next(
+                item for item in concepts.json()["items"]
+                if item["id"] == concept["id"]
+            )
+            assert concept_row["bloqueado"] is False
+            tariffs = await admin.get(
+                f"{API}/tarifas-ambientes",
+                params={"ambiente_id": state["ambiente_a"]},
+            )
+            tariff_row = next(
+                item for item in tariffs.json() if item["id"] == tariff["id"]
+            )
+            assert tariff_row["bloqueado"] is False
+
+            created_payment = await admin.post(
+                f"{API}/pagos",
+                json={"cliente_id": "person-a", "fecha_pago": state["monday"]},
+            )
+            assert created_payment.status_code == 201, created_payment.text
+            payment_id = created_payment.json()["id"]
+            added_item = await admin.post(
+                f"{API}/pagos/{payment_id}/items",
+                json={"id_tipo_pago": concept["id"], "cantidad": 1},
+            )
+            assert added_item.status_code == 200, added_item.text
+            finalized = await admin.post(f"{API}/pagos/{payment_id}/finalizar")
+            assert finalized.status_code == 200, finalized.text
+
+            created_rental = await admin.post(
+                f"{API}/alquileres",
+                json=_rental_payload(
+                    state["ambiente_a"], tariff["id"], state["monday"]
+                ),
+            )
+            assert created_rental.status_code == 201, created_rental.text
+
+            concepts = await admin.get(f"{API}/conceptos-recaudacion")
+            concept_row = next(
+                item for item in concepts.json()["items"]
+                if item["id"] == concept["id"]
+            )
+            assert concept_row["bloqueado"] is True
+            tariffs = await admin.get(
+                f"{API}/tarifas-ambientes",
+                params={"ambiente_id": state["ambiente_a"]},
+            )
+            tariff_row = next(
+                item for item in tariffs.json() if item["id"] == tariff["id"]
+            )
+            assert tariff_row["bloqueado"] is True
+
+            concept_update = await admin.put(
+                f"{API}/conceptos-recaudacion/{concept['id']}",
+                json={
+                    "codigo": concept["codigo"],
+                    "nombre": "Concepto modificado",
+                    "monto": concept["monto"],
+                    "descripcion": concept["descripcion"],
+                    "inicio": concept["inicio"],
+                    "fin": concept["fin"],
+                    "id_clasificador": concept["id_clasificador"],
+                },
+            )
+            assert concept_update.status_code == 400
+            assert "pagos registrados" in concept_update.json()["detail"]
+
+            tariff_update = await admin.put(
+                f"{API}/tarifas-ambientes/{tariff['id']}",
+                json=_tariff_payload(
+                    state["ambiente_a"], nombre="Tarifa modificada", monto="75.00"
+                ),
+            )
+            assert tariff_update.status_code == 400
+            assert "alquileres registrados" in tariff_update.json()["detail"]
+
+    state["loop"].run_until_complete(scenario())
+
+
 def test_directory_normalizes_names_discards_ids_and_requires_valid_fields():
     assert import_services.normalize_record(
         {"Id": "untrusted", "CI": " 100 ", "CU": " A ", "Nombre Completo": " Nombre "}, "clientes"

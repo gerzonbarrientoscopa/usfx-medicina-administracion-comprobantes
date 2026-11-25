@@ -263,6 +263,7 @@ class TipoPagoBase(BaseModel):
     clasificador_activa: Optional[bool] = None
     office_id: Optional[str] = None
     office_nombre: Optional[str] = None
+    bloqueado: bool = False
 
 
 class TipoPagoCreate(BaseModel):
@@ -1101,6 +1102,31 @@ async def require_active_classifier(classifier_id: str) -> dict:
 
 
 # ----------------------------- CRUD Conceptos de Recaudación -----------------------------
+async def _concept_ids_with_payments(concept_ids: list[str]) -> set[str]:
+    requested = {str(concept_id) for concept_id in concept_ids}
+    if not requested:
+        return set()
+    cursor = db.pagos.find(
+        {
+            "$or": [
+                {"id_tipo_pago": {"$in": list(requested)}},
+                {"items.id_tipo_pago": {"$in": list(requested)}},
+            ]
+        },
+        {"_id": 0, "id_tipo_pago": 1, "items.id_tipo_pago": 1},
+    )
+    used = set()
+    async for payment in cursor:
+        legacy_concept = payment.get("id_tipo_pago")
+        if legacy_concept is not None:
+            used.add(str(legacy_concept))
+        for item in payment.get("items") or []:
+            concept_id = item.get("id_tipo_pago")
+            if concept_id is not None:
+                used.add(str(concept_id))
+    return used & requested
+
+
 @api.get("/conceptos-recaudacion", response_model=PaginacionTiposPagos)
 @api.get("/tipos-pagos", response_model=PaginacionTiposPagos)
 async def get_tipos_pagos(
@@ -1130,6 +1156,11 @@ async def get_tipos_pagos(
                         .limit(tam)
     tipos_dict = await attach_office_names(await cursor.to_list(length=tam))
     tipos_dict = await attach_classifier_names(tipos_dict)
+    used_concepts = await _concept_ids_with_payments(
+        [tipo["id"] for tipo in tipos_dict]
+    )
+    for tipo in tipos_dict:
+        tipo["bloqueado"] = str(tipo["id"]) in used_concepts
     tipos_validados = [TipoPago(**t) for t in tipos_dict]
     total_paginas = (total_tipos + tam - 1) // tam if total_tipos > 0 else 1
     return {
@@ -1188,6 +1219,11 @@ async def update_tipopago(
     target = await db.tipos_pagos.find_one({"id": tipo_id, **scope}, {"_id": 0})
     if not target:
         raise HTTPException(status_code=404, detail="Concepto no encontrado.")
+    if tipo_id in await _concept_ids_with_payments([tipo_id]):
+        raise HTTPException(
+            status_code=400,
+            detail="No se puede editar: el concepto tiene pagos registrados.",
+        )
     if tipo.office_id and tipo.office_id != target["office_id"]:
         raise HTTPException(status_code=400, detail="No se puede cambiar la oficina del concepto.")
     nombre = tipo.nombre.strip()
@@ -1581,6 +1617,18 @@ async def get_tarifas_ambientes(
     tariffs = await db.tarifas_ambientes.find(
         {"ambiente_id": ambiente_id}, {"_id": 0}
     ).sort("nombre", 1).to_list(500)
+    tariff_ids = [str(tariff["id"]) for tariff in tariffs]
+    used_tariffs = set()
+    if tariff_ids:
+        rentals = db.alquileres.find(
+            {"tarifa_id": {"$in": tariff_ids}},
+            {"_id": 0, "tarifa_id": 1},
+        )
+        async for rental in rentals:
+            if rental.get("tarifa_id") is not None:
+                used_tariffs.add(str(rental["tarifa_id"]))
+    for tariff in tariffs:
+        tariff["bloqueado"] = str(tariff["id"]) in used_tariffs
     return [_apply_current_shift(tariff, ambiente) for tariff in tariffs]
 
 
@@ -1608,6 +1656,11 @@ async def update_tarifa_ambiente(
     if not target:
         raise HTTPException(status_code=404, detail="Tarifa no encontrada.")
     await office_scope(user, target["office_id"])
+    if await db.alquileres.find_one({"tarifa_id": tarifa_id}, {"_id": 1}):
+        raise HTTPException(
+            status_code=400,
+            detail="No se puede editar: la tarifa tiene alquileres registrados.",
+        )
     if body.ambiente_id != target["ambiente_id"]:
         raise HTTPException(status_code=400, detail="No se puede cambiar el ambiente de una tarifa.")
     ambiente = await db.ambientes.find_one(

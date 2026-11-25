@@ -1457,7 +1457,16 @@ async def concepts(
     rows = await sql(
         """SELECT t.id,t.codigo,t.nombre,t.monto,t.descripcion,t.inicio,t.fin,
                   t.id_clasificador,t.office_id,c.codigo clasificador_codigo,
-                  c.nombre clasificador_nombre,c.activa clasificador_activa"""
+                  c.nombre clasificador_nombre,c.activa clasificador_activa,
+                  CASE WHEN EXISTS(
+                    SELECT 1 FROM pagos p
+                    WHERE p.office_id=t.office_id AND (
+                      p.id_tipo_pago=t.id OR EXISTS(
+                        SELECT 1 FROM pago_items i
+                        WHERE i.pago_id=p.id AND i.id_tipo_pago=t.id
+                      )
+                    )
+                  ) THEN CAST(1 AS bit) ELSE CAST(0 AS bit) END AS bloqueado"""
         + joins + " WHERE " + where
         + " ORDER BY t.nombre,t.inicio DESC OFFSET ? ROWS FETCH NEXT ? ROWS ONLY",
         args + [(pag - 1) * tam, tam],
@@ -1500,6 +1509,17 @@ async def update_concept(
         raise HTTPException(404, "Concepto no encontrado.")
     oid = target["office_id"]
     await office_scope_sql(u, oid)
+    if await sql(
+        """SELECT TOP 1 p.id FROM pagos p
+           WHERE p.office_id=? AND (p.id_tipo_pago=? OR EXISTS(
+             SELECT 1 FROM pago_items i
+             WHERE i.pago_id=p.id AND i.id_tipo_pago=?))""",
+        (oid, tid, tid),
+        one=True,
+    ):
+        raise HTTPException(
+            400, "No se puede editar: el concepto tiene pagos registrados."
+        )
     if b.office_id and b.office_id != oid:
         raise HTTPException(400, "No se puede cambiar la oficina del concepto.")
     name = b.nombre.strip()
@@ -1735,7 +1755,11 @@ async def tariffs(ambiente_id: str, u=Depends(roles("Administrador", "Caja"))):
         raise HTTPException(404, "Ambiente no encontrado.")
     await office_scope_sql(u, room["office_id"])
     rows = await sql(
-        "SELECT * FROM tarifas_ambientes WHERE ambiente_id=? ORDER BY nombre",
+        """SELECT t.*,
+                  CASE WHEN EXISTS(
+                    SELECT 1 FROM alquileres a WHERE a.tarifa_id=t.id
+                  ) THEN CAST(1 AS bit) ELSE CAST(0 AS bit) END AS bloqueado
+           FROM tarifas_ambientes t WHERE t.ambiente_id=? ORDER BY t.nombre""",
         (ambiente_id,),
     )
     turnos = await room_turnos(ambiente_id)
@@ -1781,6 +1805,14 @@ async def update_tariff(tid: str, b: TarifaCreate, u=Depends(roles("Administrado
     await office_scope_sql(u, target["office_id"])
     if b.ambiente_id != target["ambiente_id"]:
         raise HTTPException(400, "No se puede cambiar el ambiente de una tarifa.")
+    if await sql(
+        "SELECT TOP 1 id FROM alquileres WHERE tarifa_id=?",
+        (tid,),
+        one=True,
+    ):
+        raise HTTPException(
+            400, "No se puede editar: la tarifa tiene alquileres registrados."
+        )
     await validate_tariff_shift(b)
     await sql(
         "UPDATE tarifas_ambientes SET nombre=?,modalidad=?,monto=?,descripcion=?,desde=?,hasta=? WHERE id=? AND office_id=?",
