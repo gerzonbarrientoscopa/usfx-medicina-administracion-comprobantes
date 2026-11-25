@@ -85,6 +85,16 @@ def test_income_and_receipt_search(mongo_rental_api):
             assert found.status_code == 200, found.text
             assert found.json()["total"] == 4
             assert {p["origen"] for p in found.json()["items"]} == {"alquiler", "pago"}
+            cobros = await client.get(f"{API}/comprobantes", params={
+                **search, "origen": "pago",
+            })
+            assert cobros.json()["total"] == 2
+            assert {p["origen"] for p in cobros.json()["items"]} == {"pago"}
+            alquileres = await client.get(f"{API}/comprobantes", params={
+                **search, "origen": "alquiler",
+            })
+            assert alquileres.json()["total"] == 2
+            assert {p["origen"] for p in alquileres.json()["items"]} == {"alquiler"}
             matched_user = await client.get(f"{API}/comprobantes", params={
                 **search, "created_by": "user-Administrador-office-a",
             })

@@ -2875,6 +2875,7 @@ async def get_pagos(
 @api.get("/comprobantes")
 async def buscar_comprobantes(
     q: Optional[str] = None,
+    origen: Optional[Literal["pago", "alquiler"]] = None,
     id_tipo_pago: Optional[str] = None,
     fecha_desde: Optional[str] = None,
     fecha_hasta: Optional[str] = None,
@@ -2961,26 +2962,38 @@ async def buscar_comprobantes(
         ])
         students.setdefault("$and", []).append({"$or": student_or})
         rentals.setdefault("$and", []).append({"$or": rental_or})
-    pipeline = [
-        {"$match": students},
-        *_PAGO_HYDRATE_PIPELINE,
-        {"$addFields": {"origen": "pago"}},
-        {"$unionWith": {"coll": "alquileres", "pipeline": [
-            {"$match": rentals},
-            {"$lookup": {
-                "from": "oficinas",
-                "localField": "office_id",
-                "foreignField": "id",
-                "as": "_office",
-            }},
-            {"$addFields": {
-                "suboficina": {
-                    "$ifNull": [{"$arrayElemAt": ["$_office.suboficina", 0]}, ""]
-                }
-            }},
-            {"$project": {"_id": 0, "intervals": 0, "_office": 0}},
-            {"$addFields": {"origen": "alquiler"}},
-        ]}},
+    rental_pipeline = [
+        {"$match": rentals},
+        {"$lookup": {
+            "from": "oficinas",
+            "localField": "office_id",
+            "foreignField": "id",
+            "as": "_office",
+        }},
+        {"$addFields": {
+            "suboficina": {
+                "$ifNull": [{"$arrayElemAt": ["$_office.suboficina", 0]}, ""]
+            }
+        }},
+        {"$project": {"_id": 0, "intervals": 0, "_office": 0}},
+        {"$addFields": {"origen": "alquiler"}},
+    ]
+    if origen == "alquiler":
+        pipeline = rental_pipeline
+        collection = db.alquileres
+    else:
+        pipeline = [
+            {"$match": students},
+            *_PAGO_HYDRATE_PIPELINE,
+            {"$addFields": {"origen": "pago"}},
+        ]
+        if origen != "pago":
+            pipeline.append({"$unionWith": {
+                "coll": "alquileres",
+                "pipeline": rental_pipeline,
+            }})
+        collection = db.pagos
+    pipeline.extend([
         {"$facet": {
             "count": [{"$count": "total"}],
             "items": [
@@ -2989,8 +3002,8 @@ async def buscar_comprobantes(
                 {"$limit": tam},
             ],
         }},
-    ]
-    result = (await db.pagos.aggregate(pipeline).to_list(1))[0]
+    ])
+    result = (await collection.aggregate(pipeline).to_list(1))[0]
     total = result["count"][0]["total"] if result["count"] else 0
     return {"items": result["items"], "total": total, "page": pag, "size": tam,
             "pages": (total + tam - 1) // tam if total else 1}

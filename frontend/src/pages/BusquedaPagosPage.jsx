@@ -82,7 +82,8 @@ export default function BusquedaPagosPage() {
     const [editClientes, setEditClientes] = useState([]);
 
     const [q, setQ] = useState("");
-    const [tipo, setTipo] = useState("");
+    const [origen, setOrigen] = useState("pago");
+    const [tipo, setTipo] = useState("all");
     const [desde, setDesde] = useState("");
     const [hasta, setHasta] = useState("");
     const [dateValidity, setDateValidity] = useState({ desde: true, hasta: true });
@@ -147,7 +148,7 @@ export default function BusquedaPagosPage() {
         setPagina(1);
         setTotalPaginas(1);
         setTotalResultados(0);
-        setTipo("");
+        setTipo("all");
         setCreatedBy("");
         cargarCatalogos();
         buscar(1, true);
@@ -173,7 +174,10 @@ export default function BusquedaPagosPage() {
             };
             if (officeId) params.office_id = officeId;
             if (q.trim()) params.q = q.trim();
-            if (!resetOfficeFilters && tipo && tipo !== "all") params.id_tipo_pago = tipo;
+            params.origen = origen;
+            if (origen === "pago" && !resetOfficeFilters && tipo && tipo !== "all") {
+                params.id_tipo_pago = tipo;
+            }
             if (desde) params.fecha_desde = desde;
             if (hasta) params.fecha_hasta = hasta;
             if (!resetOfficeFilters && createdBy && createdBy !== "all") params.created_by = createdBy;
@@ -342,21 +346,41 @@ export default function BusquedaPagosPage() {
                         />
                     </div>
                     <div className="min-w-0 space-y-1.5">
-                        <Label className="flex min-h-8 items-end text-xs uppercase tracking-widest leading-4 text-[color:var(--institution-muted)]">Concepto de recaudación</Label>
-                        <Select value={tipo} onValueChange={setTipo}>
-                            <SelectTrigger className="rounded-sm" data-testid="busq-tipo-select">
-                                <SelectValue placeholder="Todos" />
+                        <Label className="flex min-h-8 items-end text-xs uppercase tracking-widest leading-4 text-[color:var(--institution-muted)]">Origen</Label>
+                        <Select
+                            value={origen}
+                            onValueChange={(value) => {
+                                setOrigen(value);
+                                setTipo("all");
+                            }}
+                        >
+                            <SelectTrigger className="rounded-sm" data-testid="busq-origen-select">
+                                <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
-                                <SelectItem value="all">Todos</SelectItem>
-                                {tipos.map((t) => (
-                                    <SelectItem key={t.id} value={t.id}>
-                                        {t.nombre}
-                                    </SelectItem>
-                                ))}
+                                <SelectItem value="pago">Cobro</SelectItem>
+                                <SelectItem value="alquiler">Alquiler</SelectItem>
                             </SelectContent>
                         </Select>
                     </div>
+                    {origen === "pago" && (
+                        <div className="min-w-0 space-y-1.5">
+                            <Label className="flex min-h-8 items-end text-xs uppercase tracking-widest leading-4 text-[color:var(--institution-muted)]">Concepto de recaudación</Label>
+                            <Select value={tipo} onValueChange={setTipo}>
+                                <SelectTrigger className="rounded-sm" data-testid="busq-tipo-select">
+                                    <SelectValue placeholder="Todos los conceptos" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="all">Todos los conceptos</SelectItem>
+                                    {tipos.map((t) => (
+                                        <SelectItem key={t.id} value={String(t.id)}>
+                                            {t.codigo ? `${t.codigo} — ` : ""}{t.nombre}
+                                        </SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                        </div>
+                    )}
                     <div className="min-w-0 space-y-1.5">
                         <Label className="flex min-h-8 items-end text-xs uppercase tracking-widest leading-4 text-[color:var(--institution-muted)]">Cobrado / registrado por</Label>
                         <Select value={createdBy} onValueChange={setCreatedBy}>

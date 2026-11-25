@@ -2800,6 +2800,7 @@ async def void_payment(pid: str, u=Depends(roles("Administrador", "Caja"))):
 @api.get("/comprobantes")
 async def receipts(
     q: Optional[str] = None,
+    origen: Optional[Literal["pago", "alquiler"]] = None,
     id_tipo_pago: Optional[str] = None,
     fecha_desde: Optional[str] = None,
     fecha_hasta: Optional[str] = None,
@@ -2834,6 +2835,10 @@ async def receipts(
         "(a.estado=N'pagado' OR "
         "(a.estado=N'cancelado' AND a.cod_comprobante IS NOT NULL AND a.cod_comprobante<>N''))"
     )
+    if origen == "pago":
+        rc.append("1=0")
+    elif origen == "alquiler":
+        pc.append("1=0")
     if fecha_desde:
         pc.append("p.fecha_pago>=?")
         pv.append(fecha_desde)
