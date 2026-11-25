@@ -43,6 +43,14 @@ test("incluye la fecha de generación y el nombre del sistema en el pie", () => 
   expect(html).toMatch(/\.meta\{[^}]*text-align:left/);
 });
 
+test("imprime los comprobantes de alquiler en media carta y oculta controles", () => {
+  const html = buildAlquilerComprobanteHTML({ id: "rental-print" });
+
+  expect(html).toContain("@page{size:5.5in 8.5in;margin:.25in}");
+  expect(html).toContain(".no-print{display:none!important}");
+  expect(html).not.toContain("<button");
+});
+
 test("marca como anulado el comprobante de un alquiler cancelado", () => {
   const html = buildAlquilerComprobanteHTML({
     id: "rental-5",
