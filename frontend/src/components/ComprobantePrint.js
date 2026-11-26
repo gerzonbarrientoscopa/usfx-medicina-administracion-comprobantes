@@ -41,7 +41,6 @@ export function buildComprobanteHTML(pago) {
                 total: pago.total,
             }]
             : [];
-    const useHalfLetter = items.length >= 1 && items.length <= 3;
     const itemRows = items.length
         ? items.map((item) => `
           <tr>
@@ -59,7 +58,7 @@ export function buildComprobanteHTML(pago) {
 <title>Comprobante ${codigo} — ${oficina}</title>
 <style>
   @import url("https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap");
-  ${useHalfLetter ? "@page { size: 5.5in 8.5in; margin: 0.25in; }" : "@page { margin: 0.5in; }"}
+  @page { size: letter; margin: 0.25in; }
   * { box-sizing: border-box; }
   body { font-family: "IBM Plex Sans", sans-serif; color: #1c1c1e; margin: 0; padding: 24px; background: #fff; }
   .receipt { max-width: 720px; margin: 0 auto; border: 1px dashed #7A2035; padding: 32px 40px; background: #fff; }
@@ -89,7 +88,7 @@ export function buildComprobanteHTML(pago) {
   .receipt-wrap { position: relative; }
   @media print {
     body { margin: 0; padding: 0; }
-    .receipt { width: 100%; max-width: none; margin: 0; border: 0; padding: ${useHalfLetter ? "0.15in" : "0"}; }
+    .receipt { width: 100%; max-width: none; min-height: 5.5in; margin: 0; border: 1px dashed #7A2035; padding: 0.25in; }
     .no-print, .toolbar { display: none !important; }
     .receipt-wrap { position: static; }
     tr { break-inside: avoid; }

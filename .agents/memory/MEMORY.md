@@ -1,5 +1,6 @@
 - [Dev-domain Python TLS](dev-domain-python-tls.md) — shell Python requests may reject the development proxy certificate even when the app works.
 - [Shared receipt sequence](rental-receipt-sequence.md) — deleted drafts reclaim only the latest unused number; shared payment/rental allocation stays concurrency-safe.
+- [Payment receipt print layout](payment-receipt-print-layout.md) — payment receipts use letter portrait, align at the top, and reserve at least half-page height.
 - [Rental booking consistency](rental-booking-consistency.md) — preserve occupancy on uncertain writes; provisional bookings protect against delayed cross-document commits.
 - [Room rental shifts](rental-room-shifts.md) — each room uses distinct morning, afternoon and night hours; new fixed tariffs and bookings follow the current configuration.
 - [Unified shared clients](rental-client-policy.md) — Clientes replaces Persona/Estudiante; clients are shared, while financial operations stay office-scoped.

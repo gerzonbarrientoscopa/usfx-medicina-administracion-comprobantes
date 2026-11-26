@@ -7,7 +7,7 @@ test("alinea a la izquierda los datos de generación del comprobante de pago", (
 });
 
 test.each([1, 2, 3])(
-  "usa media carta para pagos con %s concepto",
+  "usa carta vertical y reserva media altura con %s concepto",
   (conceptCount) => {
     const html = buildComprobanteHTML({
       items: Array.from({ length: conceptCount }, (_, index) => ({
@@ -19,11 +19,12 @@ test.each([1, 2, 3])(
       })),
     });
 
-    expect(html).toMatch(/@page\s*\{\s*size:\s*5\.5in 8\.5in;\s*margin:\s*0\.25in;/);
+    expect(html).toMatch(/@page\s*\{\s*size:\s*letter;\s*margin:\s*0\.25in;/);
+    expect(html).toContain(".receipt { width: 100%; max-width: none; min-height: 5.5in; margin: 0; border: 1px dashed #7A2035;");
   },
 );
 
-test("permite exceder media carta con más de tres conceptos", () => {
+test("mantiene carta vertical y deja crecer el comprobante con más de tres conceptos", () => {
   const html = buildComprobanteHTML({
     items: Array.from({ length: 4 }, (_, index) => ({
       id: `item-${index}`,
@@ -34,8 +35,9 @@ test("permite exceder media carta con más de tres conceptos", () => {
     })),
   });
 
-  expect(html).not.toMatch(/@page\s*\{\s*size:/);
-  expect(html).toContain(".receipt { width: 100%; max-width: none;");
+  expect(html).toMatch(/@page\s*\{\s*size:\s*letter;\s*margin:\s*0\.25in;/);
+  expect(html).toContain(".receipt { width: 100%; max-width: none; min-height: 5.5in;");
+  expect(html).toContain("Concepto 4");
 });
 
 test("oculta los botones de imprimir y cerrar en el papel", () => {
