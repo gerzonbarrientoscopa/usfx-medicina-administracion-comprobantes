@@ -28,6 +28,7 @@ import {
   Plus,
   Pencil,
   LockKeyhole,
+  CalendarDays,
   Trash2,
   ChevronLeft,
   ChevronRight,
@@ -56,6 +57,10 @@ export default function ConceptosRecaudacionPage() {
   const [editingConcepto, setEditingConcepto] = useState(null);
   const [formData, setFormData] = useState({ ...EMPTY });
   const [dateValidity, setDateValidity] = useState({ inicio: true, fin: true });
+  const [caducarOpen, setCaducarOpen] = useState(false);
+  const [conceptoCaducar, setConceptoCaducar] = useState(null);
+  const [fechaCaducidad, setFechaCaducidad] = useState("");
+  const [fechaCaducidadValida, setFechaCaducidadValida] = useState(true);
   const [loading, setLoading] = useState(false);
   const [pagina, setPagina] = useState(1);
   const [totalPaginas, setTotalPaginas] = useState(1);
@@ -217,6 +222,37 @@ export default function ConceptosRecaudacionPage() {
       await fetchConceptos();
     } catch (error) {
       toast.error(formatApiError(error));
+    }
+  };
+
+  const handleCaducarOpen = (concepto) => {
+    setConceptoCaducar(concepto);
+    setFechaCaducidad(toISODate(concepto.fin) || "");
+    setFechaCaducidadValida(true);
+    setCaducarOpen(true);
+  };
+
+  const handleCaducar = async (event) => {
+    event.preventDefault();
+    if (!fechaCaducidadValida || !fechaCaducidad) {
+      toast.error("Ingrese una fecha válida en formato dd/mm/aaaa.");
+      return;
+    }
+    setLoading(true);
+    try {
+      await apiClient.post(
+        `/conceptos-recaudacion/${conceptoCaducar.id}/caducar`,
+        { fecha_caducidad: fechaCaducidad },
+      );
+      toast.success("Fecha de caducidad registrada.");
+      setCaducarOpen(false);
+      setConceptoCaducar(null);
+      setFechaCaducidad("");
+      await fetchConceptos();
+    } catch (error) {
+      toast.error(formatApiError(error));
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -419,6 +455,48 @@ export default function ConceptosRecaudacionPage() {
             </form>
           </DialogContent>
         </Dialog>
+        <Dialog
+          open={caducarOpen}
+          onOpenChange={(isOpen) => {
+            setCaducarOpen(isOpen);
+            if (!isOpen) setConceptoCaducar(null);
+          }}
+        >
+          <DialogContent className="rounded-sm max-w-md">
+            <DialogHeader>
+              <DialogTitle className="font-serif-display text-2xl">
+                Caducar concepto
+              </DialogTitle>
+            </DialogHeader>
+            <form onSubmit={handleCaducar} className="space-y-4">
+              <div className="space-y-1.5">
+                <Label htmlFor="concepto-fecha-caducidad">
+                  Fecha de caducidad
+                </Label>
+                <DateInput
+                  id="concepto-fecha-caducidad"
+                  value={fechaCaducidad}
+                  onValueChange={setFechaCaducidad}
+                  onValidityChange={setFechaCaducidadValida}
+                  required
+                  className="rounded-sm"
+                  data-testid="concepto-caducidad-input"
+                />
+              </div>
+              <DialogFooter>
+                <Button
+                  type="submit"
+                  disabled={loading || !conceptoCaducar}
+                  data-testid="concepto-caducidad-save-btn"
+                  className="rounded-sm text-white"
+                  style={{ backgroundColor: "var(--institution-burgundy)" }}
+                >
+                  Guardar fecha
+                </Button>
+              </DialogFooter>
+            </form>
+          </DialogContent>
+        </Dialog>
       </div>
 
       {isSuperAdmin && (
@@ -488,6 +566,17 @@ export default function ConceptosRecaudacionPage() {
                       {concepto.bloqueado ? <LockKeyhole size={14} /> : <Pencil size={14} />}
                     </Button>
                   </span>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => handleCaducarOpen(concepto)}
+                    aria-label={`Caducar ${concepto.nombre}`}
+                    title="Caducar concepto"
+                    data-testid={`concepto-expire-${concepto.id}`}
+                    className="rounded-sm"
+                  >
+                    <CalendarDays size={14} />
+                  </Button>
                   <Button variant="ghost" size="sm" onClick={() => handleDelete(concepto)} aria-label={`Eliminar ${concepto.nombre}`} data-testid={`concepto-delete-${concepto.id}`} className="rounded-sm text-[color:var(--institution-danger)]">
                     <Trash2 size={14} />
                   </Button>

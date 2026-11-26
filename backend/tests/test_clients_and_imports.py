@@ -374,6 +374,67 @@ def test_concepts_and_tariffs_with_financial_records_cannot_be_edited(mongo_rent
     state["loop"].run_until_complete(scenario())
 
 
+def test_concept_expiration_must_follow_latest_receipt_date(mongo_rental_api):
+    state = mongo_rental_api
+
+    async def scenario():
+        async with await _client(_actor()) as admin:
+            await state["db"].clasificadores_presupuestarios.insert_one({
+                "id": "expiration-classifier",
+                "codigo": "12100",
+                "nombre": "Venta de bienes",
+                "activa": True,
+            })
+            created = await admin.post(
+                f"{API}/conceptos-recaudacion",
+                json={
+                    "codigo": "10003",
+                    "nombre": "Concepto con caducidad",
+                    "monto": 10,
+                    "inicio": "2026-01-01",
+                    "id_clasificador": "expiration-classifier",
+                },
+            )
+            assert created.status_code == 201, created.text
+            concept = created.json()
+
+            await state["db"].pagos.insert_many([
+                {
+                    "id": "legacy-receipt-before",
+                    "office_id": state["office_a"],
+                    "fecha_pago": "2026-11-24",
+                    "id_tipo_pago": concept["id"],
+                },
+                {
+                    "id": "itemized-latest-receipt",
+                    "office_id": state["office_a"],
+                    "fecha_pago": "2026-11-25",
+                    "items": [{"id_tipo_pago": concept["id"]}],
+                },
+            ])
+
+            for invalid_date in ("2026-11-24",):
+                rejected = await admin.post(
+                    f'{API}/conceptos-recaudacion/{concept["id"]}/caducar',
+                    json={"fecha_caducidad": invalid_date},
+                )
+                assert rejected.status_code == 400, rejected.text
+                assert "25/11/2026" in rejected.json()["detail"]
+
+            expired = await admin.post(
+                f'{API}/conceptos-recaudacion/{concept["id"]}/caducar',
+                json={"fecha_caducidad": "2026-11-25"},
+            )
+            assert expired.status_code == 200, expired.text
+            assert expired.json()["fin"] == "25/11/2026"
+            stored = await state["db"].tipos_pagos.find_one(
+                {"id": concept["id"]}, {"_id": 0, "fin": 1}
+            )
+            assert stored["fin"] == "2026-11-25"
+
+    state["loop"].run_until_complete(scenario())
+
+
 def test_directory_normalizes_names_discards_ids_and_requires_valid_fields():
     assert import_services.normalize_record(
         {"Id": "untrusted", "CI": " 100 ", "CU": " A ", "Nombre Completo": " Nombre "}, "clientes"

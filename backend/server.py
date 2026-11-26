@@ -277,6 +277,10 @@ class TipoPagoCreate(BaseModel):
     office_id: Optional[str] = None
 
 
+class TipoPagoCaducidad(BaseModel):
+    fecha_caducidad: date
+
+
 class TipoPago(TipoPagoBase):
     id: str    
 
@@ -1249,6 +1253,63 @@ async def update_tipopago(
                 "El nombre ya existe en esta oficina o el código ya existe en el sistema."
             ),
         )
+    updated = await db.tipos_pagos.find_one({"id": tipo_id}, {"_id": 0})
+    await attach_office_names([updated])
+    await attach_classifier_names([updated])
+    return TipoPago(**updated)
+
+
+@api.post("/conceptos-recaudacion/{tipo_id}/caducar", response_model=TipoPago)
+@api.post("/tipos-pagos/{tipo_id}/caducar", response_model=TipoPago)
+async def expire_tipo_pago(
+    tipo_id: str,
+    body: TipoPagoCaducidad,
+    user: dict = Depends(require_roles("Administrador")),
+):
+    scope = await office_scope(user)
+    target = await db.tipos_pagos.find_one(
+        {"id": tipo_id, **scope}, {"_id": 0}
+    )
+    if not target:
+        raise HTTPException(status_code=404, detail="Concepto no encontrado.")
+
+    latest_payment_date = None
+    cursor = db.pagos.find(
+        {
+            "office_id": target["office_id"],
+            "$or": [
+                {"id_tipo_pago": tipo_id},
+                {"items.id_tipo_pago": tipo_id},
+            ],
+        },
+        {"_id": 0, "fecha_pago": 1},
+    )
+    async for payment in cursor:
+        payment_date = _printed_payment_date(payment.get("fecha_pago"))
+        if payment_date is None:
+            raise HTTPException(
+                status_code=400,
+                detail="No se pudo determinar la fecha de uno de los comprobantes del concepto.",
+            )
+        latest_payment_date = (
+            max(latest_payment_date, payment_date)
+            if latest_payment_date
+            else payment_date
+        )
+
+    if latest_payment_date and body.fecha_caducidad < latest_payment_date:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "La fecha de caducidad no puede ser anterior al último comprobante. "
+                f"Ingrese {latest_payment_date.strftime('%d/%m/%Y')} o una fecha posterior."
+            ),
+        )
+
+    await db.tipos_pagos.update_one(
+        {"id": tipo_id, **scope},
+        {"$set": {"fin": body.fecha_caducidad.isoformat()}},
+    )
     updated = await db.tipos_pagos.find_one({"id": tipo_id}, {"_id": 0})
     await attach_office_names([updated])
     await attach_classifier_names([updated])
