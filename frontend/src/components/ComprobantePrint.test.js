@@ -20,7 +20,7 @@ test.each([1, 2, 3])(
     });
 
     expect(html).toMatch(/@page\s*\{\s*size:\s*letter;\s*margin:\s*0\.25in;/);
-    expect(html).toContain(".receipt { width: 100%; max-width: none; min-height: 5.5in; margin: 0; border: 1px dashed #7A2035;");
+    expect(html).toContain(".receipt { width: 100%; max-width: none; min-height: 5.25in; margin: 0; border: 1px dashed #7A2035;");
   },
 );
 
@@ -36,8 +36,19 @@ test("mantiene carta vertical y deja crecer el comprobante con más de tres conc
   });
 
   expect(html).toMatch(/@page\s*\{\s*size:\s*letter;\s*margin:\s*0\.25in;/);
-  expect(html).toContain(".receipt { width: 100%; max-width: none; min-height: 5.5in;");
+  expect(html).toContain(".receipt { width: 100%; max-width: none; min-height: 5.25in;");
   expect(html).toContain("Concepto 4");
+});
+
+test("compacta espacios impresos sin cambiar el encabezado ni firma", () => {
+  const html = buildComprobanteHTML({});
+
+  expect(html).toContain(".title-bar { margin-top: -16px; margin-bottom: 8px; }");
+  expect(html).toContain(".receipt > .row { padding: 2px 0; font-size: 11px; }");
+  expect(html).toContain("table tbody td { padding: 3px 8px; }");
+  expect(html).toContain(".totals { margin-top: 4px; }");
+  expect(html).toContain(".meta { font-size: 8px; }");
+  expect(html).toContain(".sign { width: 220px; text-align: center; font-size: 11px;");
 });
 
 test("oculta los botones de imprimir y cerrar en el papel", () => {

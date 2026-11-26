@@ -88,7 +88,17 @@ export function buildComprobanteHTML(pago) {
   .receipt-wrap { position: relative; }
   @media print {
     body { margin: 0; padding: 0; }
-    .receipt { width: 100%; max-width: none; min-height: 5.5in; margin: 0; border: 1px dashed #7A2035; padding: 0.25in; }
+    .receipt { width: 100%; max-width: none; min-height: 5.25in; margin: 0; border: 1px dashed #7A2035; padding: 0.2in 0.25in; }
+    .title-bar { margin-top: -16px; margin-bottom: 8px; }
+    .receipt > .row { padding: 2px 0; font-size: 11px; }
+    table { margin-top: 8px; font-size: 11px; }
+    table thead th { padding: 4px 8px; }
+    table tbody td { padding: 3px 8px; }
+    .totals { margin-top: 4px; }
+    .totals-box { padding-top: 4px; }
+    .totals-box .row { padding: 1px 0; }
+    .footer { margin-top: 14px; }
+    .meta { font-size: 8px; }
     .no-print, .toolbar { display: none !important; }
     .receipt-wrap { position: static; }
     tr { break-inside: avoid; }
