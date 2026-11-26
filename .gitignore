@@ -10,6 +10,7 @@ start.sh
 # IDE and editors
 .idea/
 .vscode/
+/.agents/
 
 # Dependencies
 node_modules/
